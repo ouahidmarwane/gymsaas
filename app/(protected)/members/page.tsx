@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { enrichMember, STATUS_CONFIG } from '@/lib/gym'
 import { addMember, getMembers, updateMember, deleteMember, renewSubscription, renewInsurance, addPayment } from '@/lib/actions'
-import { createClient } from '@/lib/supabase/client'
 import { useBranch } from '@/lib/branch-context'
 import { useDiscipline } from '@/lib/discipline-context'
 import { useT } from '@/lib/i18n'
@@ -304,23 +303,58 @@ function MemberModal({ member, onClose, onSaved }: {
 
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }))
 
+  // Upload en deux temps vers Cloudflare R2 : le serveur signe une URL
+  // d'écriture à usage unique, puis le navigateur envoie le fichier
+  // directement à R2. Rien ne transite par Next (plafond de 4,5 Mo sur
+  // Vercel) et les clés R2 restent côté serveur.
+  // La valeur retournée (« r2://bucket/chemin ») est ce qui part en base.
+  const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
   const uploadFile = async (
     memberId: string,
     file: File,
     bucket: 'member-photos' | 'member-passports' | 'member-documents',
   ): Promise<string | null> => {
-    const supabase = createClient()
-    const ext = file.name.split('.').pop() ?? 'bin'
-    const safeName = `${Date.now()}.${ext}`
-    const path = `${memberId}/${safeName}`
-    const { data, error } = await supabase.storage.from(bucket).upload(path, file, { upsert: true })
-    if (error) {
-      console.error(`Upload error (${bucket}):`, error)
-      setError(`Erreur upload (${bucket}): ${error.message}`)
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(`Fichier trop volumineux (${bucket}) : 10 Mo maximum`)
       return null
     }
-    const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(path)
-    return urlData.publicUrl
+
+    const ext = (file.name.split('.').pop() ?? 'bin').toLowerCase()
+    const contentType = file.type || 'application/octet-stream'
+
+    try {
+      const res = await fetch('/api/media/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bucket, memberId, ext, contentType }),
+      })
+      if (!res.ok) {
+        const { error: msg } = await res.json().catch(() => ({ error: res.statusText }))
+        setError(`Erreur upload (${bucket}) : ${msg}`)
+        return null
+      }
+      const { uploadUrl, ref } = await res.json()
+
+      // Content-Type doit correspondre exactement à celui signé, sinon R2
+      // rejette la requête avec une erreur de signature.
+      const put = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType },
+        body: file,
+      })
+      if (!put.ok) {
+        console.error(`Upload R2 error (${bucket}):`, put.status, await put.text().catch(() => ''))
+        setError(`Erreur upload (${bucket}) : transfert échoué (${put.status})`)
+        return null
+      }
+
+      return ref as string
+    } catch (e) {
+      console.error(`Upload error (${bucket}):`, e)
+      setError(`Erreur upload (${bucket}) : réseau indisponible`)
+      return null
+    }
   }
 
   const handleSave = () => {

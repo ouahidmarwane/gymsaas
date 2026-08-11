@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { isMediaBucket, isR2Configured, signedReadUrl } from '@/lib/r2'
 
-// Proxy média authentifié : les buckets membres sont PRIVÉS.
-// Seul un utilisateur connecté obtient une URL signée temporaire (1 h).
+// Proxy média authentifié : les fichiers membres sont PRIVÉS, sur R2 comme
+// sur Supabase. Seul un utilisateur connecté obtient une URL signée (1 h).
 // (Le middleware n'intercepte pas /api — la vérification vit ici.)
-const BUCKETS = new Set(['member-photos', 'member-passports', 'member-documents'])
-
+//
+// Lecture double pendant la migration : `src=r2` sert depuis Cloudflare R2,
+// tout le reste retombe sur Supabase Storage. Un membre déjà migré et un
+// membre pas encore migré s'affichent donc côte à côte sans interruption.
 export async function GET(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -14,8 +17,18 @@ export async function GET(req: NextRequest) {
 
   const bucket = req.nextUrl.searchParams.get('bucket') ?? ''
   const path = req.nextUrl.searchParams.get('path') ?? ''
-  if (!BUCKETS.has(bucket) || !path || path.includes('..')) {
+  const src = req.nextUrl.searchParams.get('src') ?? 'sb'
+  if (!isMediaBucket(bucket) || !path || path.includes('..')) {
     return new NextResponse('Requête invalide', { status: 400 })
+  }
+
+  if (src === 'r2') {
+    if (!isR2Configured()) return new NextResponse('Stockage indisponible', { status: 503 })
+    try {
+      return NextResponse.redirect(await signedReadUrl(bucket, path, 3600), 302)
+    } catch {
+      return new NextResponse('Introuvable', { status: 404 })
+    }
   }
 
   const admin = createAdminClient()
