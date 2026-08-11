@@ -204,7 +204,10 @@ async function main() {
   }
 
   if (!APPLY) console.log('\nRelancez avec --apply pour exécuter réellement.')
-  process.exit(stats.failed > 0 ? 1 : 0)
+  // exitCode plutôt que process.exit() : une sortie forcée pendant que le
+  // client Supabase a encore des handles ouverts fait planter libuv sur
+  // Windows (assertion UV_HANDLE_CLOSING) après un travail pourtant réussi.
+  process.exitCode = stats.failed > 0 ? 1 : 0
 }
 
-main().catch(e => { console.error(e); process.exit(1) })
+main().catch(e => { console.error(e); process.exitCode = 1 })
