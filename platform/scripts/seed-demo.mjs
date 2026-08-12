@@ -86,6 +86,22 @@ const inDays = n => new Date(today.getTime() + n * 86_400_000).toISOString().sli
 
 console.log(`Cible : ${BASE}\n`)
 
+// --reset vide le plan de controle avant de semer.
+//
+// Par SQL et non en supprimant .wrangler/state : on n'a donc pas besoin
+// d'arreter le serveur. Les bases des clubs (Durable Objects) survivent, mais
+// plus rien ne les designe — les nouveaux clubs recoivent de nouveaux
+// identifiants, donc de nouveaux objets.
+if (process.argv.includes('--reset')) {
+  for (const table of [
+    'platform_audit', 'security_events', 'known_ips', 'login_attempts',
+    'org_stats', 'sessions', 'memberships', 'organizations', 'users',
+  ]) {
+    control(`DELETE FROM ${table}`)
+  }
+  console.log('Plan de controle vide.\n')
+}
+
 for (const club of CLUBS) {
   const call = session()
   const { orgId } = await call('POST', '/api/auth/signup', {
