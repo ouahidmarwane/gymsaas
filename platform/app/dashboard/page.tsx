@@ -69,19 +69,31 @@ export default function DashboardPage() {
 
   const active = draft ?? layout
   const firstName = me?.user.name.split(' ')[0] ?? ''
+  // En support, on regarde le club de quelqu'un d'autre : le saluer par son
+  // propre prenom laisse croire qu'on est chez soi. On nomme le club.
+  const inSupport = me?.scope.mode === 'support'
 
   return (
     <div className="dashboard-shell">
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
-          <h1 className="dz-hello">
-            Bonjour, <span>{firstName}</span> !
-          </h1>
-          <p className="dz-sub">
-            {new Date().toLocaleDateString('fr-MA', {
-              weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-            })}
-          </p>
+          {inSupport ? (
+            <>
+              <h1 className="dz-hello">{me?.branding?.name ?? 'Club'}</h1>
+              <p className="dz-sub">Tableau de bord du club, vu depuis la plateforme</p>
+            </>
+          ) : (
+            <>
+              <h1 className="dz-hello">
+                Bonjour, <span>{firstName}</span> !
+              </h1>
+              <p className="dz-sub">
+                {new Date().toLocaleDateString('fr-MA', {
+                  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+                })}
+              </p>
+            </>
+          )}
         </div>
 
         {canEdit && !editing && (

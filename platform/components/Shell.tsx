@@ -105,14 +105,17 @@ export default function Shell({ children }: { children: ReactNode }) {
 
   // Trois contextes, trois rails.
   //
-  // Un exploitant hors support n'a pas de club : lui montrer Membres ou
-  // Comptabilite n'aurait aucun sens, ces ecrans n'auraient rien a ouvrir.
-  // Il ne voit donc que la supervision. Une fois entre dans un club, il
-  // obtient exactement le rail de ce club, plus le retour a la liste.
+  // En mode support, on est DANS le club : le rail est celui du club, rien
+  // d'autre. Y laisser Clubs et Supervision melangeait deux niveaux et
+  // laissait croire qu'on etait encore sur la plateforme. La sortie vit dans
+  // la barre rouge, ou elle est impossible a manquer.
+  //
+  // Hors support, un exploitant sans club ne voit que la plateforme : lui
+  // montrer Membres ou Comptabilite n'aurait rien a ouvrir.
   const items = !me
     ? []
     : inSupport
-      ? [...PLATFORM_NAV, ...CLUB_NAV]
+      ? CLUB_NAV
       : me.isPlatformAdmin && !me.org
         ? PLATFORM_NAV
         : me.isPlatformAdmin
