@@ -192,6 +192,30 @@ export class ClubDatabase extends DurableObject<Env> {
     this.sql.exec('UPDATE disciplines SET is_active = 0 WHERE id = ?', id)
   }
 
+  // Reglages et disposition ----------------------------------------------
+
+  getSetting(key: string): unknown {
+    const row = this.sql
+      .exec<{ value: string }>('SELECT value FROM settings WHERE key = ?', key)
+      .toArray()[0]
+    if (!row) return null
+    try {
+      return JSON.parse(row.value)
+    } catch {
+      return null
+    }
+  }
+
+  setSetting(key: string, value: unknown): void {
+    this.sql.exec(
+      `INSERT INTO settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                      updated_at = ${NOW}`,
+      key,
+      JSON.stringify(value),
+    )
+  }
+
   // Membres --------------------------------------------------------------
 
   listMembers(opts: { limit?: number; offset?: number; search?: string } = {}) {

@@ -31,6 +31,24 @@ export interface Principal {
   role: 'owner' | 'admin' | 'staff' | 'viewer' | null
   branchId: string | null
   disciplineId: string | null
+
+  /**
+   * Club dans lequel un exploitant de plateforme est entre pour du support.
+   * Null hors mode support. Toujours distinct de orgId : on n'usurpe pas
+   * l'identite du proprietaire, on greffe une portee temporaire.
+   */
+  supportOrgId: string | null
+  /** Lecture seule tant que ce drapeau n'est pas leve explicitement. */
+  supportWrite: boolean
+}
+
+/** Club reellement vise par la requete, et a quel titre. */
+export function activeScope(p: Principal): {
+  orgId: string | null
+  mode: 'member' | 'support'
+} {
+  if (p.supportOrgId) return { orgId: p.supportOrgId, mode: 'support' }
+  return { orgId: p.orgId, mode: 'member' }
 }
 
 export async function createSession(
@@ -66,6 +84,7 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
   const tokenHash = await hashToken(token)
   const row = await env.CONTROL.prepare(
     `SELECT s.user_id, s.org_id, s.expires_at, s.last_seen_at,
+            s.support_org_id, s.support_expires_at, s.support_write,
             u.name, u.email, u.is_platform_admin, u.status AS user_status,
             m.role, m.branch_id, m.discipline_id, m.status AS membership_status,
             o.status AS org_status
@@ -81,6 +100,9 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
       org_id: string | null
       expires_at: string
       last_seen_at: string
+      support_org_id: string | null
+      support_expires_at: string | null
+      support_write: number
       name: string
       email: string
       is_platform_admin: number
@@ -128,6 +150,15 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
     .bind(tokenHash)
     .run()
 
+  // Mode support : valable uniquement pour un exploitant de plateforme, et
+  // uniquement avant expiration. Perdre le statut plateforme ou depasser le
+  // delai retire la portee immediatement, sans avoir a nettoyer la ligne.
+  const supportLive =
+    isPlatformAdmin &&
+    Boolean(row.support_org_id) &&
+    Boolean(row.support_expires_at) &&
+    Date.parse(row.support_expires_at!) > now
+
   return {
     userId: row.user_id,
     name: row.name,
@@ -137,7 +168,46 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
     role: hasMembership ? (row.role as Principal['role']) : null,
     branchId: row.branch_id,
     disciplineId: row.discipline_id,
+    supportOrgId: supportLive ? row.support_org_id : null,
+    supportWrite: supportLive && row.support_write === 1,
   }
+}
+
+const SUPPORT_TTL_MINUTES = 30
+const SUPPORT_WRITE_TTL_MINUTES = 10
+
+/** Entre en mode support sur un club. Lecture seule. */
+export async function beginSupport(env: Env, token: string, orgId: string): Promise<string> {
+  const expires = isoSeconds(new Date(Date.now() + SUPPORT_TTL_MINUTES * 60_000))
+  await env.CONTROL.prepare(
+    `UPDATE sessions
+        SET support_org_id = ?, support_expires_at = ?, support_write = 0
+      WHERE token_hash = ?`,
+  ).bind(orgId, expires, await hashToken(token)).run()
+  return expires
+}
+
+/**
+ * Leve le droit d'ecriture, pour une duree plus courte que la session de
+ * support elle-meme : un depannage qui modifie doit etre un acte deliberé,
+ * pas un etat dans lequel on reste.
+ */
+export async function allowSupportWrite(env: Env, token: string): Promise<string> {
+  const expires = isoSeconds(new Date(Date.now() + SUPPORT_WRITE_TTL_MINUTES * 60_000))
+  await env.CONTROL.prepare(
+    `UPDATE sessions
+        SET support_write = 1, support_expires_at = ?
+      WHERE token_hash = ? AND support_org_id IS NOT NULL`,
+  ).bind(expires, await hashToken(token)).run()
+  return expires
+}
+
+export async function endSupport(env: Env, token: string): Promise<void> {
+  await env.CONTROL.prepare(
+    `UPDATE sessions
+        SET support_org_id = NULL, support_expires_at = NULL, support_write = 0
+      WHERE token_hash = ?`,
+  ).bind(await hashToken(token)).run()
 }
 
 export async function destroySession(env: Env, token: string): Promise<void> {

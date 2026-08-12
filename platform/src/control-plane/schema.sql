@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS organizations (
   name         TEXT NOT NULL,
   name_ar      TEXT,
   logo_key     TEXT,                          -- cle R2, pas une URL
+  -- Theme du club (JSON) : couleur d'accent, mode clair/sombre. Stocke ici
+  -- plutot que dans le Durable Object parce que resolveSession lit deja
+  -- cette ligne : le club obtient sa marque sans requete supplementaire, et
+  -- le tableau de bord plateforme affiche les logos sans ouvrir N bases.
+  theme        TEXT,
   currency     TEXT NOT NULL DEFAULT 'MAD',
   phone_prefix TEXT NOT NULL DEFAULT '212',
   locale       TEXT NOT NULL DEFAULT 'fr',
@@ -92,7 +97,16 @@ CREATE TABLE IF NOT EXISTS sessions (
   last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
   expires_at  TEXT NOT NULL,
   ip          TEXT,
-  user_agent  TEXT
+  user_agent  TEXT,
+
+  -- Mode support : un exploitant de plateforme "entre" dans un club pour le
+  -- depanner. Ce n'est PAS un changement de role, c'est une portee greffee
+  -- sur la session, en lecture seule par defaut et limitee dans le temps.
+  -- L'ecriture demande une escalade explicite, tracee separement, pour
+  -- qu'un support ne modifie jamais un club par accident.
+  support_org_id     TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+  support_expires_at TEXT,
+  support_write      INTEGER NOT NULL DEFAULT 0 CHECK (support_write IN (0,1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
