@@ -36,3 +36,8 @@ Thumbs.db
 Attached Element Context from Integrated.txt
 DEPLOYMENT_GUIDE.md
 image.webp
+
+# cloudflare platform
+platform/node_modules/
+platform/.wrangler/
+

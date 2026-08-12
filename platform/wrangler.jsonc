@@ -1,0 +1,46 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gymflow-platform",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Base de données centrale (plan de contrôle). UNE seule, donc un binding
+  // statique convient : elle ne se multiplie pas avec les clubs.
+  "d1_databases": [
+    {
+      "binding": "CONTROL",
+      "database_name": "gymflow-control",
+      // Local : cet identifiant n'est pas utilisé, wrangler crée une base
+      // SQLite dans .wrangler/. À remplacer par l'identifiant réel renvoyé
+      // par `wrangler d1 create gymflow-control` avant tout déploiement.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "src/control-plane/migrations"
+    }
+  ],
+
+  // Un Durable Object SQLite par club. Un seul binding couvre un nombre
+  // illimité de clubs : l'instance est adressée par nom (idFromName), créée
+  // à la première utilisation. C'est ce qui rend l'inscription self-service
+  // possible — D1 exigerait un redéploiement du Worker par club.
+  "durable_objects": {
+    "bindings": [
+      { "name": "CLUB", "class_name": "ClubDatabase" }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      // new_sqlite_classes (et non new_classes) : indispensable pour obtenir
+      // le backend SQLite plutôt que le stockage clé-valeur historique.
+      "new_sqlite_classes": ["ClubDatabase"]
+    }
+  ],
+
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "gymsaas" }
+  ],
+
+  "observability": { "enabled": true }
+}
