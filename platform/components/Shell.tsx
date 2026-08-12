@@ -8,7 +8,7 @@ import {
   ShieldAlert, Building2, Settings, LogOut, Menu, X,
 } from 'lucide-react'
 import { api, ApiError, type Me, type Capabilities } from '@/lib/client'
-import { SKINS } from '@/src/club/branding'
+import { SKINS, DEFAULT_THEME } from '@/src/club/branding'
 
 // Coquille de l'application : le rail flottant en pilule de 78px, exactement
 // comme l'application d'origine. Les classes viennent de globals.css, repris
@@ -71,29 +71,33 @@ export default function Shell({ children }: { children: ReactNode }) {
   // accroche deja (rail actif, barres, graphiques, focus), donc un club change
   // d'identite sans qu'aucune regle de contraste bouge.
   useEffect(() => {
-    const root = document.documentElement
-    const accent = me?.branding?.theme.accent
-    if (accent) {
-      root.style.setProperty('--gold', accent)
-      root.style.setProperty('--tabs-pill-bg', accent)
-    }
-
-    // Deux attributs, deux roles. data-theme porte la base claire ou sombre,
-    // que la feuille d'origine connait deja ; data-skin porte la palette
-    // par-dessus. Separer les deux evite de dupliquer la feuille claire.
-    //
     // Rien n'est pose tant que la session n'a pas repondu. Chaque page monte
     // sa propre coquille : reappliquer un defaut a chaque navigation faisait
     // repasser l'application en sombre le temps de l'aller-retour, ce qui se
     // lit comme un habillage perdu.
-    const skin = me?.branding?.theme.skin
-    if (skin) {
-      root.setAttribute('data-theme', SKINS[skin]?.base ?? 'dark')
-      root.setAttribute('data-skin', skin)
-      // Memorise pour que le prochain chargement complet peigne juste du
-      // premier coup (voir le script de app/layout.tsx).
-      try { localStorage.setItem('gf-skin', skin) } catch { /* mode prive */ }
-    }
+    if (!me) return
+
+    // Une fois la session connue, on pose TOUJOURS quelque chose.
+    //
+    // L'exploitant n'a pas de club : sans repli explicite, ses ecrans
+    // gardaient l'habillage et la couleur du dernier club visite. La
+    // plateforme se mettait donc aux couleurs de son client, ce qui brouille
+    // exactement la frontiere que le mode support existe pour marquer.
+    const root = document.documentElement
+    const theme = me.branding?.theme
+    const accent = theme?.accent ?? DEFAULT_THEME.accent
+    root.style.setProperty('--gold', accent)
+    root.style.setProperty('--tabs-pill-bg', accent)
+
+    // Deux attributs, deux roles. data-theme porte la base claire ou sombre,
+    // que la feuille d'origine connait deja ; data-skin porte la palette
+    // par-dessus. Separer les deux evite de dupliquer la feuille claire.
+    const skin = theme?.skin ?? DEFAULT_THEME.skin
+    root.setAttribute('data-theme', SKINS[skin]?.base ?? 'dark')
+    root.setAttribute('data-skin', skin)
+    // Memorise pour que le prochain chargement complet peigne juste du
+    // premier coup (voir le script de app/layout.tsx).
+    try { localStorage.setItem('gf-skin', skin) } catch { /* mode prive */ }
     if (me?.branding?.locale === 'ar') {
       root.setAttribute('lang', 'ar'); root.setAttribute('dir', 'rtl')
     } else {
