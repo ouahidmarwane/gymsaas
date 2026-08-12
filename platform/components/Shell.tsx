@@ -32,7 +32,8 @@ const CLUB_NAV: NavItem[] = [
 
 /** Ecrans de la plateforme. L'exploitant supervise, il ne gere aucun club. */
 const PLATFORM_NAV: NavItem[] = [
-  { href: '/admin', label: 'Clubs', icon: Building2 },
+  { href: '/admin',       label: 'Clubs',       icon: Building2 },
+  { href: '/supervision', label: 'Supervision', icon: ShieldAlert },
 ]
 
 export default function Shell({ children }: { children: ReactNode }) {

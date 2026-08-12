@@ -125,6 +125,65 @@ async function recordAttempt(env: Env, identifier: string, ip: string | null, ok
   ).bind(identifier, ip, ok ? 1 : 0).run()
 }
 
+/**
+ * Enregistre l'adresse d'une connexion reussie et signale celles jamais vues.
+ *
+ * Un compte qui n'a encore aucune adresse connue est un compte neuf : sa
+ * premiere connexion n'a rien de suspect, on l'apprend sans lever d'alerte.
+ */
+async function noteLoginLocation(
+  env: Env, userId: string, orgId: string | null, ip: string | null, userAgent: string | null,
+): Promise<void> {
+  if (!ip) return
+
+  const seen = await env.CONTROL.prepare(
+    'SELECT COUNT(*) AS n FROM known_ips WHERE user_id = ?',
+  ).bind(userId).first<{ n: number }>()
+
+  const known = await env.CONTROL.prepare(
+    'SELECT 1 FROM known_ips WHERE user_id = ? AND ip = ?',
+  ).bind(userId, ip).first()
+
+  await env.CONTROL.prepare(
+    `INSERT INTO known_ips (user_id, ip) VALUES (?, ?)
+     ON CONFLICT(user_id, ip) DO UPDATE SET last_seen = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+  ).bind(userId, ip).run()
+
+  if (!known && (seen?.n ?? 0) > 0) {
+    await env.CONTROL.prepare(
+      `INSERT INTO security_events (user_id, org_id, type, detail, ip, user_agent)
+       VALUES (?, ?, 'new_ip', ?, ?, ?)`,
+    ).bind(userId, orgId, 'Connexion depuis une adresse jamais vue', ip, userAgent).run()
+  }
+}
+
+/** Signale une rafale d'echecs, une seule fois par fenetre. */
+async function noteFailedBurst(env: Env, identifier: string, ip: string | null): Promise<void> {
+  const since = isoSeconds(new Date(Date.now() - WINDOW_MINUTES * 60_000))
+
+  const recent = await env.CONTROL.prepare(
+    `SELECT COUNT(*) AS n FROM login_attempts
+      WHERE succeeded = 0 AND attempted_at > ? AND identifier = ?`,
+  ).bind(since, identifier).first<{ n: number }>()
+
+  if ((recent?.n ?? 0) < 5) return
+
+  const already = await env.CONTROL.prepare(
+    `SELECT 1 FROM security_events
+      WHERE type = 'failed_burst' AND detail = ? AND created_at > ?`,
+  ).bind(identifier, since).first()
+  if (already) return
+
+  const user = await env.CONTROL.prepare(
+    'SELECT id FROM users WHERE email_norm = ?',
+  ).bind(identifier).first<{ id: string }>()
+
+  await env.CONTROL.prepare(
+    `INSERT INTO security_events (user_id, type, detail, ip)
+     VALUES (?, 'failed_burst', ?, ?)`,
+  ).bind(user?.id ?? null, identifier, ip).run()
+}
+
 // Validation -----------------------------------------------------------------
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
@@ -503,6 +562,88 @@ export const api = {
         })
       }
 
+      // Supervision : qui est connecte, ou, et qu'est-ce qui cloche.
+      //
+      // Sessions de la plateforme ET des clubs sur le meme ecran : une
+      // connexion suspecte sur un club se repere en la comparant aux autres,
+      // pas en ouvrant trente pages.
+      if (path === '/api/admin/supervision' && method === 'GET') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+
+        const cutoff = isoSeconds(new Date(Date.now() - 7 * 86_400_000))
+
+        const [sessions, events, attempts] = await Promise.all([
+          env.CONTROL.prepare(
+            `SELECT s.user_id, s.org_id, s.created_at, s.last_seen_at, s.expires_at,
+                    s.ip, s.user_agent, s.support_org_id,
+                    u.name AS user_name, u.email, u.is_platform_admin,
+                    o.name AS org_name, o.theme AS org_theme,
+                    m.role,
+                    (SELECT COUNT(*) FROM known_ips k
+                      WHERE k.user_id = s.user_id AND k.ip = s.ip) AS ip_known
+               FROM sessions s
+               JOIN users u ON u.id = s.user_id
+               LEFT JOIN organizations o ON o.id = s.org_id
+               LEFT JOIN memberships m ON m.user_id = s.user_id AND m.org_id = s.org_id
+              WHERE s.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+              ORDER BY s.last_seen_at DESC
+              LIMIT 200`,
+          ).all(),
+
+          env.CONTROL.prepare(
+            `SELECT e.id, e.type, e.detail, e.ip, e.user_agent, e.created_at, e.handled_at,
+                    u.name AS user_name, u.email, o.name AS org_name
+               FROM security_events e
+               LEFT JOIN users u ON u.id = e.user_id
+               LEFT JOIN organizations o ON o.id = e.org_id
+              WHERE e.created_at > ?
+              ORDER BY e.handled_at IS NOT NULL, e.created_at DESC
+              LIMIT 100`,
+          ).bind(cutoff).all(),
+
+          env.CONTROL.prepare(
+            `SELECT identifier, ip, COUNT(*) AS failures, MAX(attempted_at) AS last_attempt
+               FROM login_attempts
+              WHERE succeeded = 0 AND attempted_at > ?
+              GROUP BY identifier, ip
+             HAVING failures >= 3
+              ORDER BY last_attempt DESC
+              LIMIT 50`,
+          ).bind(isoSeconds(new Date(Date.now() - 86_400_000))).all(),
+        ])
+
+        return json({
+          sessions: sessions.results,
+          events: events.results,
+          failedAttempts: attempts.results,
+          serverTime: isoSeconds(new Date()),
+        })
+      }
+
+      // Coupe toutes les sessions d'un compte. Le geste a poser quand une
+      // connexion parait compromise.
+      const revokeRoute = path.match(/^\/api\/admin\/users\/([^/]+)\/sessions$/)
+      if (revokeRoute && method === 'DELETE') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const userId = revokeRoute[1]!
+        if (userId === principal.userId) return fail(400, 'Deconnectez-vous depuis votre propre compte')
+
+        await env.CONTROL.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run()
+        await env.CONTROL.prepare(
+          "INSERT INTO platform_audit (actor_id, action, detail, ip) VALUES (?, 'revoke_sessions', ?, ?)",
+        ).bind(principal.userId, JSON.stringify({ userId }), ip).run()
+        return json({ ok: true })
+      }
+
+      const handleRoute = path.match(/^\/api\/admin\/events\/(\d+)\/handled$/)
+      if (handleRoute && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        await env.CONTROL.prepare(
+          "UPDATE security_events SET handled_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+        ).bind(Number(handleRoute[1])).run()
+        return json({ ok: true })
+      }
+
       // Entrer dans un club pour le depanner. Ce n'est pas une usurpation
       // d'identite : la portee est greffee sur la session existante, en
       // lecture seule, limitee dans le temps, et le club en voit la trace.
@@ -851,6 +992,7 @@ async function login(request: Request, env: Env, ip: string | null): Promise<Res
 
   if (!user || !ok || user.status !== 'active') {
     await recordAttempt(env, email, ip, false)
+    await noteFailedBurst(env, email, ip)
     return fail(401, 'Identifiants invalides')
   }
 
@@ -861,6 +1003,7 @@ async function login(request: Request, env: Env, ip: string | null): Promise<Res
   ).bind(user.id).first<{ org_id: string }>()
 
   await recordAttempt(env, email, ip, true)
+  await noteLoginLocation(env, user.id, membership?.org_id ?? null, ip, request.headers.get('User-Agent'))
   await env.CONTROL.prepare(
     "UPDATE users SET last_login_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
   ).bind(user.id).run()

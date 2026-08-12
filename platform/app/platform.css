@@ -187,29 +187,82 @@
 .gf-resize:hover { color: var(--gold); }
 [dir='rtl'] .gf-resize { cursor: nesw-resize; transform: scaleX(-1); }
 
-.gf-tray {
-  margin-top: 18px;
-  padding: 18px 20px;
-  border: 1px dashed rgba(255, 255, 255, 0.14);
-  border-radius: 28px;
+/* Palette d'elements, pendant l'edition ---------------------------------- */
+
+.gf-palette {
+  position: fixed;
+  inset-inline-end: 20px;
+  top: 96px;
+  width: 232px;
+  max-height: calc(100vh - 140px);
+  z-index: 26;
   display: flex; flex-direction: column; gap: 12px;
+  padding: 16px;
+  border-radius: 28px;
+  background: rgba(11, 15, 26, 0.96);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 32px 72px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  animation: fadeUp 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  overflow-y: auto;
 }
-.gf-tray-label {
+
+.gf-palette-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gf-palette-title {
   font-size: 0.65rem; font-weight: 600; color: var(--muted);
   letter-spacing: 0.18em; text-transform: uppercase;
 }
-.gf-tray-items { display: flex; flex-wrap: wrap; gap: 8px; }
-.gf-tray-btn {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 0.45rem 0.9rem;
+.gf-palette-count {
+  min-width: 20px; padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--muted);
-  font-size: 0.78rem; font-weight: 600;
-  cursor: pointer;
+  font-size: 0.68rem; font-weight: 800; text-align: center;
 }
-.gf-tray-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); border-color: var(--gold); }
+.gf-palette-empty { font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
+
+.gf-palette-items { display: flex; flex-direction: column; gap: 6px; }
+
+.gf-palette-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  font-size: 0.8rem; font-weight: 600;
+  text-align: start;
+  cursor: grab;
+  touch-action: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+              transform var(--transition-fast);
+}
+.gf-palette-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--gold);
+  transform: translateY(-1px);
+}
+.gf-palette-item:active { cursor: grabbing; transform: scale(0.98); }
+
+.gf-palette-grip { color: var(--muted); flex: none; }
+.gf-palette-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gf-palette-plus { color: var(--gold); flex: none; opacity: 0; transition: opacity var(--transition-fast); }
+.gf-palette-item:hover .gf-palette-plus { opacity: 1; }
+
+/* La palette occupe la droite : on decale la grille pour ne rien recouvrir. */
+@media (min-width: 1180px) {
+  .dashboard-shell:has(.gf-palette) { padding-inline-end: 268px; }
+}
+@media (max-width: 1179px) {
+  .gf-palette {
+    position: static; width: auto; max-height: none;
+    inset: auto; margin-top: 18px;
+  }
+  .gf-palette-items { flex-direction: row; flex-wrap: wrap; }
+  .gf-palette-item { width: auto; }
+}
 
 /* Sur telephone la grille s'empile : une disposition pensee pour un grand
    ecran n'a pas de sens tenue d'une main. L'edition reste au bureau. */

@@ -124,6 +124,37 @@ CREATE TABLE IF NOT EXISTS login_attempts (
 CREATE INDEX IF NOT EXISTS idx_attempts_lookup ON login_attempts(identifier, attempted_at);
 CREATE INDEX IF NOT EXISTS idx_attempts_ip     ON login_attempts(ip, attempted_at);
 
+-- Adresses connues -------------------------------------------------------
+-- Sert a reconnaitre une connexion depuis un endroit jamais vu. C'est le
+-- signal le plus utile en pratique : un compte de club qui se connecte
+-- soudain depuis une adresse inconnue merite un coup d'oeil.
+CREATE TABLE IF NOT EXISTS known_ips (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ip         TEXT NOT NULL,
+  first_seen TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  last_seen  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  PRIMARY KEY (user_id, ip)
+);
+
+-- Evenements de securite ---------------------------------------------------
+-- Alimente automatiquement a la connexion. Lu uniquement par la plateforme :
+-- c'est la page de supervision.
+CREATE TABLE IF NOT EXISTS security_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    TEXT REFERENCES users(id) ON DELETE CASCADE,
+  org_id     TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+  type       TEXT NOT NULL
+               CHECK (type IN ('new_ip','failed_burst','support_write')),
+  detail     TEXT,
+  ip         TEXT,
+  user_agent TEXT,
+  handled_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_time ON security_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_security_events_open ON security_events(handled_at) WHERE handled_at IS NULL;
+
 -- Agregats par club ----------------------------------------------------------
 -- On ne peut pas faire de JOIN entre Durable Objects : le tableau de bord
 -- superadmin lit ce cache, rafraichi par tache planifiee, plutot que

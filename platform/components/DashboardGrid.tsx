@@ -111,22 +111,32 @@ export default function DashboardGrid({
   }, [drag, layout, metrics, onChange])
 
   // Redimensionnement au pointeur.
+  //
+  // On mesure le bord droit reel du curseur par rapport a la grille, puis on
+  // arrondit au demi-pas superieur : sans ce biais il fallait depasser la
+  // moitie d'une colonne pour gagner un cran, ce qui donnait l'impression
+  // que la carte refusait de s'agrandir.
   useEffect(() => {
     if (!resizing) return
-    const spec = specs[resizing]
-    if (!spec) return
 
     function onMove(event: PointerEvent) {
       const grid = gridRef.current
       if (!grid) return
+      const spec = specs[resizing!]
+      const card = layout.find(c => c.id === resizing)
+      if (!spec || !card) return
+
       const rect = grid.getBoundingClientRect()
       const { unitX, unitY } = metrics()
-      const card = layout.find(c => c.id === resizing)!
       const rtl = getComputedStyle(document.documentElement).direction === 'rtl'
+
       const edgeX = rtl ? rect.right - event.clientX : event.clientX - rect.left
-      const w = Math.round(edgeX / unitX) - card.x
-      const h = Math.round((event.clientY - rect.top) / unitY) - card.y
-      if (w !== card.w || h !== card.h) onChange(resizeCard(layout, resizing!, w, h, spec!))
+      const edgeY = event.clientY - rect.top
+
+      const w = Math.max(1, Math.ceil((edgeX - unitX * card.x) / unitX))
+      const h = Math.max(1, Math.ceil((edgeY - unitY * card.y) / unitY))
+
+      if (w !== card.w || h !== card.h) onChange(resizeCard(layout, resizing!, w, h, spec))
     }
     function finish() { setResizing(null) }
 
@@ -155,6 +165,50 @@ export default function DashboardGrid({
       originY: event.clientY,
       dx: 0, dy: 0,
       target: { x: card.x, y: card.y },
+    })
+  }
+
+  /**
+   * Depose une carte depuis la palette.
+   *
+   * On la rend visible tout de suite, puis on enchaine sur le meme mecanisme
+   * de glisser que les cartes deja posees : elle suit le curseur jusqu'au
+   * relachement, au lieu d'apparaitre au hasard en bas de la grille.
+   */
+  function addFromPalette(event: React.PointerEvent, id: string) {
+    if (!editing) return
+    event.preventDefault()
+
+    const card = layout.find(c => c.id === id)
+    if (!card) return
+
+    const grid = gridRef.current
+    if (!grid) return
+    const rect = grid.getBoundingClientRect()
+    const { col, unitX, unitY } = metrics()
+    const rtl = getComputedStyle(document.documentElement).direction === 'rtl'
+
+    // Le curseur saisit la carte en son milieu : le geste demarre sous le
+    // doigt, pas dans un coin.
+    const grabX = (col * card.w) / 2
+    const grabY = ROW_H / 2
+
+    const localX = rtl
+      ? rect.right - (event.clientX - grabX) - col
+      : event.clientX - grabX - rect.left
+    const localY = event.clientY - grabY - rect.top
+
+    onChange(layout.map(c => (c.id === id ? { ...c, visible: true } : c)))
+    setDrag({
+      id,
+      pointerId: event.pointerId,
+      grabX, grabY,
+      originX: event.clientX, originY: event.clientY,
+      dx: 0, dy: 0,
+      target: {
+        x: Math.max(0, Math.min(Math.round(localX / unitX), COLUMNS - card.w)),
+        y: Math.max(0, Math.round(localY / unitY)),
+      },
     })
   }
 
@@ -260,25 +314,43 @@ export default function DashboardGrid({
         })}
       </div>
 
-      {editing && hidden.length > 0 && (
-        <div className="gf-tray">
-          <span className="gf-tray-label">Cartes masquees</span>
-          <div className="gf-tray-items">
-            {hidden.map(card => (
-              <button
-                key={card.id}
-                type="button"
-                className="gf-tray-btn"
-                onClick={() => onChange(moveCard(
-                  layout.map(c => (c.id === card.id ? { ...c, visible: true } : c)),
-                  card.id, 0, 999,
-                ))}
-              >
-                <Plus size={13} strokeWidth={2.4} /> {labelFor(card.id)}
-              </button>
-            ))}
+      {/* Palette : les cartes disponibles, a poser sur la grille.
+          Un panneau lateral plutot qu'un tiroir en bas — on garde la grille
+          et le catalogue dans le meme champ de vision pendant qu'on compose. */}
+      {editing && (
+        <aside className="gf-palette" aria-label="Elements disponibles">
+          <div className="gf-palette-head">
+            <span className="gf-palette-title">Elements</span>
+            <span className="gf-palette-count">{hidden.length}</span>
           </div>
-        </div>
+
+          {hidden.length === 0 ? (
+            <p className="gf-palette-empty">
+              Toutes les cartes sont sur le tableau. Masquez-en une avec la croix
+              pour la retrouver ici.
+            </p>
+          ) : (
+            <div className="gf-palette-items">
+              {hidden.map(card => (
+                <button
+                  key={card.id}
+                  type="button"
+                  className="gf-palette-item"
+                  title={`Glisser ${labelFor(card.id)} sur le tableau, ou cliquer pour l'ajouter`}
+                  onPointerDown={e => addFromPalette(e, card.id)}
+                  onClick={() => onChange(moveCard(
+                    layout.map(c => (c.id === card.id ? { ...c, visible: true } : c)),
+                    card.id, 0, 999,
+                  ))}
+                >
+                  <GripVertical size={13} strokeWidth={2.2} className="gf-palette-grip" />
+                  <span className="gf-palette-label">{labelFor(card.id)}</span>
+                  <Plus size={13} strokeWidth={2.4} className="gf-palette-plus" />
+                </button>
+              ))}
+            </div>
+          )}
+        </aside>
       )}
     </>
   )
