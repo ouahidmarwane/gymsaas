@@ -51,6 +51,24 @@ function control(sql) {
 
 const uniq = () => Math.random().toString(36).slice(2, 10)
 
+/**
+ * Attend que le Worker reponde.
+ *
+ * Lancer wrangler en parallele pour ecrire dans la base locale fait
+ * brievement tomber le serveur de developpement ; sans cette attente, la
+ * requete suivante echoue en ECONNRESET et le test accuse le code.
+ */
+async function waitReady(attempts = 40) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(`${BASE}/api/health`)
+      if (res.ok) return
+    } catch { /* pas encore la */ }
+    await new Promise(r => setTimeout(r, 500))
+  }
+  throw new Error('Worker injoignable apres attente')
+}
+
 let operator, clubOwner, clubId, opEmail
 
 before(async () => {
@@ -109,6 +127,48 @@ test("l'ouverture de la base d'un club est tracee", async () => {
   )
   // On cherche un compteur non nul dans la sortie JSON de wrangler.
   assert.match(out, /"n":\s*[1-9]/, `aucune trace d'audit trouvee : ${out}`)
+})
+
+test('un exploitant sans club n en possede aucun et n en voit aucun ecran', async () => {
+  // Un exploitant supervise la plateforme ; il ne gere pas de club. Lui en
+  // attribuer un lui afficherait des ecrans vides et brouillerait la
+  // distinction entre superviser et posseder.
+  const o = uniq()
+  const email = `pur-${o}@example.ma`
+  execFileSync(
+    process.execPath,
+    [fileURLToPath(new URL('../scripts/create-operator.mjs', import.meta.url)),
+     email, 'Exploitant Pur', 'motdepasse-solide-pur'],
+    { stdio: 'ignore', cwd: fileURLToPath(new URL('..', import.meta.url)) },
+  )
+  await waitReady()
+
+  const pure = client()
+  const login = await pure.call('POST', '/api/auth/login', { email, password: 'motdepasse-solide-pur' })
+  assert.equal(login.status, 200, JSON.stringify(login.data))
+  assert.equal(login.data.orgId, null, 'un exploitant ne doit etre rattache a aucun club')
+
+  const me = await pure.call('GET', '/api/me')
+  assert.equal(me.data.isPlatformAdmin, true)
+  assert.equal(me.data.org, null, 'aucune organisation')
+  assert.equal(me.data.branding, null, 'aucune marque de club a afficher')
+
+  // Il supervise bien la plateforme.
+  assert.equal((await pure.call('GET', '/api/admin/clubs')).status, 200)
+
+  // Mais les ecrans d'un club lui sont fermes : ils n'ont rien a ouvrir.
+  for (const path of ['/api/members', '/api/branches', '/api/disciplines', '/api/dashboard/stats']) {
+    const res = await pure.call('GET', path)
+    assert.equal(res.status, 403, `${path} devrait etre refuse, recu ${res.status}`)
+  }
+
+  // Et il n'apparait pas comme un club dans sa propre liste.
+  const overview = await pure.call('GET', '/api/admin/overview')
+  assert.equal(
+    overview.data.clubs.some(c => c.name === 'Exploitant Pur' || c.slug?.startsWith('pur-')),
+    false,
+    'un exploitant ne doit pas figurer parmi les clubs',
+  )
 })
 
 test('le superadmin conserve son propre club, sans confusion de portee', async () => {

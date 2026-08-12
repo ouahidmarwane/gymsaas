@@ -126,15 +126,16 @@ for (const club of CLUBS) {
   console.log(`  ${club.name.padEnd(22)} ${club.email.padEnd(16)} ${club.members.length} membres  ${orgId}`)
 }
 
-// Compte exploitant : cree comme un club ordinaire, puis promu hors
-// application. Aucune route ne donne ce statut, par construction.
-const opCall = session()
-await opCall('POST', '/api/auth/signup', {
-  clubName: 'Plateforme', slug: 'plateforme', name: 'Operateur GymFlow',
-  email: 'admin@demo.ma', password: PASSWORD,
-})
-control(`UPDATE users SET is_platform_admin = 1 WHERE email_norm = 'admin@demo.ma'`)
-console.log(`  ${'Plateforme (superadmin)'.padEnd(22)} admin@demo.ma`)
+// Compte exploitant : cree SANS club. Il supervise la plateforme, il n'en
+// gere aucun — lui donner une organisation n'aurait pas de sens et lui
+// afficherait des ecrans de club vides.
+execFileSync(
+  process.execPath,
+  [fileURLToPath(new URL('./create-operator.mjs', import.meta.url)),
+   'admin@demo.ma', 'Operateur GymFlow', PASSWORD],
+  { stdio: 'ignore', cwd: ROOT },
+)
+console.log(`  ${'Exploitant (sans club)'.padEnd(22)} admin@demo.ma`)
 
 // Remplit le cache d'agregats pour que la supervision affiche des chiffres
 // tout de suite, au lieu d'attendre le prochain passage du cron.

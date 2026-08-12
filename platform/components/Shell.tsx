@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
-  LayoutDashboard, Users, Award, Trophy, Wallet, UserCog,
+  LayoutDashboard, Users, Award, Trophy, Wallet, UserCog, SlidersHorizontal,
   ShieldAlert, Building2, Settings, LogOut, Menu, X,
 } from 'lucide-react'
 import { api, ApiError, type Me } from '@/lib/client'
@@ -17,21 +17,22 @@ interface NavItem {
   href: string
   label: string
   icon: typeof LayoutDashboard
-  platformOnly?: boolean
 }
 
-const NAV: NavItem[] = [
-  { href: '/dashboard',      label: 'Tableau de bord', icon: LayoutDashboard },
-  { href: '/members',        label: 'Membres',         icon: Users },
+/** Ecrans d'un club. Ils n'ont de sens que dans un club. */
+const CLUB_NAV: NavItem[] = [
+  { href: '/dashboard',      label: 'Tableau de bord',  icon: LayoutDashboard },
+  { href: '/members',        label: 'Membres',          icon: Users },
   { href: '/grades',         label: 'Passage de grade', icon: Award },
-  { href: '/championships',  label: 'Championnats',    icon: Trophy },
-  { href: '/comptabilite',   label: 'Comptabilite',    icon: Wallet },
-  { href: '/staff',          label: 'Equipe & droits', icon: UserCog },
-  { href: '/setup',          label: 'Configuration',   icon: Settings },
+  { href: '/championships',  label: 'Championnats',     icon: Trophy },
+  { href: '/comptabilite',   label: 'Comptabilite',     icon: Wallet },
+  { href: '/staff',          label: 'Equipe & droits',  icon: UserCog },
+  { href: '/setup',          label: 'Configuration',    icon: SlidersHorizontal },
 ]
 
+/** Ecrans de la plateforme. L'exploitant supervise, il ne gere aucun club. */
 const PLATFORM_NAV: NavItem[] = [
-  { href: '/admin', label: 'Clubs', icon: Building2, platformOnly: true },
+  { href: '/admin', label: 'Clubs', icon: Building2 },
 ]
 
 export default function Shell({ children }: { children: ReactNode }) {
@@ -72,6 +73,17 @@ export default function Shell({ children }: { children: ReactNode }) {
 
   useEffect(() => { setDrawer(false) }, [pathname])
 
+  // Un exploitant sans club qui atterrit sur un ecran de club n'a rien a y
+  // voir : ces pages n'ont aucune base a ouvrir. On le renvoie a la
+  // supervision plutot que de lui afficher « aucun club actif ».
+  useEffect(() => {
+    if (!me) return
+    const clubRoute = CLUB_NAV.some(n => pathname.startsWith(n.href))
+    if (clubRoute && me.isPlatformAdmin && !me.org && me.scope.mode !== 'support') {
+      router.replace('/admin')
+    }
+  }, [me, pathname, router])
+
   if (failed) {
     return (
       <div className="app-shell" style={{ alignItems: 'center', justifyContent: 'center' }}>
@@ -89,9 +101,28 @@ export default function Shell({ children }: { children: ReactNode }) {
   }
 
   const inSupport = me?.scope.mode === 'support'
-  const items = me?.isPlatformAdmin ? [...PLATFORM_NAV, ...NAV] : NAV
-  const clubName = me?.branding?.name ?? 'GymFlow'
-  const logo = me?.branding?.logoUrl
+
+  // Trois contextes, trois rails.
+  //
+  // Un exploitant hors support n'a pas de club : lui montrer Membres ou
+  // Comptabilite n'aurait aucun sens, ces ecrans n'auraient rien a ouvrir.
+  // Il ne voit donc que la supervision. Une fois entre dans un club, il
+  // obtient exactement le rail de ce club, plus le retour a la liste.
+  const items = !me
+    ? []
+    : inSupport
+      ? [...PLATFORM_NAV, ...CLUB_NAV]
+      : me.isPlatformAdmin && !me.org
+        ? PLATFORM_NAV
+        : me.isPlatformAdmin
+          ? [...PLATFORM_NAV, ...CLUB_NAV]
+          : CLUB_NAV
+
+  // Hors support, un exploitant sans club represente la plateforme, pas un
+  // club : ni logo de club, ni nom de club a afficher.
+  const isOperatorView = Boolean(me?.isPlatformAdmin && !me?.org && !inSupport)
+  const clubName = isOperatorView ? 'GymFlow' : (me?.branding?.name ?? 'GymFlow')
+  const logo = isOperatorView ? null : me?.branding?.logoUrl
 
   return (
     <div className="app-shell">
