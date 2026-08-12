@@ -10,31 +10,7 @@
 //   node --test test/layout.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-
-const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8787'
-
-function client() {
-  let cookie = null
-  return {
-    async call(method, path, body) {
-      const res = await fetch(BASE + path, {
-        method,
-        headers: {
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-      })
-      const sc = res.headers.get('set-cookie')
-      if (sc) { const raw = sc.split(';')[0]; cookie = raw.endsWith('=') ? null : raw }
-      let data = null
-      try { data = await res.json() } catch { /* vide */ }
-      return { status: res.status, data }
-    },
-  }
-}
-
-const uniq = () => Math.random().toString(36).slice(2, 10)
+import { BASE, client, uniq } from './helpers.mjs'
 
 let clubA, clubB
 

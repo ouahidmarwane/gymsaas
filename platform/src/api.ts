@@ -63,6 +63,13 @@ async function clubAsPlatformAdmin(
   env: Env, principal: Principal, orgId: string, action: string, ip: string | null,
 ): Promise<DurableObjectStub<ClubDatabase>> {
   if (!principal.isPlatformAdmin) throw new HttpError(403, 'Reserve a la plateforme')
+
+  // On verifie que le club existe avant d'ouvrir son objet : idFromName sur
+  // un identifiant quelconque en creerait un vide, migrations comprises.
+  const org = await env.CONTROL.prepare('SELECT 1 FROM organizations WHERE id = ?')
+    .bind(orgId).first()
+  if (!org) throw new HttpError(404, 'Club inconnu')
+
   await env.CONTROL.prepare(
     'INSERT INTO platform_audit (actor_id, action, org_id, ip) VALUES (?, ?, ?, ?)',
   ).bind(principal.userId, action, orgId, ip).run()
@@ -85,9 +92,16 @@ function atLeast(principal: Principal, min: keyof typeof RANK, write = false): v
   const { mode } = activeScope(principal)
 
   if (mode === 'support') {
+    // La portee support ne vaut que pour un exploitant de plateforme. On le
+    // reaffirme ici plutot que de s'en remettre a un invariant lointain.
+    if (!principal.isPlatformAdmin) throw new HttpError(403, 'Reserve a la plateforme')
     if (write && !principal.supportWrite) {
       throw new HttpError(403, 'Mode support en lecture seule : activez l ecriture d abord')
     }
+    // Le niveau demande reste evalue : un support vaut « administrateur »,
+    // pas proprietaire. Ignorer `min` accordait silencieusement le rang le
+    // plus eleve a toute route ajoutee ensuite.
+    if (RANK.admin < RANK[min]) throw new HttpError(403, 'Droits insuffisants')
     return
   }
 
@@ -106,17 +120,31 @@ async function auditSupport(
 
 // Anti-force brute -----------------------------------------------------------
 
-const MAX_ATTEMPTS = 8
 const WINDOW_MINUTES = 15
+/** Blocage dur : une source qui essaie en rafale. */
+const MAX_PER_IP = 10
+/**
+ * Blocage par compte, volontairement bien plus haut.
+ *
+ * Compter les echecs par adresse e-mail offrait un deni de service trivial :
+ * dix requetes suffisaient a verrouiller le compte d'un proprietaire depuis
+ * n'importe ou, indefiniment. La protection contre le bourrinage vient de la
+ * limite par IP ; celle-ci ne couvre plus qu'une attaque vraiment distribuee.
+ */
+const MAX_PER_IDENTIFIER = 20
 
 async function throttled(env: Env, identifier: string, ip: string | null): Promise<boolean> {
   const since = isoSeconds(new Date(Date.now() - WINDOW_MINUTES * 60_000))
+
   const row = await env.CONTROL.prepare(
-    `SELECT COUNT(*) AS n FROM login_attempts
-      WHERE succeeded = 0 AND attempted_at > ?
-        AND (identifier = ? OR (ip IS NOT NULL AND ip = ?))`,
-  ).bind(since, identifier, ip).first<{ n: number }>()
-  return (row?.n ?? 0) >= MAX_ATTEMPTS
+    `SELECT
+       SUM(CASE WHEN ip IS NOT NULL AND ip = ? THEN 1 ELSE 0 END) AS by_ip,
+       SUM(CASE WHEN identifier = ?                THEN 1 ELSE 0 END) AS by_identifier
+     FROM login_attempts
+     WHERE succeeded = 0 AND attempted_at > ?`,
+  ).bind(ip, identifier, since).first<{ by_ip: number | null; by_identifier: number | null }>()
+
+  return (row?.by_ip ?? 0) >= MAX_PER_IP || (row?.by_identifier ?? 0) >= MAX_PER_IDENTIFIER
 }
 
 async function recordAttempt(env: Env, identifier: string, ip: string | null, ok: boolean) {
@@ -197,6 +225,14 @@ function str(v: unknown, field: string, max = 200): string {
   return s
 }
 
+/** Entier d'URL, avec repli : une valeur non numerique ne doit rien casser. */
+function intParam(url: URL, name: string, fallback: number): number {
+  const raw = url.searchParams.get(name)
+  if (raw === null) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) ? Math.trunc(n) : fallback
+}
+
 /** Chaine facultative : absente ou vide devient null. */
 function optional(v: unknown, max = 200): string | null {
   if (v === undefined || v === null || v === '') return null
@@ -235,12 +271,22 @@ function parseDiscipline(body: Record<string, unknown>) {
   }
 }
 
+const MAX_JSON_BYTES = 64 * 1024
+
 async function readJson(request: Request): Promise<Record<string, unknown>> {
+  // Refuse un corps demesure avant de le lire. Sans cela, la connexion — qui
+  // n'exige aucune authentification — accepterait de charger 100 Mo en
+  // memoire avant de s'apercevoir que ce n'est pas du JSON.
+  const declared = Number(request.headers.get('Content-Length') ?? '0')
+  if (!Number.isFinite(declared) || declared > MAX_JSON_BYTES) {
+    throw new HttpError(413, 'Corps de requete trop volumineux')
+  }
   try {
     const body = await request.json()
     if (!body || typeof body !== 'object') throw new Error('not an object')
     return body as Record<string, unknown>
-  } catch {
+  } catch (e) {
+    if (e instanceof HttpError) throw e
     throw new HttpError(400, 'Corps de requete invalide')
   }
 }
@@ -281,7 +327,12 @@ export const api = {
         // Les capacites accompagnent l'identite : la coquille sait alors
         // quels ecrans meritent d'exister avant meme de les afficher, plutot
         // que de proposer un lien qui mene a une page vide.
-        const capabilities = scope.orgId
+        //
+        // Seulement si l'appelant a reellement acces a ce club : un compte
+        // dont l'appartenance a ete revoquee garde son org_id en session,
+        // et lirait encore les chiffres du club sans y avoir droit.
+        const entitled = scope.mode === 'support' || principal.role !== null
+        const capabilities = scope.orgId && entitled
           ? await clubOf(env, principal).capabilities()
           : null
         // Le mode support doit etre visible dans l'interface : une banniere
@@ -411,11 +462,23 @@ export const api = {
         const contentType = request.headers.get('Content-Type') ?? ''
         const ext = logoExtension(contentType)
 
+        // La taille est verifiee AVANT de lire le corps : sinon un envoi de
+        // 100 Mo serait entierement charge en memoire avant d'etre refuse,
+        // ce qui suffit a tuer l'isolat a repetition.
+        const declared = Number(request.headers.get('Content-Length') ?? '0')
+        if (!Number.isFinite(declared) || declared > MAX_LOGO_BYTES) {
+          throw new HttpError(413, 'Logo trop volumineux : 2 Mo maximum')
+        }
+
         const bytes = await request.arrayBuffer()
         if (bytes.byteLength === 0) throw new HttpError(400, 'Fichier vide')
         if (bytes.byteLength > MAX_LOGO_BYTES) {
           throw new HttpError(413, 'Logo trop volumineux : 2 Mo maximum')
         }
+
+        const previous = await env.CONTROL.prepare(
+          'SELECT logo_key FROM organizations WHERE id = ?',
+        ).bind(orgId).first<{ logo_key: string | null }>()
 
         const key = logoKey(orgId, ext)
         await env.MEDIA.put(key, bytes, { httpMetadata: { contentType } })
@@ -423,6 +486,12 @@ export const api = {
           `UPDATE organizations SET logo_key = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
             WHERE id = ?`,
         ).bind(key, orgId).run()
+
+        // L'ancien logo n'a plus de reference : le laisser ferait grossir le
+        // bucket a chaque changement, indefiniment.
+        if (previous?.logo_key && previous.logo_key !== key) {
+          await env.MEDIA.delete(previous.logo_key).catch(() => {})
+        }
 
         if (activeScope(principal).mode === 'support') {
           await auditSupport(env, principal, 'support_write_logo', { key }, ip)
@@ -444,6 +513,11 @@ export const api = {
             'Content-Type': object.httpMetadata?.contentType ?? 'application/octet-stream',
             'Cache-Control': 'private, max-age=300',
             'X-Content-Type-Options': 'nosniff',
+            // Ceinture et bretelles : meme si un document actif finissait
+            // dans le bucket, il ne pourrait ni executer de script ni
+            // joindre quoi que ce soit depuis notre origine.
+            'Content-Security-Policy': "default-src 'none'; sandbox; base-uri 'none'",
+            'Content-Disposition': 'inline',
           },
         })
       }
@@ -493,6 +567,9 @@ export const api = {
       // Question de confiance, et de conformite CNDP.
       if (path === '/api/support-log' && method === 'GET') {
         atLeast(principal, 'admin')
+        // scopedOrgId, jamais principal.orgId : sinon un exploitant entre en
+        // support sur le club B lirait le journal de SON club A, en
+        // contournant le controle de rang qui l'y aurait refuse.
         const { results } = await env.CONTROL.prepare(
           `SELECT a.action, a.detail, a.created_at, u.name AS actor_name
              FROM platform_audit a
@@ -500,16 +577,19 @@ export const api = {
             WHERE a.org_id = ?
             ORDER BY a.created_at DESC
             LIMIT 100`,
-        ).bind(principal.orgId).all()
+        ).bind(scopedOrgId(principal)).all()
         return json({ entries: results })
       }
 
       if (path === '/api/members' && method === 'GET') {
         atLeast(principal, 'viewer')
         const club = clubOf(env, principal)
+        // Number('abc') vaut NaN, qui traversait les bornes et arrivait tel
+        // quel dans le LIMIT — au mieux une erreur, au pire plus de limite
+        // du tout et toute la table renvoyee.
         const members = await club.listMembers({
-          limit: Number(url.searchParams.get('limit') ?? 50),
-          offset: Number(url.searchParams.get('offset') ?? 0),
+          limit: intParam(url, 'limit', 50),
+          offset: intParam(url, 'offset', 0),
           search: url.searchParams.get('q') ?? undefined,
         })
         return json({ members })
@@ -560,7 +640,8 @@ export const api = {
       // precis peut etre interroge en direct via /stats.
       if (path === '/api/admin/overview' && method === 'GET') {
         if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
-        const { results } = await env.CONTROL.prepare(
+
+        const read = () => env.CONTROL.prepare(
           `SELECT o.id, o.slug, o.name, o.logo_key, o.theme, o.plan, o.status,
                   o.created_at, o.trial_ends_at,
                   s.member_count, s.active_subs, s.revenue_month_cents,
@@ -571,6 +652,18 @@ export const api = {
              LEFT JOIN org_stats s ON s.org_id = o.id
             ORDER BY o.created_at DESC`,
         ).all<Record<string, unknown>>()
+
+        let { results } = await read()
+
+        // Un club jamais mesure affichait des tirets jusqu'au prochain
+        // passage du cron — cinq minutes d'ecran vide apres une creation.
+        // On mesure a la volee ceux-la, en nombre borne pour qu'une
+        // plateforme chargee ne reveille pas cent bases sur un affichage.
+        const stale = results.filter(c => c.refreshed_at === null).slice(0, 20)
+        if (stale.length > 0) {
+          await Promise.all(stale.map(club => refreshOrgStats(env, club.id as string)))
+          results = (await read()).results
+        }
 
         return json({
           clubs: results.map(c => ({
@@ -778,30 +871,64 @@ export const api = {
    * ne repond pas est saute, pas fatal pour les autres.
    */
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    // Purge d'abord : sans elle, sessions et tentatives de connexion
+    // grossissent sans fin — une ligne par connexion, conservee a vie.
+    await env.CONTROL.batch([
+      env.CONTROL.prepare(
+        "DELETE FROM sessions WHERE expires_at < strftime('%Y-%m-%dT%H:%M:%SZ','now')",
+      ),
+      env.CONTROL.prepare(
+        `DELETE FROM login_attempts
+          WHERE attempted_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 days')`,
+      ),
+      env.CONTROL.prepare(
+        `DELETE FROM security_events
+          WHERE handled_at IS NOT NULL
+            AND created_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-90 days')`,
+      ),
+    ])
+
+    // Rafraichissement par lots : parcourir mille clubs d'affilee depasserait
+    // le plafond de sous-requetes du Worker et le cache cesserait d'etre mis
+    // a jour, pour tout le monde. On traite les plus perimes en premier.
     const { results } = await env.CONTROL.prepare(
-      "SELECT id FROM organizations WHERE status = 'active'",
+      `SELECT o.id FROM organizations o
+         LEFT JOIN org_stats s ON s.org_id = o.id
+        WHERE o.status = 'active'
+        ORDER BY s.refreshed_at IS NOT NULL, s.refreshed_at
+        LIMIT 50`,
     ).all<{ id: string }>()
 
     for (const { id } of results) {
-      try {
-        const stats = await env.CLUB.get(env.CLUB.idFromName(id)).stats()
-        await env.CONTROL.prepare(
-          `INSERT INTO org_stats (org_id, member_count, active_subs, revenue_month_cents,
-                                  last_activity_at, refreshed_at)
-           VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-           ON CONFLICT(org_id) DO UPDATE SET
-             member_count        = excluded.member_count,
-             active_subs         = excluded.active_subs,
-             revenue_month_cents = excluded.revenue_month_cents,
-             last_activity_at    = excluded.last_activity_at,
-             refreshed_at        = excluded.refreshed_at`,
-        ).bind(id, stats.memberCount, stats.activeSubs, stats.revenueMonthCents, stats.lastActivityAt).run()
-      } catch (e) {
-        console.error(`stats refresh failed for ${id}`, e)
-      }
+      await refreshOrgStats(env, id)
     }
   },
 } satisfies ExportedHandler<Env>
+
+/**
+ * Recopie les chiffres d'un club dans le cache du plan de controle.
+ *
+ * Un club injoignable est saute sans faire echouer les autres : le tableau
+ * de bord doit rester affichable meme si une base ne repond pas.
+ */
+async function refreshOrgStats(env: Env, orgId: string): Promise<void> {
+  try {
+    const stats = await env.CLUB.get(env.CLUB.idFromName(orgId)).stats()
+    await env.CONTROL.prepare(
+      `INSERT INTO org_stats (org_id, member_count, active_subs, revenue_month_cents,
+                              last_activity_at, refreshed_at)
+       VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+       ON CONFLICT(org_id) DO UPDATE SET
+         member_count        = excluded.member_count,
+         active_subs         = excluded.active_subs,
+         revenue_month_cents = excluded.revenue_month_cents,
+         last_activity_at    = excluded.last_activity_at,
+         refreshed_at        = excluded.refreshed_at`,
+    ).bind(orgId, stats.memberCount, stats.activeSubs, stats.revenueMonthCents, stats.lastActivityAt).run()
+  } catch (e) {
+    console.error(`stats refresh failed for ${orgId}`, e)
+  }
+}
 
 export const handleApi = (request: Request, env: Env) => api.fetch(request, env)
 export const refreshAllStats = (env: Env) =>
@@ -810,6 +937,16 @@ export const refreshAllStats = (env: Env) =>
 // Inscription ----------------------------------------------------------------
 
 async function signup(request: Request, env: Env, ip: string | null): Promise<Response> {
+  // Limite par IP avant toute lecture en base.
+  //
+  // La route est publique et renvoie 409 sur une adresse deja prise : c'est
+  // un oracle d'existence de compte, et sans plafond il se parcourt a
+  // volonte. Le plafond ne le supprime pas — il faudra une confirmation par
+  // e-mail pour cela — mais il le ramene au meme rythme que la connexion.
+  if (await throttled(env, `signup:${ip ?? 'inconnu'}`, ip)) {
+    return fail(429, 'Trop de tentatives. Reessayez dans quelques minutes.')
+  }
+
   const body = await readJson(request)
 
   const clubName = str(body.clubName, 'clubName', 120)
@@ -824,7 +961,12 @@ async function signup(request: Request, env: Env, ip: string | null): Promise<Re
 
   const existing = await env.CONTROL.prepare('SELECT 1 FROM users WHERE email_norm = ?')
     .bind(email).first()
-  if (existing) throw new HttpError(409, 'Un compte existe deja pour cette adresse')
+  if (existing) {
+    // Une tentative comptabilisee : l'enumeration coute alors le meme prix
+    // qu'une attaque de mot de passe, et se heurte au meme plafond.
+    await recordAttempt(env, `signup:${ip ?? 'inconnu'}`, ip, false)
+    throw new HttpError(409, 'Un compte existe deja pour cette adresse')
+  }
 
   const slugTaken = await env.CONTROL.prepare('SELECT 1 FROM organizations WHERE slug = ?')
     .bind(slug).first()
@@ -1022,6 +1164,11 @@ async function login(request: Request, env: Env, ip: string | null): Promise<Res
   ).bind(user.id).first<{ org_id: string }>()
 
   await recordAttempt(env, email, ip, true)
+  // Une connexion reussie efface l'ardoise de ce compte : sans cela, des
+  // echecs anciens continueraient a compter contre un utilisateur legitime.
+  await env.CONTROL.prepare(
+    'DELETE FROM login_attempts WHERE identifier = ? AND succeeded = 0',
+  ).bind(email).run()
   await noteLoginLocation(env, user.id, membership?.org_id ?? null, ip, request.headers.get('User-Agent'))
   await env.CONTROL.prepare(
     "UPDATE users SET last_login_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",

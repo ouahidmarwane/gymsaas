@@ -10,12 +10,17 @@ interface Discipline { id: string; name: string; has_grading: number; grades: Gr
 
 // Echelles proposees : le club choisit la sienne ou part de zero. Rien n'est
 // impose — un club de boxe n'a pas de grades du tout.
+// « Aucune » vient en premier ET sert de defaut : un club qui tape « Boxe »
+// sans toucher au menu ne doit pas repartir avec sept ceintures de karate.
+// Le sport gradé est un choix, pas une supposition.
 const LADDERS: Record<string, string[]> = {
-  'Karate': ['Blanche', 'Jaune', 'Orange', 'Verte', 'Bleue', 'Marron', 'Noire'],
-  'Judo': ['6e kyu', '5e kyu', '4e kyu', '3e kyu', '2e kyu', '1er kyu', '1er dan'],
-  'Taekwondo': ['10e geup', '9e geup', '8e geup', '7e geup', '6e geup', '5e geup', '1er dan'],
-  'Aucune (sport non grade)': [],
+  'Aucune — sport non grade': [],
+  'Ceintures de karate': ['Blanche', 'Jaune', 'Orange', 'Verte', 'Bleue', 'Marron', 'Noire'],
+  'Kyu / dan de judo': ['6e kyu', '5e kyu', '4e kyu', '3e kyu', '2e kyu', '1er kyu', '1er dan'],
+  'Geup de taekwondo': ['10e geup', '9e geup', '8e geup', '7e geup', '6e geup', '5e geup', '1er dan'],
 }
+
+const NO_LADDER = 'Aucune — sport non grade'
 
 export default function SetupPage() {
   const [branches, setBranches] = useState<Branch[] | null>(null)
@@ -25,7 +30,7 @@ export default function SetupPage() {
 
   const [branchName, setBranchName] = useState('')
   const [sportName, setSportName] = useState('')
-  const [ladder, setLadder] = useState<keyof typeof LADDERS>('Karate')
+  const [ladder, setLadder] = useState<keyof typeof LADDERS>(NO_LADDER)
 
   async function reload() {
     const [b, d] = await Promise.all([
@@ -40,11 +45,20 @@ export default function SetupPage() {
     reload().catch(e => setError(e instanceof ApiError ? e.message : 'Chargement impossible'))
   }, [])
 
-  async function run(action: () => Promise<unknown>) {
+  /** Renvoie true si l'operation a reussi : l'appelant ne doit vider le
+   *  champ que dans ce cas, sinon la saisie disparait sur un echec. */
+  async function run(action: () => Promise<unknown>): Promise<boolean> {
     setBusy(true); setError(null)
-    try { await action(); await reload() }
-    catch (e) { setError(e instanceof ApiError ? e.message : 'Operation impossible') }
-    finally { setBusy(false) }
+    try {
+      await action()
+      await reload()
+      return true
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Operation impossible')
+      return false
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -102,7 +116,8 @@ export default function SetupPage() {
           onSubmit={e => {
             e.preventDefault()
             if (!branchName.trim()) return
-            run(() => api.post('/api/branches', { name: branchName.trim() })).then(() => setBranchName(''))
+            run(() => api.post('/api/branches', { name: branchName.trim() }))
+              .then(ok => { if (ok) setBranchName('') })
           }}
         >
           <input
@@ -174,7 +189,7 @@ export default function SetupPage() {
             if (!sportName.trim()) return
             const grades = LADDERS[ladder]!.map(label => ({ label }))
             run(() => api.post('/api/disciplines', { name: sportName.trim(), grades }))
-              .then(() => setSportName(''))
+              .then(ok => { if (ok) { setSportName(''); setLadder(NO_LADDER) } })
           }}
         >
           <input

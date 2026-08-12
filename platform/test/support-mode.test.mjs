@@ -10,44 +10,7 @@
 //   node --test test/support-mode.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-
-const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8787'
-const WRANGLER = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url))
-
-function client() {
-  let cookie = null
-  return {
-    async call(method, path, body, rawHeaders) {
-      const res = await fetch(BASE + path, {
-        method,
-        headers: {
-          ...(body && !rawHeaders ? { 'Content-Type': 'application/json' } : {}),
-          ...(rawHeaders ?? {}),
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-        body: body ? (rawHeaders ? body : JSON.stringify(body)) : undefined,
-      })
-      const sc = res.headers.get('set-cookie')
-      if (sc) { const raw = sc.split(';')[0]; cookie = raw.endsWith('=') ? null : raw }
-      let data = null
-      const type = res.headers.get('content-type') ?? ''
-      if (type.includes('json')) { try { data = await res.json() } catch { /* vide */ } }
-      return { status: res.status, data, headers: res.headers }
-    },
-  }
-}
-
-function control(sql) {
-  return execFileSync(
-    process.execPath,
-    [WRANGLER, 'd1', 'execute', 'gymflow-control', '--local', '--json', '--command', sql],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: fileURLToPath(new URL('..', import.meta.url)) },
-  )
-}
-
-const uniq = () => Math.random().toString(36).slice(2, 10)
+import { BASE, client, control, uniq } from './helpers.mjs'
 
 let operator, owner, clubId, memberName
 
@@ -83,7 +46,7 @@ test('la vue d ensemble liste les clubs avec leur marque', async () => {
   assert.equal(res.status, 200, JSON.stringify(res.data))
   const club = res.data.clubs.find(c => c.id === clubId)
   assert.ok(club, 'le club doit apparaitre dans la vue d ensemble')
-  assert.equal(club.theme.accent, '#0e4f8f', 'un theme par defaut est renvoye')
+  assert.equal(club.theme.accent, '#2f6bff', 'un theme par defaut est renvoye')
   assert.ok(res.data.serverTime)
 })
 

@@ -9,75 +9,7 @@
 //   node --test test/superadmin.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-
-const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8787'
-
-function client() {
-  let cookie = null
-  return {
-    async call(method, path, body) {
-      const res = await fetch(BASE + path, {
-        method,
-        headers: {
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-      })
-      const sc = res.headers.get('set-cookie')
-      if (sc) { const raw = sc.split(';')[0]; cookie = raw.endsWith('=') ? null : raw }
-      let data = null
-      try { data = await res.json() } catch { /* vide */ }
-      return { status: res.status, data }
-    },
-  }
-}
-
-// On invoque l'entree JS de wrangler avec node plutot que le lanceur npx :
-// depuis Node 24, spawn d'un .cmd sous Windows echoue en EINVAL, et passer
-// par un shell rendrait la citation des chaines SQL fragile.
-const WRANGLER = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url))
-
-/** Requete directe sur la base centrale, comme le ferait un operateur. */
-// Le fichier SQLite local est partage avec le serveur de developpement :
-// sous charge, une ecriture concurrente rend SQLITE_BUSY. On reessaie.
-function control(sql, attempts = 6) {
-  for (let i = 1; ; i++) {
-    try {
-      return execFileSync(
-        process.execPath,
-        [WRANGLER, 'd1', 'execute', 'gymflow-control', '--local', '--json', '--command', sql],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: fileURLToPath(new URL('..', import.meta.url)) },
-      )
-    } catch (error) {
-      const output = String(error.stdout ?? '') + String(error.stderr ?? '')
-      if (i >= attempts || !/SQLITE_BUSY|database is locked/i.test(output)) throw error
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * i)
-    }
-  }
-}
-
-const uniq = () => Math.random().toString(36).slice(2, 10)
-
-/**
- * Attend que le Worker reponde.
- *
- * Lancer wrangler en parallele pour ecrire dans la base locale fait
- * brievement tomber le serveur de developpement ; sans cette attente, la
- * requete suivante echoue en ECONNRESET et le test accuse le code.
- */
-async function waitReady(attempts = 40) {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const res = await fetch(`${BASE}/api/health`)
-      if (res.ok) return
-    } catch { /* pas encore la */ }
-    await new Promise(r => setTimeout(r, 500))
-  }
-  throw new Error('Worker injoignable apres attente')
-}
+import { BASE, client, control, createOperator, uniq, waitReady } from './helpers.mjs'
 
 let operator, clubOwner, clubId, opEmail
 
@@ -145,12 +77,7 @@ test('un exploitant sans club n en possede aucun et n en voit aucun ecran', asyn
   // distinction entre superviser et posseder.
   const o = uniq()
   const email = `pur-${o}@example.ma`
-  execFileSync(
-    process.execPath,
-    [fileURLToPath(new URL('../scripts/create-operator.mjs', import.meta.url)),
-     email, 'Exploitant Pur', 'motdepasse-solide-pur'],
-    { stdio: 'ignore', cwd: fileURLToPath(new URL('..', import.meta.url)) },
-  )
+  createOperator(email, 'Exploitant Pur', 'motdepasse-solide-pur')
   await waitReady()
 
   const pure = client()

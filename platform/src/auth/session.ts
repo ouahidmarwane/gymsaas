@@ -247,20 +247,34 @@ function cookieName(request: Request): string {
   return isSecure(request) ? SESSION_COOKIE : SESSION_COOKIE_PLAIN
 }
 
+/**
+ * Lit le jeton de session.
+ *
+ * En https, SEUL le nom prefixe est accepte. Accepter aussi `gf_session`
+ * annulerait la garantie du prefixe __Host- : un sous-domaine voisin (repris,
+ * ou vulnerable a une XSS) peut poser un cookie `Domain=.exemple.ma`, et
+ * comme les cookies de meme longueur de chemin partent du plus ancien au plus
+ * recent, celui de l'attaquant serait lu en premier — la victime travaillerait
+ * dans la session de l'attaquant.
+ *
+ * Le nom simple ne survit qu'en http, c'est-a-dire en developpement local, ou
+ * le prefixe est de toute facon invalide.
+ */
 export function readSessionCookie(request: Request): string | null {
   const header = request.headers.get('Cookie')
   if (!header) return null
-  // Les deux noms sont acceptés à la lecture : une session ouverte avant un
-  // passage en https reste valable, et l'inverse aussi.
+
+  const jar = new Map<string, string>()
   for (const part of header.split(';')) {
     const eq = part.indexOf('=')
     if (eq < 0) continue
     const name = part.slice(0, eq).trim()
-    if (name === SESSION_COOKIE || name === SESSION_COOKIE_PLAIN) {
-      return part.slice(eq + 1).trim()
-    }
+    if (!jar.has(name)) jar.set(name, part.slice(eq + 1).trim())
   }
-  return null
+
+  const strict = jar.get(SESSION_COOKIE)
+  if (strict) return strict
+  return isSecure(request) ? null : (jar.get(SESSION_COOKIE_PLAIN) ?? null)
 }
 
 /**

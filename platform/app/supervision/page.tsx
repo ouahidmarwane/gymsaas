@@ -162,6 +162,7 @@ export default function SupervisionPage() {
         sessions={platformSessions}
         now={now}
         busy={busy}
+        loading={sessions === null}
         onRevoke={async userId => {
           setBusy(`u-${userId}`)
           try { await api.del(`/api/admin/users/${userId}/sessions`); await load() }
@@ -178,6 +179,7 @@ export default function SupervisionPage() {
         sessions={clubSessions}
         now={now}
         busy={busy}
+        loading={sessions === null}
         showClub
         onRevoke={async userId => {
           setBusy(`u-${userId}`)
@@ -214,19 +216,27 @@ export default function SupervisionPage() {
 }
 
 function SessionList({
-  title, note, sessions, now, busy, showClub, onRevoke,
+  title, note, sessions, now, busy, showClub, loading, onRevoke,
 }: {
   title: string; note: string; sessions: Session[]; now: number
-  busy: string | null; showClub?: boolean; onRevoke: (userId: string) => void
+  busy: string | null; showClub?: boolean; loading?: boolean
+  onRevoke: (userId: string) => void
 }) {
   return (
     <section className="dz-card">
       <div className="dz-card-head">
         <h2 className="dz-card-title">{title}</h2>
-        <span className="dz-card-note">{note} · {sessions.length}</span>
+        <span className="dz-card-note">{note}{loading ? '' : ` · ${sessions.length}`}</span>
       </div>
 
-      {sessions.length === 0 && (
+      {/* Distinguer « pas encore charge » de « personne » : afficher
+          « Personne de connecte » pendant le chargement est un mensonge
+          que la page racontait a chaque ouverture. */}
+      {loading && (
+        <div className="members-skeleton-row"
+             style={{ height: 56, borderRadius: 16, border: 'none', marginTop: 16 }} />
+      )}
+      {!loading && sessions.length === 0 && (
         <p className="dz-card-note" style={{ marginTop: 16 }}>Personne de connecte.</p>
       )}
 

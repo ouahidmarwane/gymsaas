@@ -8,37 +8,7 @@
 //   node --test test/isolation.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-
-const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8787'
-
-/** Client minimal avec bocal à cookies : chaque session est indépendante. */
-function client() {
-  let cookie = null
-  return {
-    get cookie() { return cookie },
-    async call(method, path, body) {
-      const res = await fetch(BASE + path, {
-        method,
-        headers: {
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        redirect: 'manual',
-      })
-      const setCookie = res.headers.get('set-cookie')
-      if (setCookie) {
-        const raw = setCookie.split(';')[0]
-        cookie = raw.endsWith('=') ? null : raw
-      }
-      let data = null
-      try { data = await res.json() } catch { /* corps vide */ }
-      return { status: res.status, data }
-    },
-  }
-}
-
-const uniq = () => Math.random().toString(36).slice(2, 10)
+import { BASE, client, uniq } from './helpers.mjs'
 
 let clubA, clubB, aId, bId
 
@@ -161,11 +131,37 @@ test('les tentatives de connexion sont limitées', async () => {
     clubName: 'Brute', slug: `brute-${s}`, name: 'Brute', email, password: 'motdepasse-solide-6',
   })
 
+  // Deux plafonds distincts : un bas par adresse IP, un plus haut par compte.
+  // Compter serre sur le compte offrait un deni de service — vingt requetes
+  // suffisaient a verrouiller un proprietaire depuis n'importe ou. En local
+  // CF-Connecting-IP est absent, donc c'est le plafond par compte qui joue.
   let throttled = false
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 25; i++) {
     const res = await client().call('POST', '/api/auth/login', { email, password: 'mauvais-mot-de-passe' })
     if (res.status === 429) { throttled = true; break }
     assert.equal(res.status, 401)
   }
-  assert.ok(throttled, 'aucune limitation après 12 échecs')
+  assert.ok(throttled, 'aucune limitation apres 25 echecs')
+})
+
+test('une connexion reussie efface les echecs precedents', async () => {
+  const s = uniq()
+  const email = `reset-${s}@example.ma`
+  const password = 'motdepasse-solide-reset'
+  await client().call('POST', '/api/auth/signup', {
+    clubName: 'Reset', slug: `reset-${s}`, name: 'Reset', email, password,
+  })
+
+  // Quelques echecs, puis une reussite : l'ardoise doit repartir a zero,
+  // sinon de vieux echecs continueraient a compter contre un utilisateur
+  // legitime jusqu'a le bloquer sans raison.
+  for (let i = 0; i < 5; i++) {
+    await client().call('POST', '/api/auth/login', { email, password: 'faux' })
+  }
+  assert.equal((await client().call('POST', '/api/auth/login', { email, password })).status, 200)
+
+  for (let i = 0; i < 5; i++) {
+    const res = await client().call('POST', '/api/auth/login', { email, password: 'faux' })
+    assert.equal(res.status, 401, `bloque trop tot apres remise a zero (tentative ${i + 1})`)
+  }
 })

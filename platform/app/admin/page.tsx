@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogIn, Users, Wallet, Building2 } from 'lucide-react'
+import { LogIn, Users, Wallet, Building2, Plus } from 'lucide-react'
 import { api, ApiError, type ClubRow } from '@/lib/client'
+import CreateClubModal from '@/components/CreateClubModal'
 
 const REFRESH_MS = 15_000
 
@@ -12,24 +13,33 @@ export default function AdminPage() {
   const [clubs, setClubs] = useState<ClubRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [entering, setEntering] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
   const [now, setNow] = useState(() => Date.now())
 
+  const load = useCallback(() =>
+    api.get<{ clubs: ClubRow[] }>('/api/admin/overview')
+      .then(d => { setClubs(d.clubs); setError(null); setNow(Date.now()) })
+      .catch(e => {
+        if (e instanceof ApiError && e.status === 403) router.replace('/dashboard')
+        else setError(e instanceof ApiError ? e.message : 'Chargement impossible')
+      }),
+  [router])
+
   useEffect(() => {
-    let alive = true
-    const load = () =>
-      api.get<{ clubs: ClubRow[] }>('/api/admin/overview')
-        .then(d => { if (alive) { setClubs(d.clubs); setError(null); setNow(Date.now()) } })
-        .catch(e => {
-          if (!alive) return
-          if (e instanceof ApiError && e.status === 403) router.replace('/dashboard')
-          else setError(e instanceof ApiError ? e.message : 'Chargement impossible')
-        })
     load()
     // Interrogation reguliere plutot qu'un flux : pour du support c'est
     // indiscernable, et le cache d'agregats est rafraichi toutes les 5 min.
-    const timer = setInterval(load, REFRESH_MS)
-    return () => { alive = false; clearInterval(timer) }
-  }, [router])
+    // On suspend quand l'onglet est masque : inutile d'interroger un ecran
+    // que personne ne regarde.
+    let timer: ReturnType<typeof setInterval> | null = null
+    const start = () => { timer ??= setInterval(load, REFRESH_MS) }
+    const stop = () => { if (timer) { clearInterval(timer); timer = null } }
+    const onVisibility = () => (document.hidden ? stop() : (load(), start()))
+
+    start()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility) }
+  }, [load])
 
   async function enter(club: ClubRow) {
     setEntering(club.id)
@@ -53,13 +63,23 @@ export default function AdminPage() {
 
   return (
     <div className="dashboard-shell">
-      <div style={{ animation: 'fadeUp 0.45s cubic-bezier(0.22,1,0.36,1) both' }}>
-        <h1 className="dz-hello">Clubs</h1>
-        <p className="dz-sub">
-          {clubs
-            ? `${clubs.length} club${clubs.length > 1 ? 's' : ''} · ${totals!.members} membres · ${(totals!.revenue / 100).toLocaleString('fr-MA')} DH ce mois`
-            : 'Chargement…'}
-        </p>
+      <div style={{
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+        gap: 16, flexWrap: 'wrap',
+        animation: 'fadeUp 0.45s cubic-bezier(0.22,1,0.36,1) both',
+      }}>
+        <div>
+          <h1 className="dz-hello">Clubs</h1>
+          <p className="dz-sub">
+            {clubs
+              ? `${clubs.length} club${clubs.length > 1 ? 's' : ''} · ${totals!.members} membres · ${(totals!.revenue / 100).toLocaleString('fr-MA')} DH ce mois`
+              : 'Chargement…'}
+          </p>
+        </div>
+        <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
+                onClick={() => setCreating(true)}>
+          <Plus size={15} strokeWidth={2.4} /> Ajouter un club
+        </button>
       </div>
 
       <div aria-live="polite">
@@ -78,10 +98,14 @@ export default function AdminPage() {
         <section className="dz-card" style={{ textAlign: 'center', padding: '3.5rem 1.5rem' }}>
           <Building2 size={34} style={{ opacity: 0.35, marginBottom: 12 }} />
           <h2 className="dz-card-title" style={{ marginBottom: 6 }}>Aucun club pour l&apos;instant</h2>
-          <p className="dz-card-note" style={{ maxWidth: 460, margin: '0 auto' }}>
+          <p className="dz-card-note" style={{ maxWidth: 460, margin: '0 auto 16px' }}>
             Un club cree ici demarre vide : c&apos;est ensuite lui, ou vous, qui declarez
             ses salles et ses sports. Rien n&apos;est presuppose.
           </p>
+          <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
+                  onClick={() => setCreating(true)}>
+            <Plus size={15} strokeWidth={2.4} /> Ajouter le premier club
+          </button>
         </section>
       )}
 
@@ -135,6 +159,13 @@ export default function AdminPage() {
             </article>
           ))}
         </div>
+      )}
+
+      {creating && (
+        <CreateClubModal
+          onClose={() => setCreating(false)}
+          onCreated={() => { setCreating(false); load() }}
+        />
       )}
     </div>
   )

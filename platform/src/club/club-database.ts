@@ -249,8 +249,12 @@ export class ClubDatabase extends DurableObject<Env> {
   // Membres --------------------------------------------------------------
 
   listMembers(opts: { limit?: number; offset?: number; search?: string } = {}) {
-    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200)
-    const offset = Math.max(opts.offset ?? 0, 0)
+    // Bornes resistantes a NaN : Math.min(Math.max(NaN, 1), 200) vaut NaN,
+    // qui atteindrait le LIMIT et le viderait de son sens.
+    const clamp = (v: number | undefined, min: number, max: number, fallback: number) =>
+      Number.isFinite(v) ? Math.min(Math.max(Math.trunc(v!), min), max) : fallback
+    const limit = clamp(opts.limit, 1, 200, 50)
+    const offset = clamp(opts.offset, 0, 1_000_000, 0)
 
     const select = `
       SELECT m.*, b.name AS branch_name, d.name AS discipline_name, g.label AS grade_label

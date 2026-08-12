@@ -14,7 +14,9 @@ export interface Theme {
   mode: 'light' | 'dark' | 'system'
 }
 
-export const DEFAULT_THEME: Theme = { accent: '#0e4f8f', mode: 'system' }
+// Le bleu du systeme visuel d'origine (--gold dans globals.css). Un club qui
+// ne choisit rien doit ressembler a l'application, pas a une variante.
+export const DEFAULT_THEME: Theme = { accent: '#2f6bff', mode: 'system' }
 
 const HEX = /^#[0-9a-f]{6}$/i
 const MODES = new Set(['light', 'dark', 'system'])
@@ -62,12 +64,16 @@ export function isOwnLogoKey(orgId: string, key: string): boolean {
   return key.startsWith(`org-logos/${orgId}/`) && !key.includes('..')
 }
 
-const LOGO_TYPES = /^image\/(png|jpeg|webp|svg\+xml)$/
+// Volontairement sans SVG. Un SVG est un document capable de porter du
+// script ; servi depuis notre propre origine, il s'executerait avec les
+// droits de qui l'ouvre — un administrateur de club pourrait ainsi pieger
+// le proprietaire, ou l'exploitant venu en support. Les formats matriciels
+// n'ont pas ce pouvoir.
+const LOGO_TYPES = /^image\/(png|jpeg|webp)$/
 const LOGO_EXT: Record<string, string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
-  'image/svg+xml': 'svg',
 }
 
 export function logoExtension(contentType: string): string {

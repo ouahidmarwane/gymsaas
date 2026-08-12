@@ -8,70 +8,7 @@
 //   node --test test/supervision.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-
-const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8787'
-const ROOT = fileURLToPath(new URL('..', import.meta.url))
-
-function client() {
-  let cookie = null
-  return {
-    async call(method, path, body) {
-      const res = await fetch(BASE + path, {
-        method,
-        headers: {
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-        body: body ? JSON.stringify(body) : undefined,
-      })
-      const sc = res.headers.get('set-cookie')
-      if (sc) { const raw = sc.split(';')[0]; cookie = raw.endsWith('=') ? null : raw }
-      let data = null
-      if ((res.headers.get('content-type') ?? '').includes('json')) {
-        try { data = await res.json() } catch { /* vide */ }
-      }
-      return { status: res.status, data }
-    },
-  }
-}
-
-const WRANGLER = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url))
-
-/**
- * Requete directe sur la base centrale.
- *
- * Le fichier SQLite local est partage avec le serveur de developpement :
- * sous charge, une ecriture concurrente rend SQLITE_BUSY. On reessaie plutot
- * que d'echouer sur une contention passagere.
- */
-// eslint-disable-next-line no-unused-vars
-function control(sql, attempts = 6) {
-  for (let i = 1; ; i++) {
-    try {
-      return execFileSync(
-        process.execPath,
-        [WRANGLER, 'd1', 'execute', 'gymflow-control', '--local', '--json', '--command', sql],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: ROOT },
-      )
-    } catch (error) {
-      const output = String(error.stdout ?? '') + String(error.stderr ?? '')
-      if (i >= attempts || !/SQLITE_BUSY|database is locked/i.test(output)) throw error
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * i)
-    }
-  }
-}
-
-async function waitReady(attempts = 40) {
-  for (let i = 0; i < attempts; i++) {
-    try { if ((await fetch(`${BASE}/api/health`)).ok) return } catch { /* pas encore */ }
-    await new Promise(r => setTimeout(r, 500))
-  }
-  throw new Error('Worker injoignable')
-}
-
-const uniq = () => Math.random().toString(36).slice(2, 10)
+import { client, createOperator, uniq, waitReady } from './helpers.mjs'
 
 let operator, clubOwner, clubEmail, clubId, ownerName
 
@@ -91,12 +28,7 @@ before(async () => {
 
   const o = uniq()
   const opEmail = `sup-ops-${o}@example.ma`
-  execFileSync(
-    process.execPath,
-    [fileURLToPath(new URL('../scripts/create-operator.mjs', import.meta.url)),
-     opEmail, 'Ops Supervision', 'motdepasse-solide-ops'],
-    { stdio: 'ignore', cwd: ROOT },
-  )
+  createOperator(opEmail, 'Ops Supervision', 'motdepasse-solide-ops')
   await waitReady()
 
   operator = client()

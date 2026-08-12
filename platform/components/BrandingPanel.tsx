@@ -89,7 +89,7 @@ export default function BrandingPanel({
           <input
             ref={fileRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            accept="image/png,image/jpeg,image/webp"
             className="sr-only"
             onChange={e => { const f = e.target.files?.[0]; if (f) upload(f) }}
           />
