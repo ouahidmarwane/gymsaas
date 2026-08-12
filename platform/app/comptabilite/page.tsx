@@ -23,6 +23,7 @@ interface Branch { id: string; name: string; total: number; insured: number }
 interface Finance {
   prices: Prices
   chartYear: number
+  month: number | null
   years: number[]
   branches: Branch[]
   scope: { total: number; insured: number; registrations: number }
@@ -253,6 +254,11 @@ export default function ComptabilitePage() {
 
   // Rendus reutilises tels quels dans la carte et dans la modale agrandie :
   // un seul jeu de series, donc aucune divergence possible entre les deux.
+  // Le graphique reste annuel meme quand un mois est choisi : reduire douze
+  // barres a une seule detruit la comparaison, qui est tout l'interet. Le
+  // mois retenu ressort, les autres s'effacent — le filtre se voit sans que
+  // le graphique cesse d'etre lisible.
+  const picked = month === 'all' ? null : month
   const barChart = (height: number) => (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={chartData} barGap={4}>
@@ -262,10 +268,17 @@ export default function ComptabilitePage() {
                tickFormatter={v => (v > 0 ? `${v / 1000}k` : '0')} />
         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
         <Legend wrapperStyle={{ fontSize: 12, color: '#8c95a8', paddingTop: 8 }} />
-        {shown.map(b => (
-          <Bar key={b.id} dataKey={`r_${b.id}`} name={b.name || 'Sans salle'}
-               fill={branchColor(branches.indexOf(b))} radius={[4, 4, 0, 0]} maxBarSize={32} />
-        ))}
+        {shown.map(b => {
+          const fill = branchColor(branches.indexOf(b))
+          return (
+            <Bar key={b.id} dataKey={`r_${b.id}`} name={b.name || 'Sans salle'}
+                 fill={fill} radius={[4, 4, 0, 0]} maxBarSize={32}>
+              {picked !== null && chartData.map((_, i) => (
+                <Cell key={i} fill={fill} fillOpacity={i === picked ? 1 : 0.2} />
+              ))}
+            </Bar>
+          )
+        })}
       </BarChart>
     </ResponsiveContainer>
   )
@@ -279,11 +292,19 @@ export default function ComptabilitePage() {
         <Tooltip contentStyle={{ background: '#0e1220', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10 }}
                  labelStyle={{ color: '#f5f3ef' }} itemStyle={{ color: '#8c95a8' }} />
         <Legend wrapperStyle={{ fontSize: 12, color: '#8c95a8', paddingTop: 8 }} />
-        {shown.map(b => (
-          <Line key={b.id} type="monotone" dataKey={`n_${b.id}`} name={b.name || 'Sans salle'}
-                stroke={branchColor(branches.indexOf(b))} strokeWidth={2}
-                dot={{ fill: branchColor(branches.indexOf(b)), r: 3 }} />
-        ))}
+        {shown.map(b => {
+          const stroke = branchColor(branches.indexOf(b))
+          return (
+            <Line key={b.id} type="monotone" dataKey={`n_${b.id}`} name={b.name || 'Sans salle'}
+                  stroke={stroke} strokeWidth={2}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  dot={(p: any) => (
+                    <circle key={`${b.id}-${p.index}`} cx={p.cx} cy={p.cy}
+                            r={picked === p.index ? 5 : 3} fill={stroke}
+                            opacity={picked === null || picked === p.index ? 1 : 0.3} />
+                  )} />
+          )
+        })}
       </LineChart>
     </ResponsiveContainer>
   )
@@ -390,13 +411,21 @@ export default function ComptabilitePage() {
     ? branches.map(b => b.name || 'Sans salle').join(' & ')
     : (branches.find(b => b.id === branch)?.name ?? '')
 
+  const monthNote = picked === null ? '' : ` · ${MONTHS_FR[picked]} en avant`
+
+  // Le sous-titre nomme la periode retenue. Sans lui, un chiffre plus bas que
+  // prevu ressemble a une erreur alors que c'est le filtre qui parle.
+  const periodLabel = year === 'all'
+    ? 'toutes les années'
+    : picked === null ? String(year) : `${MONTHS_FR[picked]} ${year}`
+
   return (
     <EditablePage
       page="comptabilite"
       me={me}
       eyebrow="Comptabilité"
       title="Tableau de bord financier"
-      subtitle={scopeName ? `Estimation selon les tarifs configurés · ${scopeName}` : 'Estimation selon les tarifs configurés'}
+      subtitle={`Estimation selon les tarifs configurés · ${periodLabel}${scopeName ? ` · ${scopeName}` : ''}`}
       actions={
         <div className="compta-filters">
           {tabs.length > 1 && <SlidingTabs items={tabs} value={branch} onChange={setBranch} />}
@@ -430,8 +459,21 @@ export default function ComptabilitePage() {
       <PageState error={error} onRetry={load} />
 
       <div className="compta-shell">
-        {/* Ce qui est reellement rentre. Distinct des estimations plus bas :
-            l'ecart entre les deux est l'information qui compte. */}
+        {/* Estimations tarifaires */}
+        <div className="compta-kpi-grid">
+          <KpiCard label="Revenu mensuel" value={dh(monthlyTotal)} icon={Wallet} color="#2f6bff"
+                   sub={`${scope.total} membres × ${prices.monthlyCents / 100} DH`} />
+          <KpiCard label="Assurances" value={dh(insTotal)} icon={ShieldCheck} color="#9b72ff"
+                   sub={`${scope.insured} assurés × ${prices.insuranceCents / 100} DH`} />
+          <KpiCard label="Inscriptions" value={dh(regTotal)} icon={Receipt} color="#22c55e"
+                   sub={`${scope.registrations} inscriptions × ${prices.registrationCents / 100} DH`} />
+          <KpiCard label="Total général" value={dh(grandTotal)} icon={BarChart3} color="#4d8cff"
+                   sub="Abonnements + Assurances + Inscriptions" />
+        </div>
+
+        {/* Ce qui est reellement rentre, sous l'estimation : l'ecart entre
+            les deux est l'information qui compte, et on ne le lit que si
+            l'estimation a ete vue d'abord. */}
         {payments.length > 0 && (
           <section className="dz-card">
             <div className="dz-card-head">
@@ -473,21 +515,9 @@ export default function ComptabilitePage() {
           </section>
         )}
 
-        {/* Estimations tarifaires */}
-        <div className="compta-kpi-grid">
-          <KpiCard label="Revenu mensuel" value={dh(monthlyTotal)} icon={Wallet} color="#2f6bff"
-                   sub={`${scope.total} membres × ${prices.monthlyCents / 100} DH`} />
-          <KpiCard label="Assurances" value={dh(insTotal)} icon={ShieldCheck} color="#9b72ff"
-                   sub={`${scope.insured} assurés × ${prices.insuranceCents / 100} DH`} />
-          <KpiCard label="Inscriptions" value={dh(regTotal)} icon={Receipt} color="#22c55e"
-                   sub={`${scope.registrations} inscriptions × ${prices.registrationCents / 100} DH`} />
-          <KpiCard label="Total général" value={dh(grandTotal)} icon={BarChart3} color="#4d8cff"
-                   sub="Abonnements + Assurances + Inscriptions" />
-        </div>
-
         <div className="compta-charts-row">
           <ChartCard title={`Inscriptions par mois — ${yearLabel}`}
-                     subtitle="Revenus d'inscription (DH) par salle"
+                     subtitle={`Revenus d'inscription (DH) par salle${monthNote}`}
                      onExpand={() => setExpanded('bar')}>
             {barChart(240)}
           </ChartCard>
@@ -499,7 +529,7 @@ export default function ComptabilitePage() {
 
         <div className="compta-charts-row">
           <ChartCard title={`Tendance inscriptions — ${yearLabel}`}
-                     subtitle="Nombre de nouveaux membres par mois"
+                     subtitle={`Nombre de nouveaux membres par mois${monthNote}`}
                      onExpand={() => setExpanded('line')}>
             {lineChart(220)}
           </ChartCard>

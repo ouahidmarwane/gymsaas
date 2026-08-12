@@ -45,7 +45,9 @@ export const api = {
 
 // Types partages avec l'API ---------------------------------------------
 
-export interface Theme { accent: string; mode: 'light' | 'dark' | 'system' }
+import type { SkinKey } from '@/src/club/branding'
+
+export interface Theme { accent: string; mode: 'light' | 'dark' | 'system'; skin: SkinKey }
 
 export interface Branding {
   name: string

@@ -52,9 +52,13 @@ export default function EditablePage({
 
   useEffect(() => { load() }, [load])
 
-  const canEdit = me
-    ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin'].includes(me.org?.role ?? ''))
-    : false
+  // La disposition des ecrans appartient a la plateforme, pas aux clubs.
+  // Un proprietaire qui deplace ses cartes cree une variante que le support
+  // devra comprendre a chaque intervention ; et l'apparence du produit se
+  // pilote depuis un seul endroit. Le serveur applique la meme regle : cacher
+  // le bouton sans fermer la route ne serait qu'un decor.
+  const canEdit = me?.isPlatformAdmin === true
+    && (me.scope.mode !== 'support' || me.scope.canWrite)
 
   async function save() {
     if (!draft) return

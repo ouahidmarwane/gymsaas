@@ -109,6 +109,38 @@ test('les annees proposees couvrent les donnees, pas une fenetre arbitraire', as
   assert.ok(res.data.years.every(Number.isFinite))
 })
 
+test('la periode porte sur l effectif, pas seulement sur les inscriptions', async () => {
+  // C'etait le vrai defaut : seul le KPI « inscriptions » repondait au
+  // filtre, les trois autres restaient figes sur l'effectif du jour. Un
+  // gerant qui choisit janvier voyait donc trois chiffres inchanges et
+  // concluait, a raison, que le filtre ne marchait pas.
+  const janvier = await clubA.call('GET', `/api/finance?year=${YEAR}&month=0`)
+  const annee = await clubA.call('GET', `/api/finance?year=${YEAR}`)
+
+  assert.ok(janvier.data.scope.total <= annee.data.scope.total,
+    'l effectif de janvier ne peut pas depasser celui de l annee')
+
+  // Le membre pose en janvier par le test precedent est le seul present a
+  // cette date : les cinq autres ont adhere ce mois-ci.
+  assert.ok(janvier.data.scope.total < annee.data.scope.total,
+    'choisir un mois passe doit reduire l effectif retenu')
+})
+
+test('un mois choisi sans annee reste un mois', async () => {
+  // Avec « toutes les annees », le mois etait silencieusement ignore et la
+  // page renvoyait le total general.
+  const sansAnnee = await clubA.call('GET', '/api/finance?month=0')
+  const tout = await clubA.call('GET', '/api/finance')
+  assert.ok(sansAnnee.data.scope.registrations < tout.data.scope.registrations,
+    'le mois doit filtrer meme quand l annee est laissee libre')
+  assert.equal(sansAnnee.data.month, 0, 'le mois retenu revient au client')
+})
+
+test('le mois revient au client pour la mise en avant du graphique', async () => {
+  assert.equal((await clubA.call('GET', '/api/finance')).data.month, null)
+  assert.equal((await clubA.call(`GET`, `/api/finance?year=${YEAR}&month=7`)).data.month, 7)
+})
+
 test('les tarifs se modifient et se relisent', async () => {
   const saved = await clubA.call('PUT', '/api/finance/prices', {
     monthlyCents: 12_500, insuranceCents: 6_000, registrationCents: 20_000,

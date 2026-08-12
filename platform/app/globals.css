@@ -18,6 +18,20 @@
   --border-hover: rgba(255,255,255,0.18);
   --shadow: 0 24px 48px rgba(0,0,0,0.32), 0 8px 16px rgba(0,0,0,0.2);
   --shadow-card: 0 1px 3px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.2);
+
+  /* Surfaces, en variables plutot qu'en litteraux repetes.
+     Ces valeurs sont exactement celles qui etaient ecrites en dur dans les
+     regles ci-dessous : rien ne change ici. Elles deviennent des variables
+     pour qu'un habillage puisse retinter l'application en redefinissant
+     cinq lignes, au lieu de redupliquer les 189 selecteurs du theme clair. */
+  --page-wash:
+    radial-gradient(ellipse at 8% 8%, rgba(47,107,255,0.1), transparent 22%),
+    radial-gradient(ellipse at 88% 12%, rgba(77,140,255,0.09), transparent 26%),
+    radial-gradient(ellipse at 50% 90%, rgba(155,114,255,0.07), transparent 24%);
+  --card-bg: linear-gradient(180deg, rgba(24,26,34,0.92), rgba(15,17,24,0.95));
+  --panel-bg: linear-gradient(135deg, rgba(14,18,32,0.95) 0%, rgba(11,15,24,0.95) 100%);
+  --rail-bg: linear-gradient(180deg, rgba(23,25,32,0.94), rgba(14,16,22,0.97));
+  --card-border: rgba(255,255,255,0.07);
   --radius-sm: 10px;
   --radius-md: 16px;
   --radius-lg: 20px;
@@ -47,6 +61,17 @@ html[data-theme='light'] {
   --muted: #475569;
   --border: rgba(15,23,42,0.12);
   --shadow: 0 30px 60px rgba(15,23,42,0.12);
+
+  /* Les cartes du tableau de bord restaient sombres en mode clair : la
+     feuille claire d'origine traite .card et .stat-card, jamais .dz-card.
+     Les variables reglent le cas une fois pour toutes. */
+  --page-wash:
+    radial-gradient(ellipse at 8% 8%, rgba(29,78,216,0.08), transparent 24%),
+    radial-gradient(ellipse at 88% 12%, rgba(56,104,214,0.06), transparent 28%);
+  --card-bg: linear-gradient(180deg, #ffffff, #f7fafd);
+  --panel-bg: linear-gradient(135deg, #ffffff 0%, #f6f9fc 100%);
+  --rail-bg: linear-gradient(180deg, #ffffff, #eef2f8);
+  --card-border: rgba(15,23,42,0.10);
 }
 
 /* ── Light mode: fix dark text — scoped to specific elements only ── */
@@ -440,10 +465,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
     font-family: var(--font-inter), 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
     background-color: var(--bg);
     color: var(--text);
-    background-image:
-      radial-gradient(ellipse at 8% 8%, rgba(47,107,255,0.1), transparent 22%),
-      radial-gradient(ellipse at 88% 12%, rgba(77,140,255,0.09), transparent 26%),
-      radial-gradient(ellipse at 50% 90%, rgba(155,114,255,0.07), transparent 24%);
+    background-image: var(--page-wash);
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -987,8 +1009,8 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   overflow: hidden;
   padding: 22px;
   border-radius: 18px;
-  background: linear-gradient(135deg, rgba(14,18,32,0.95) 0%, rgba(11,15,24,0.95) 100%);
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--panel-bg);
+  border: 1px solid var(--card-border);
   border-top: 2.5px solid var(--gold);
   transition: transform var(--transition-med), border-color var(--transition-med), box-shadow var(--transition-med);
   display: grid;
@@ -1107,8 +1129,8 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   position: relative;
   padding: 22px;
   border-radius: 20px;
-  background: linear-gradient(135deg, rgba(14,18,32,0.95) 0%, rgba(11,15,24,0.95) 100%);
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--panel-bg);
+  border: 1px solid var(--card-border);
   transition: transform var(--transition-med), border-color var(--transition-med), box-shadow var(--transition-med);
   min-height: 200px;
   display: flex;
@@ -2004,8 +2026,8 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 @media (max-width: 1100px) { .compta-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
 
 .compta-kpi-card {
-  background: linear-gradient(135deg, rgba(14,18,32,0.95) 0%, rgba(11,15,24,0.95) 100%);
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--panel-bg);
+  border: 1px solid var(--card-border);
   border-left-width: 3px;
   border-radius: 16px;
   padding: 1.25rem;
@@ -2039,8 +2061,8 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 @media (max-width: 1100px) { .compta-charts-row { grid-template-columns: 1fr; } }
 
 .compta-chart-card {
-  background: linear-gradient(135deg, rgba(14,18,32,0.95) 0%, rgba(11,15,24,0.95) 100%);
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--panel-bg);
+  border: 1px solid var(--card-border);
   border-radius: 20px;
   padding: 1.5rem;
   box-shadow: var(--shadow-card);
@@ -4180,8 +4202,8 @@ input, textarea, select {
   position: fixed; left: 20px; top: 20px; bottom: 20px; width: 78px; z-index: 40;
   display: flex; flex-direction: column; align-items: center; justify-content: space-between;
   padding: 16px 0;
-  background: linear-gradient(180deg, rgba(23,25,32,0.94), rgba(14,16,22,0.97));
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--rail-bg);
+  border: 1px solid var(--card-border);
   border-radius: 999px;
   box-shadow: 0 24px 60px rgba(0,0,0,0.5);
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
@@ -4242,8 +4264,8 @@ input, textarea, select {
 .dz-col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 
 .dz-card {
-  background: linear-gradient(180deg, rgba(24,26,34,0.92), rgba(15,17,24,0.95));
-  border: 1px solid rgba(255,255,255,0.07);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: 28px; padding: 26px 28px;
 }
 .dz-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -5499,3 +5521,99 @@ html[data-theme='light'] .grade-chip { filter: saturate(1.1) brightness(0.82); }
     background: rgba(15,23,42,0.05); border-color: rgba(15,23,42,0.12); color: #1e293b;
   }
 }
+
+/* ==========================================================================
+   Habillages
+   ==========================================================================
+   Un habillage se pose sur une base — claire ou sombre — deja portee par
+   data-theme, et ne redefinit que des variables. C'est ce qui permet d'en
+   proposer cinq sans reecrire la feuille claire d'origine, qui compte 189
+   selecteurs ecrits a la main.
+
+   Le bloc vient en dernier a dessein : a specificite egale, la derniere
+   regle gagne, et la feuille claire pose beaucoup de !important.
+
+   L'accent (--gold) n'est PAS fixe ici. Il vient du club, applique en style
+   inline par la coquille : un habillage propose sa teinte au moment du
+   choix, mais un club qui a la sienne la garde. Une seule source de verite. */
+
+html[data-skin='chaleureux'] {
+  --bg: #f4e9dc;
+  --surface: #fffaf3;
+  --surface-soft: rgba(255,250,243,0.95);
+  --text: #2b1c12;
+  --muted: #705540;
+  --border: rgba(80,48,26,0.16);
+  --border-hover: rgba(80,48,26,0.3);
+  --card-border: rgba(120,72,36,0.18);
+  --card-bg: linear-gradient(180deg, #fffaf3, #f8ecdd);
+  --panel-bg: linear-gradient(135deg, #fffaf3 0%, #f6e7d5 100%);
+  --rail-bg: linear-gradient(180deg, #fff6ea, #f0dcc5);
+  --shadow-card: 0 1px 3px rgba(94,54,20,0.12), 0 10px 28px rgba(94,54,20,0.1);
+  /* La braise : le beige seul serait fade, le degrade de feu porte la
+     chaleur annoncee sans jamais passer derriere du texte. */
+  --page-wash:
+    radial-gradient(ellipse at 10% 0%, rgba(234,88,12,0.22), transparent 45%),
+    radial-gradient(ellipse at 90% 6%, rgba(217,119,6,0.18), transparent 42%),
+    radial-gradient(ellipse at 50% 100%, rgba(159,18,57,0.1), transparent 40%);
+}
+
+html[data-skin='sport'] {
+  --bg: #07100b;
+  --surface: #0d1a12;
+  --surface-soft: rgba(13,26,18,0.9);
+  --text: #f0f7f2;
+  --muted: #86a394;
+  --border: rgba(220,255,235,0.1);
+  --border-hover: rgba(220,255,235,0.22);
+  --card-border: rgba(134,239,172,0.14);
+  --card-bg: linear-gradient(180deg, rgba(16,32,22,0.94), rgba(8,18,12,0.96));
+  --panel-bg: linear-gradient(135deg, rgba(14,30,20,0.95) 0%, rgba(7,16,11,0.95) 100%);
+  --rail-bg: linear-gradient(180deg, rgba(18,36,25,0.95), rgba(7,16,11,0.97));
+  /* Les couloirs d'une piste, en diagonale et a peine visibles : la texture
+     se sent plutot qu'elle ne se voit, sinon elle concurrence les chiffres. */
+  --page-wash:
+    repeating-linear-gradient(115deg, rgba(134,239,172,0.045) 0 2px, transparent 2px 22px),
+    radial-gradient(ellipse at 12% 0%, rgba(22,163,74,0.24), transparent 42%),
+    radial-gradient(ellipse at 92% 100%, rgba(6,182,212,0.13), transparent 44%);
+}
+
+html[data-skin='tatami'] {
+  --bg: #12100e;
+  --surface: #1b1815;
+  --surface-soft: rgba(27,24,21,0.9);
+  --text: #f6f1ea;
+  --muted: #a2948a;
+  --border: rgba(255,238,214,0.1);
+  --border-hover: rgba(255,238,214,0.22);
+  --card-border: rgba(212,175,120,0.16);
+  --card-bg: linear-gradient(180deg, rgba(31,27,23,0.94), rgba(18,16,14,0.96));
+  --panel-bg: linear-gradient(135deg, rgba(29,26,22,0.95) 0%, rgba(17,15,13,0.95) 100%);
+  --rail-bg: linear-gradient(180deg, rgba(36,31,26,0.95), rgba(17,15,13,0.97));
+  /* Le tressage d'un tatami : deux trames croisees au pas de neuf pixels,
+     plus le rouge du drapeau en halo haut. */
+  --page-wash:
+    repeating-linear-gradient(0deg, rgba(203,166,110,0.05) 0 1px, transparent 1px 9px),
+    repeating-linear-gradient(90deg, rgba(203,166,110,0.05) 0 1px, transparent 1px 9px),
+    radial-gradient(ellipse at 50% 0%, rgba(185,28,28,0.18), transparent 40%);
+}
+
+/* Le rail et les cartes de la feuille claire portent des !important : on les
+   reprend a specificite egale, mais plus bas dans le fichier. */
+html[data-skin='chaleureux'] .card,
+html[data-skin='chaleureux'] .stat-card,
+html[data-skin='chaleureux'] .branch-card,
+html[data-skin='chaleureux'] .activity-panel {
+  background: var(--card-bg) !important;
+  border-color: var(--card-border) !important;
+  color: var(--text) !important;
+}
+html[data-skin='chaleureux'] .app-main { background: transparent !important; }
+html[data-skin='chaleureux'] .sidebar-shell {
+  background: var(--rail-bg) !important;
+  border-color: var(--card-border) !important;
+}
+
+/* Le mode clair pose .app-main { background: #f0f4f8 }, opaque, qui masque
+   la braise posee sur body. */
+html[data-skin='clair'] .app-main { background: transparent; }

@@ -8,6 +8,7 @@ import {
   ShieldAlert, Building2, Settings, LogOut, Menu, X,
 } from 'lucide-react'
 import { api, ApiError, type Me, type Capabilities } from '@/lib/client'
+import { SKINS } from '@/src/club/branding'
 
 // Coquille de l'application : le rail flottant en pilule de 78px, exactement
 // comme l'application d'origine. Les classes viennent de globals.css, repris
@@ -76,6 +77,13 @@ export default function Shell({ children }: { children: ReactNode }) {
       root.style.setProperty('--gold', accent)
       root.style.setProperty('--tabs-pill-bg', accent)
     }
+
+    // Deux attributs, deux roles. data-theme porte la base claire ou sombre,
+    // que la feuille d'origine connait deja ; data-skin porte la palette
+    // par-dessus. Separer les deux evite de dupliquer la feuille claire.
+    const skin = me?.branding?.theme.skin ?? 'sombre'
+    root.setAttribute('data-theme', SKINS[skin]?.base ?? 'dark')
+    root.setAttribute('data-skin', skin)
     if (me?.branding?.locale === 'ar') {
       root.setAttribute('lang', 'ar'); root.setAttribute('dir', 'rtl')
     } else {

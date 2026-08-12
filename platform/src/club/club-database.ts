@@ -568,6 +568,7 @@ export class ClubDatabase extends DurableObject<Env> {
   finance(opts: { branchId?: string | null; year?: number | null; month?: number | null } = {}): {
     prices: { monthlyCents: number; insuranceCents: number; registrationCents: number }
     chartYear: number
+    month: number | null
     years: number[]
     branches: Array<{ id: string; name: string; total: number; insured: number }>
     scope: { total: number; insured: number; registrations: number }
@@ -584,12 +585,31 @@ export class ClubDatabase extends DurableObject<Env> {
       .exec<{ id: string; name: string }>('SELECT id, name FROM branches ORDER BY name')
       .toArray()
 
+    // La periode ne borne pas seulement les inscriptions : elle borne
+    // l'effectif. « Revenu mensuel de janvier » doit se calculer sur les
+    // membres presents en janvier, pas sur ceux d'aujourd'hui — sinon trois
+    // KPI sur quatre restent figes quoi qu'on filtre, et le filtre passe pour
+    // casse alors qu'il repond.
+    const currentYear = new Date().getUTCFullYear()
+    const month = Number.isFinite(opts.month) ? Number(opts.month) : null
+    const hasPeriod = opts.year != null || month !== null
+    const periodYear = Number.isFinite(opts.year) ? Number(opts.year) : currentYear
+
+    const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
+    const periodEnd = !hasPeriod
+      ? null
+      : month === null
+        ? `${periodYear}-12-31`
+        : `${periodYear}-${String(month + 1).padStart(2, '0')}-${String(lastDay(periodYear, month)).padStart(2, '0')}`
+
     const perBranch = this.sql.exec<{ bid: string; total: number; insured: number }>(
       `SELECT COALESCE(branch_id, '') AS bid,
               COUNT(*) AS total,
               COALESCE(SUM(is_insured), 0) AS insured
-         FROM members WHERE status != 'archived'
+         FROM members
+        WHERE status != 'archived' AND (? IS NULL OR join_date <= ?)
         GROUP BY bid`,
+      periodEnd, periodEnd,
     ).toArray()
     const counts = new Map(perBranch.map(r => [r.bid, r]))
 
@@ -612,7 +632,6 @@ export class ClubDatabase extends DurableObject<Env> {
     // Les annees proposees viennent des donnees, pas d'une fenetre glissante
     // arbitraire : un club qui importe dix ans d'historique doit pouvoir le
     // consulter, un club ouvert cette annee ne doit pas voir quatre annees vides.
-    const currentYear = new Date().getUTCFullYear()
     const seen = this.sql.exec<{ y: string }>(
       `SELECT DISTINCT strftime('%Y', join_date) AS y
          FROM members WHERE status != 'archived' AND join_date IS NOT NULL
@@ -620,7 +639,7 @@ export class ClubDatabase extends DurableObject<Env> {
     ).toArray().map(r => Number(r.y)).filter(Number.isFinite)
     const years = [...new Set([currentYear, ...seen])].sort((a, b) => b - a)
 
-    const chartYear = Number.isFinite(opts.year) ? Number(opts.year) : currentYear
+    const chartYear = periodYear
 
     const rows = this.sql.exec<{ bid: string; m: number; n: number }>(
       `SELECT COALESCE(branch_id, '') AS bid,
@@ -643,11 +662,10 @@ export class ClubDatabase extends DurableObject<Env> {
       bucket.counts[r.bid] = (bucket.counts[r.bid] ?? 0) + r.n
     }
 
-    // Les inscriptions suivent la periode choisie ; l'effectif, lui, reste
-    // l'effectif du jour. Melanger les deux donnerait un total qui ne
-    // correspond a aucune realite.
-    const month = Number.isFinite(opts.month) ? Number(opts.month) : null
-    const registrations = opts.year == null
+    // Sans periode, « inscriptions » vaut tout l'historique. Avec une
+    // periode, seules celles qui y tombent — un mois choisi ne peut pas
+    // compter les onze autres.
+    const registrations = !hasPeriod
       ? scope.total
       : byMonth.reduce((sum, bucket, i) => {
           if (month !== null && i !== month) return sum
@@ -657,6 +675,9 @@ export class ClubDatabase extends DurableObject<Env> {
     return {
       prices: this.getPrices(),
       chartYear, years, branches,
+      // Le mois revient au client : c'est lui qui met en avant la barre
+      // correspondante, le graphique restant annuel.
+      month,
       scope: { ...scope, registrations },
       byMonth,
     }

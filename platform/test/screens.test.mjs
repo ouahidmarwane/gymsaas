@@ -120,6 +120,32 @@ test('la marque renvoie une URL de logo proxifiee, jamais une cle brute', async 
   assert.match(res.data.theme.accent, /^#[0-9a-f]{6}$/i)
 })
 
+test('un club neuf demarre sur l habillage d origine', async () => {
+  const res = await owner.call('GET', '/api/branding')
+  assert.equal(res.data.theme.skin, 'sombre',
+    'sans choix, un club doit ressembler a l application, pas a une variante')
+})
+
+test('les cinq habillages sont acceptes et relus', async () => {
+  for (const skin of ['clair', 'chaleureux', 'sport', 'tatami', 'sombre']) {
+    const saved = await owner.call('PUT', '/api/branding', { theme: { accent: '#2f6bff', skin } })
+    assert.equal(saved.status, 200, `${skin} refuse : ${JSON.stringify(saved.data)}`)
+    assert.equal(saved.data.theme.skin, skin)
+    assert.equal((await owner.call('GET', '/api/branding')).data.theme.skin, skin)
+  }
+})
+
+test('un habillage inconnu est refuse', async () => {
+  // La valeur finit en attribut du document. Une chaine libre s'y
+  // retrouverait telle quelle dans le HTML.
+  for (const skin of ['neon', '', 'sombre"><script>', 42]) {
+    const res = await owner.call('PUT', '/api/branding', { theme: { accent: '#2f6bff', skin } })
+    assert.equal(res.status, 400, `accepte a tort : ${JSON.stringify(skin)}`)
+  }
+  // Et l'habillage precedent n'a pas bouge.
+  assert.equal((await owner.call('GET', '/api/branding')).data.theme.skin, 'sombre')
+})
+
 test('entrer dans un club puis en sortir depuis l interface', async () => {
   const enter = await operator.call('POST', `/api/admin/clubs/${clubId}/support`)
   assert.equal(enter.status, 200)

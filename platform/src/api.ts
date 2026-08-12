@@ -754,8 +754,18 @@ export const api = {
           })
         }
 
-        if (method === 'PUT') {
+        // Lire sa disposition est le droit de tout le club — c'est ce qui
+        // dessine ses ecrans. La modifier appartient a la plateforme seule :
+        // le bouton n'est propose qu'a l'exploitant, et une route ouverte
+        // derriere un bouton cache ne serait pas une regle, juste un decor.
+        if (method === 'PUT' || method === 'DELETE') {
           atLeast(principal, 'admin', true)
+          if (!principal.isPlatformAdmin) {
+            throw new HttpError(403, 'La disposition des ecrans est geree par la plateforme')
+          }
+        }
+
+        if (method === 'PUT') {
           const body = await readJson(request)
           const layout = parseLayout(page, body.layout)
           await club.setSetting(layoutKey(page), layout)
@@ -766,7 +776,6 @@ export const api = {
         }
 
         if (method === 'DELETE') {
-          atLeast(principal, 'admin', true)
           await club.setSetting(layoutKey(page), defaultLayout(page))
           return json({ layout: defaultLayout(page) })
         }
