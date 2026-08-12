@@ -3,7 +3,6 @@
 import { useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, ApiError } from '@/lib/client'
-import styles from './login.module.css'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -17,9 +16,7 @@ export default function LoginPage() {
     setError(null)
     setBusy(true)
     try {
-      const { orgId } = await api.post<{ orgId: string | null }>('/api/auth/login', {
-        email, password,
-      })
+      const { orgId } = await api.post<{ orgId: string | null }>('/api/auth/login', { email, password })
       // Un compte de plateforme sans club atterrit sur la supervision ;
       // tout le monde d'autre sur son tableau de bord.
       router.replace(orgId ? '/dashboard' : '/admin')
@@ -31,53 +28,66 @@ export default function LoginPage() {
   }
 
   return (
-    <main className={styles.page}>
-      <form className={styles.form} onSubmit={submit} noValidate>
-        <div className={styles.mark} aria-hidden="true">GF</div>
-
-        <div className={styles.head}>
-          <h1>Connexion</h1>
-          <p className={styles.sub}>Accedez a la gestion de votre club.</p>
+    <main className="min-h-screen flex items-center justify-center p-4"
+          style={{ background: 'linear-gradient(to bottom right, #080b12, #171a22)' }}>
+      <form onSubmit={submit} noValidate className="card p-8 w-full" style={{ maxWidth: 420 }}>
+        <div className="flex items-center gap-3 mb-6">
+          <span className="rail-avatar" style={{ width: 44, height: 44, fontSize: '0.95rem' }}>GF</span>
+          <div>
+            <h1 style={{ fontSize: '1.35rem', fontWeight: 800, letterSpacing: '-0.025em' }}>GymFlow</h1>
+            <p style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>Gestion de clubs sportifs</p>
+          </div>
         </div>
 
         {/* aria-live : l'echec doit etre annonce, pas seulement colore. */}
         <div aria-live="polite">
-          {error && <p className={styles.alert} role="alert">{error}</p>}
+          {error && (
+            <p role="alert" style={{
+              padding: '0.7rem 1rem', marginBottom: '1rem', borderRadius: 14,
+              background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+              color: '#fca5a5', fontSize: '0.85rem', fontWeight: 600,
+            }}>{error}</p>
+          )}
         </div>
 
-        <div className="field">
-          <label className="label" htmlFor="email">Adresse e-mail</label>
-          <input
-            id="email"
-            className="input"
-            type="email"
-            inputMode="email"
-            autoComplete="username"
-            autoFocus
-            required
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            aria-invalid={error ? 'true' : undefined}
-          />
-        </div>
+        <div className="flex flex-col gap-4">
+          <label className="flex flex-col gap-1.5">
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--muted)' }}>Adresse e-mail</span>
+            <input
+              className="input-dark"
+              type="email"
+              inputMode="email"
+              autoComplete="username"
+              autoFocus
+              required
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              aria-invalid={error ? 'true' : undefined}
+            />
+          </label>
 
-        <div className="field">
-          <label className="label" htmlFor="password">Mot de passe</label>
-          <input
-            id="password"
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            aria-invalid={error ? 'true' : undefined}
-          />
-        </div>
+          <label className="flex flex-col gap-1.5">
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--muted)' }}>Mot de passe</span>
+            <input
+              className="input-dark"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              aria-invalid={error ? 'true' : undefined}
+            />
+          </label>
 
-        <button className="btn btn-primary" type="submit" data-busy={busy} disabled={busy}>
-          Se connecter
-        </button>
+          <button
+            type="submit"
+            className="btn-dark w-full"
+            style={{ background: 'var(--gold)', borderColor: 'transparent', marginTop: 6 }}
+            disabled={busy}
+          >
+            {busy ? 'Connexion…' : 'Se connecter'}
+          </button>
+        </div>
       </form>
     </main>
   )

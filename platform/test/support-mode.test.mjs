@@ -94,11 +94,13 @@ test('avant d entrer, la plateforme ne voit pas les membres du club', async () =
   assert.equal(res.data.members.some(m => m.name === memberName), false)
 })
 
-test('entrer dans un club donne acces en LECTURE SEULE', async () => {
+test('entrer dans un club donne acces en ecriture', async () => {
   const enter = await operator.call('POST', `/api/admin/clubs/${clubId}/support`)
   assert.equal(enter.status, 200, JSON.stringify(enter.data))
   assert.equal(enter.data.mode, 'support')
-  assert.equal(enter.data.canWrite, false)
+  // Entrer pour depanner suppose de pouvoir agir : l'escalade a chaque geste
+  // transformait le support en parcours du combattant.
+  assert.equal(enter.data.canWrite, true)
 
   // Les memes routes servent desormais le club visite.
   const members = await operator.call('GET', '/api/members')
@@ -109,39 +111,37 @@ test('entrer dans un club donne acces en LECTURE SEULE', async () => {
   assert.deepEqual(branches.data.branches.map(b => b.name), ['Salle Unique'])
 })
 
-test('en lecture seule, toute ecriture est refusee', async () => {
-  const write = await operator.call('POST', '/api/members', { name: 'Intrus', phone: '0600000000' })
-  assert.equal(write.status, 403, JSON.stringify(write.data))
-
-  const branch = await operator.call('POST', '/api/branches', { name: 'Salle Fantome' })
-  assert.equal(branch.status, 403)
-
-  // Rien n'a bouge cote club.
-  const check = await owner.call('GET', '/api/members')
-  assert.deepEqual(check.data.members.map(m => m.name), [memberName])
-})
-
-test('/api/me signale clairement le mode support', async () => {
-  const me = await operator.call('GET', '/api/me')
-  assert.equal(me.data.scope.mode, 'support')
-  assert.equal(me.data.scope.orgId, clubId)
-  assert.equal(me.data.scope.canWrite, false)
-  // L'identite ne change pas : on n'usurpe pas le proprietaire.
-  assert.notEqual(me.data.user.id, undefined)
-  assert.equal(me.data.isPlatformAdmin, true)
-})
-
-test('l ecriture demande une escalade explicite', async () => {
-  const escalate = await operator.call('POST', '/api/admin/support/write')
-  assert.equal(escalate.status, 200, JSON.stringify(escalate.data))
-  assert.equal(escalate.data.canWrite, true)
-
+test('le support peut modifier le club visite', async () => {
   const branch = await operator.call('POST', '/api/branches', { name: 'Salle Ajoutee Par Support' })
   assert.equal(branch.status, 201, JSON.stringify(branch.data))
 
   // Le club voit la nouvelle salle : le support a bien agi sur SA base.
   const seen = await owner.call('GET', '/api/branches')
   assert.ok(seen.data.branches.some(b => b.name === 'Salle Ajoutee Par Support'))
+})
+
+test('/api/me signale clairement le mode support', async () => {
+  const me = await operator.call('GET', '/api/me')
+  assert.equal(me.data.scope.mode, 'support')
+  assert.equal(me.data.scope.orgId, clubId)
+  assert.equal(me.data.scope.canWrite, true)
+  // L'identite ne change pas : on n'usurpe pas le proprietaire.
+  assert.notEqual(me.data.user.id, undefined)
+  assert.equal(me.data.isPlatformAdmin, true)
+})
+
+test('l observation en lecture seule reste possible et bloque les ecritures', async () => {
+  assert.equal((await operator.call('POST', '/api/admin/support/read-only')).status, 200)
+  assert.equal((await operator.call('GET', '/api/me')).data.scope.canWrite, false)
+
+  const refused = await operator.call('POST', '/api/branches', { name: 'Salle Fantome' })
+  assert.equal(refused.status, 403, JSON.stringify(refused.data))
+
+  const check = await owner.call('GET', '/api/branches')
+  assert.equal(check.data.branches.some(b => b.name === 'Salle Fantome'), false)
+
+  // Retour en ecriture pour la suite du scenario.
+  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
 })
 
 test('le support modifie la marque du club', async () => {

@@ -7,7 +7,7 @@ import { hashPassword, verifyPassword, newId } from './auth/crypto'
 import {
   createSession, resolveSession, destroySession, readSessionCookie,
   sessionCookie, clearedCookie, isoSeconds, activeScope,
-  beginSupport, allowSupportWrite, endSupport, type Principal,
+  beginSupport, allowSupportWrite, setSupportReadOnly, endSupport, type Principal,
 } from './auth/session'
 import { parseLayout, defaultLayout, LayoutError, CARD_REGISTRY, GRID_COLUMNS } from './club/layout'
 import {
@@ -517,12 +517,16 @@ export const api = {
         ).bind(orgId).first<{ id: string; name: string }>()
         if (!org) return fail(404, 'Club inconnu')
 
-        const expiresAt = await beginSupport(env, token, orgId)
+        // `readOnly` est un choix explicite, pas le defaut : entrer pour
+        // depanner suppose de pouvoir agir.
+        const body = await request.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>))
+        const { expiresAt, canWrite } = await beginSupport(env, token, orgId, body.readOnly === true)
+
         await env.CONTROL.prepare(
           "INSERT INTO platform_audit (actor_id, action, org_id, detail, ip) VALUES (?, 'support_enter', ?, ?, ?)",
-        ).bind(principal.userId, orgId, JSON.stringify({ expiresAt }), ip).run()
+        ).bind(principal.userId, orgId, JSON.stringify({ expiresAt, canWrite }), ip).run()
 
-        return json({ orgId, name: org.name, mode: 'support', canWrite: false, expiresAt })
+        return json({ orgId, name: org.name, mode: 'support', canWrite, expiresAt })
       }
 
       if (path === '/api/admin/support/write' && method === 'POST') {
@@ -531,6 +535,14 @@ export const api = {
         const expiresAt = await allowSupportWrite(env, token)
         await auditSupport(env, principal, 'support_write_enabled', { expiresAt }, ip)
         return json({ mode: 'support', canWrite: true, expiresAt })
+      }
+
+      if (path === '/api/admin/support/read-only' && method === 'POST') {
+        if (!principal.supportOrgId) return fail(400, 'Aucune session de support active')
+        if (!token) return fail(401, 'Session absente')
+        await setSupportReadOnly(env, token)
+        await auditSupport(env, principal, 'support_read_only', null, ip)
+        return json({ mode: 'support', canWrite: false })
       }
 
       if (path === '/api/admin/support' && method === 'DELETE') {

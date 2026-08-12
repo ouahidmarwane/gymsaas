@@ -1,235 +1,285 @@
 'use client'
 
-import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { GripVertical, X, Plus } from 'lucide-react'
 import type { CardPlacement, CardSpec } from '@/lib/client'
 import { COLUMNS, moveCard, resizeCard, rows } from '@/lib/grid'
-import styles from './grid.module.css'
 
-const ROW_HEIGHT = 88
-const GAP = 12
+const ROW_H = 104
+const GAP = 18
 
 interface Props {
   layout: CardPlacement[]
   specs: Record<string, CardSpec>
   editing: boolean
-  renderCard: (id: string) => React.ReactNode
   labelFor: (id: string) => string
+  renderCard: (id: string) => React.ReactNode
   onChange: (next: CardPlacement[]) => void
 }
 
-type Drag =
-  | { kind: 'move'; id: string; pointerId: number; dx: number; dy: number }
-  | { kind: 'resize'; id: string; pointerId: number; startW: number; startH: number; startX: number; startY: number }
+interface DragState {
+  id: string
+  pointerId: number
+  grabX: number       // decalage du curseur dans la carte, en px
+  grabY: number
+  originX: number     // position d'origine de la carte a l'ecran
+  originY: number
+  dx: number          // deplacement courant, en px
+  dy: number
+  target: { x: number; y: number }
+}
 
+/**
+ * Grille du tableau de bord.
+ *
+ * Le deplacement suit le curseur en `transform` pur, jamais en changeant la
+ * position de grille : la carte saisie ne declenche aucun recalcul de mise en
+ * page, donc elle colle au doigt meme sur un telephone moyen. Les cartes
+ * bousculees, elles, changent bien de place — mais avec une transition, ce qui
+ * donne l'impression qu'elles s'ecartent au lieu de sauter.
+ */
 export default function DashboardGrid({
-  layout, specs, editing, renderCard, labelFor, onChange,
+  layout, specs, editing, labelFor, renderCard, onChange,
 }: Props) {
   const gridRef = useRef<HTMLDivElement>(null)
-  const [drag, setDrag] = useState<Drag | null>(null)
-  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null)
+  const [drag, setDrag] = useState<DragState | null>(null)
+  const [resizing, setResizing] = useState<string | null>(null)
 
-  const visible = layout.filter(c => c.visible)
-  const hidden = layout.filter(c => !c.visible)
-  const rowCount = rows(layout)
+  // La disposition affichee pendant un glisser : la carte saisie est placee a
+  // sa destination provisoire, et les autres se reorganisent autour en direct.
+  // On voit donc le resultat avant de lacher, pas apres.
+  const preview = useMemo(() => {
+    if (!drag) return layout
+    return moveCard(layout, drag.id, drag.target.x, drag.target.y)
+  }, [layout, drag])
 
-  /** Largeur reelle d'une colonne, mesuree : la grille est fluide. */
-  const colWidth = useCallback(() => {
+  const visible = preview.filter(c => c.visible)
+  const hidden = preview.filter(c => !c.visible)
+  const rowCount = Math.max(rows(preview), 1)
+
+  const metrics = useCallback(() => {
     const width = gridRef.current?.clientWidth ?? 0
-    return (width - GAP * (COLUMNS - 1)) / COLUMNS
+    const col = (width - GAP * (COLUMNS - 1)) / COLUMNS
+    return { col, unitX: col + GAP, unitY: ROW_H + GAP }
   }, [])
 
-  function startMove(event: ReactPointerEvent, card: CardPlacement) {
-    if (!editing) return
-    event.preventDefault()
-    const rect = (event.currentTarget as HTMLElement).closest(`.${styles.cell}`)!.getBoundingClientRect()
-    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-    setDrag({
-      kind: 'move', id: card.id, pointerId: event.pointerId,
-      dx: event.clientX - rect.left, dy: event.clientY - rect.top,
-    })
-    setGhost({ x: card.x, y: card.y })
-  }
+  // Les ecouteurs vivent sur window : relacher le doigt hors de la grille
+  // doit terminer le geste, pas le laisser coince.
+  useEffect(() => {
+    if (!drag) return
 
-  function startResize(event: ReactPointerEvent, card: CardPlacement) {
-    if (!editing) return
-    event.preventDefault()
-    event.stopPropagation()
-    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-    setDrag({
-      kind: 'resize', id: card.id, pointerId: event.pointerId,
-      startW: card.w, startH: card.h, startX: event.clientX, startY: event.clientY,
-    })
-  }
+    const rtl = getComputedStyle(document.documentElement).direction === 'rtl'
 
-  function onPointerMove(event: ReactPointerEvent) {
-    if (!drag || event.pointerId !== drag.pointerId) return
-    const grid = gridRef.current
-    if (!grid) return
-    const rect = grid.getBoundingClientRect()
-    const unit = colWidth() + GAP
+    function onMove(event: PointerEvent) {
+      if (event.pointerId !== drag!.pointerId) return
+      const grid = gridRef.current
+      if (!grid) return
 
-    if (drag.kind === 'move') {
-      // En RTL la grille se lit de droite a gauche : on mesure depuis le
-      // bord logique de depart, pas depuis la gauche physique.
-      const rtl = getComputedStyle(grid).direction === 'rtl'
-      const offsetX = rtl
-        ? rect.right - (event.clientX - drag.dx) - colWidth()
-        : (event.clientX - drag.dx) - rect.left
-      const x = Math.round(offsetX / unit)
-      const y = Math.round(((event.clientY - drag.dy) - rect.top) / (ROW_HEIGHT + GAP))
-      setGhost({ x: Math.max(0, x), y: Math.max(0, y) })
-    } else {
-      const card = layout.find(c => c.id === drag.id)!
-      const w = drag.startW + Math.round((event.clientX - drag.startX) / unit)
-      const h = drag.startH + Math.round((event.clientY - drag.startY) / (ROW_HEIGHT + GAP))
-      const spec = specs[card.id]
-      if (spec) onChange(resizeCard(layout, card.id, w, h, spec))
-      setDrag({ ...drag, startW: w, startH: h, startX: event.clientX, startY: event.clientY })
+      const rect = grid.getBoundingClientRect()
+      const { col, unitX, unitY } = metrics()
+
+      const dx = event.clientX - drag!.originX
+      const dy = event.clientY - drag!.originY
+
+      // Coin de la carte a l'ecran, ramene dans le repere de la grille.
+      const cornerX = event.clientX - drag!.grabX
+      const cornerY = event.clientY - drag!.grabY
+      const localX = rtl ? rect.right - cornerX - col : cornerX - rect.left
+      const localY = cornerY - rect.top
+
+      const card = layout.find(c => c.id === drag!.id)!
+      const x = Math.max(0, Math.min(Math.round(localX / unitX), COLUMNS - card.w))
+      const y = Math.max(0, Math.round(localY / unitY))
+
+      setDrag(d => (d ? { ...d, dx, dy, target: { x, y } } : d))
     }
-  }
 
-  function endDrag() {
-    if (drag?.kind === 'move' && ghost) onChange(moveCard(layout, drag.id, ghost.x, ghost.y))
-    setDrag(null)
-    setGhost(null)
-  }
+    function finish(event: PointerEvent) {
+      if (event.pointerId !== drag!.pointerId) return
+      onChange(moveCard(layout, drag!.id, drag!.target.x, drag!.target.y))
+      setDrag(null)
+    }
 
-  /** Deplacement au clavier : le glisser ne peut pas etre le seul moyen. */
-  function onCardKeyDown(event: React.KeyboardEvent, card: CardPlacement) {
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+    }
+  }, [drag, layout, metrics, onChange])
+
+  // Redimensionnement au pointeur.
+  useEffect(() => {
+    if (!resizing) return
+    const spec = specs[resizing]
+    if (!spec) return
+
+    function onMove(event: PointerEvent) {
+      const grid = gridRef.current
+      if (!grid) return
+      const rect = grid.getBoundingClientRect()
+      const { unitX, unitY } = metrics()
+      const card = layout.find(c => c.id === resizing)!
+      const rtl = getComputedStyle(document.documentElement).direction === 'rtl'
+      const edgeX = rtl ? rect.right - event.clientX : event.clientX - rect.left
+      const w = Math.round(edgeX / unitX) - card.x
+      const h = Math.round((event.clientY - rect.top) / unitY) - card.y
+      if (w !== card.w || h !== card.h) onChange(resizeCard(layout, resizing!, w, h, spec!))
+    }
+    function finish() { setResizing(null) }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+    }
+  }, [resizing, layout, specs, metrics, onChange])
+
+  function grab(event: React.PointerEvent, card: CardPlacement) {
     if (!editing) return
-    const step: Record<string, [number, number]> = {
+    event.preventDefault()
+    const cell = (event.currentTarget as HTMLElement).closest('.gf-cell') as HTMLElement | null
+    if (!cell) return
+    const rect = cell.getBoundingClientRect()
+    setDrag({
+      id: card.id,
+      pointerId: event.pointerId,
+      grabX: event.clientX - rect.left,
+      grabY: event.clientY - rect.top,
+      originX: event.clientX,
+      originY: event.clientY,
+      dx: 0, dy: 0,
+      target: { x: card.x, y: card.y },
+    })
+  }
+
+  /** Le clavier doit pouvoir tout faire : le glisser ne peut pas etre le seul chemin. */
+  function onKey(event: React.KeyboardEvent, card: CardPlacement) {
+    const spec = specs[card.id]
+    const moves: Record<string, [number, number]> = {
       ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
     }
-    const delta = step[event.key]
+    const delta = moves[event.key]
     if (!delta) return
     event.preventDefault()
-    onChange(moveCard(layout, card.id, card.x + delta[0], card.y + delta[1]))
+    if (event.shiftKey && spec) {
+      onChange(resizeCard(layout, card.id, card.w + delta[0], card.h + delta[1], spec))
+    } else {
+      onChange(moveCard(layout, card.id, card.x + delta[0], card.y + delta[1]))
+    }
   }
 
   return (
     <>
       <div
         ref={gridRef}
-        className={styles.grid}
-        data-editing={editing || undefined}
+        className="gf-grid"
+        data-editing={editing ? 'true' : undefined}
         style={{
           gridTemplateColumns: `repeat(${COLUMNS}, minmax(0, 1fr))`,
-          gridAutoRows: `${ROW_HEIGHT}px`,
+          gridAutoRows: `${ROW_H}px`,
           gap: `${GAP}px`,
-          minHeight: rowCount * (ROW_HEIGHT + GAP),
+          ['--row-h' as string]: `${ROW_H}px`,
+          minHeight: rowCount * (ROW_H + GAP),
         }}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
       >
-        {/* Empreinte de destination pendant le glisser. */}
-        {drag?.kind === 'move' && ghost && (() => {
-          const card = layout.find(c => c.id === drag.id)!
+        {/* Empreinte de destination : on voit ou la carte va atterrir. */}
+        {drag && (() => {
+          const card = preview.find(c => c.id === drag.id)!
           return (
             <div
-              className={styles.ghost}
+              className="gf-ghost"
               aria-hidden="true"
               style={{
-                gridColumn: `${Math.min(ghost.x, COLUMNS - card.w) + 1} / span ${card.w}`,
-                gridRow: `${ghost.y + 1} / span ${card.h}`,
+                gridColumn: `${card.x + 1} / span ${card.w}`,
+                gridRow: `${card.y + 1} / span ${card.h}`,
               }}
             />
           )
         })()}
 
-        {visible.map(card => (
-          <section
-            key={card.id}
-            className={styles.cell}
-            data-dragging={drag?.id === card.id || undefined}
-            style={{
-              gridColumn: `${card.x + 1} / span ${card.w}`,
-              gridRow: `${card.y + 1} / span ${card.h}`,
-            }}
-            aria-label={labelFor(card.id)}
-          >
-            {editing && (
-              <div className={styles.chrome}>
+        {visible.map(card => {
+          const dragged = drag?.id === card.id
+          return (
+            <section
+              key={card.id}
+              className="gf-cell"
+              data-dragging={dragged ? 'true' : undefined}
+              data-settling={drag && !dragged ? 'true' : undefined}
+              aria-label={labelFor(card.id)}
+              style={{
+                gridColumn: `${card.x + 1} / span ${card.w}`,
+                gridRow: `${card.y + 1} / span ${card.h}`,
+                // Pendant le glisser, la carte reste dans sa cellule d'origine
+                // et n'est deplacee que visuellement.
+                transform: dragged ? `translate3d(${drag!.dx}px, ${drag!.dy}px, 0)` : undefined,
+              }}
+            >
+              {editing && (
+                <div className="gf-chrome">
+                  <button
+                    type="button"
+                    className="gf-handle"
+                    onPointerDown={e => grab(e, card)}
+                    onKeyDown={e => onKey(e, card)}
+                    aria-label={`Deplacer ${labelFor(card.id)}. Fleches pour deplacer, Maj + fleches pour redimensionner.`}
+                  >
+                    <GripVertical size={15} strokeWidth={2.2} />
+                  </button>
+                  <span className="gf-chrome-title">{labelFor(card.id)}</span>
+                  <button
+                    type="button"
+                    className="gf-hide"
+                    onClick={() => onChange(layout.map(c =>
+                      c.id === card.id ? { ...c, visible: false } : c))}
+                    aria-label={`Masquer ${labelFor(card.id)}`}
+                  >
+                    <X size={14} strokeWidth={2.4} />
+                  </button>
+                </div>
+              )}
+
+              <div className="gf-body">{renderCard(card.id)}</div>
+
+              {editing && (
                 <button
                   type="button"
-                  className={styles.handle}
-                  onPointerDown={e => startMove(e, card)}
-                  onKeyDown={e => onCardKeyDown(e, card)}
-                  aria-label={`Deplacer ${labelFor(card.id)}. Fleches pour ajuster.`}
-                >
-                  <GripIcon />
-                </button>
-                <button
-                  type="button"
-                  className={styles.hide}
-                  onClick={() => onChange(layout.map(c =>
-                    c.id === card.id ? { ...c, visible: false } : c))}
-                  aria-label={`Masquer ${labelFor(card.id)}`}
-                >
-                  &times;
-                </button>
-              </div>
-            )}
-
-            <div className={styles.body}>{renderCard(card.id)}</div>
-
-            {editing && (
-              <span
-                className={styles.resize}
-                role="slider"
-                tabIndex={0}
-                aria-label={`Redimensionner ${labelFor(card.id)}`}
-                aria-valuenow={card.w}
-                aria-valuemin={specs[card.id]?.minW ?? 1}
-                aria-valuemax={specs[card.id]?.maxW ?? COLUMNS}
-                onPointerDown={e => startResize(e, card)}
-                onKeyDown={e => {
-                  const spec = specs[card.id]
-                  if (!spec) return
-                  if (e.key === 'ArrowRight') { e.preventDefault(); onChange(resizeCard(layout, card.id, card.w + 1, card.h, spec)) }
-                  if (e.key === 'ArrowLeft')  { e.preventDefault(); onChange(resizeCard(layout, card.id, card.w - 1, card.h, spec)) }
-                  if (e.key === 'ArrowDown')  { e.preventDefault(); onChange(resizeCard(layout, card.id, card.w, card.h + 1, spec)) }
-                  if (e.key === 'ArrowUp')    { e.preventDefault(); onChange(resizeCard(layout, card.id, card.w, card.h - 1, spec)) }
-                }}
-              />
-            )}
-          </section>
-        ))}
+                  className="gf-resize"
+                  aria-label={`Redimensionner ${labelFor(card.id)}`}
+                  onPointerDown={e => { e.preventDefault(); e.stopPropagation(); setResizing(card.id) }}
+                  onKeyDown={e => onKey(e, card)}
+                />
+              )}
+            </section>
+          )
+        })}
       </div>
 
       {editing && hidden.length > 0 && (
-        <div className={styles.tray}>
-          <span className={styles.trayLabel}>Cartes masquees</span>
-          <div className={styles.trayItems}>
+        <div className="gf-tray">
+          <span className="gf-tray-label">Cartes masquees</span>
+          <div className="gf-tray-items">
             {hidden.map(card => (
               <button
                 key={card.id}
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="gf-tray-btn"
                 onClick={() => onChange(moveCard(
-                  layout.map(c => c.id === card.id ? { ...c, visible: true } : c),
+                  layout.map(c => (c.id === card.id ? { ...c, visible: true } : c)),
                   card.id, 0, 999,
                 ))}
               >
-                + {labelFor(card.id)}
+                <Plus size={13} strokeWidth={2.4} /> {labelFor(card.id)}
               </button>
             ))}
           </div>
         </div>
       )}
     </>
-  )
-}
-
-function GripIcon() {
-  return (
-    <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true">
-      {[2, 8, 14].map(y => (
-        <g key={y}>
-          <circle cx="2" cy={y} r="1.4" />
-          <circle cx="8" cy={y} r="1.4" />
-        </g>
-      ))}
-    </svg>
   )
 }

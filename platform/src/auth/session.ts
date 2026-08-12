@@ -176,30 +176,45 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
 const SUPPORT_TTL_MINUTES = 30
 const SUPPORT_WRITE_TTL_MINUTES = 10
 
-/** Entre en mode support sur un club. Lecture seule. */
-export async function beginSupport(env: Env, token: string, orgId: string): Promise<string> {
+/**
+ * Entre en mode support sur un club.
+ *
+ * L'ecriture est active d'emblee : l'exploitant de la plateforme intervient
+ * generalement pendant que le proprietaire est au telephone, et lui imposer
+ * une escalade a chaque geste transforme le depannage en parcours du
+ * combattant. La tracabilite reste entiere — chaque ecriture est journalisee
+ * et visible par le club — et `readOnly` permet une visite d'observation
+ * quand on veut regarder sans risquer de toucher.
+ */
+export async function beginSupport(
+  env: Env, token: string, orgId: string, readOnly = false,
+): Promise<{ expiresAt: string; canWrite: boolean }> {
   const expires = isoSeconds(new Date(Date.now() + SUPPORT_TTL_MINUTES * 60_000))
   await env.CONTROL.prepare(
     `UPDATE sessions
-        SET support_org_id = ?, support_expires_at = ?, support_write = 0
+        SET support_org_id = ?, support_expires_at = ?, support_write = ?
       WHERE token_hash = ?`,
-  ).bind(orgId, expires, await hashToken(token)).run()
-  return expires
+  ).bind(orgId, expires, readOnly ? 0 : 1, await hashToken(token)).run()
+  return { expiresAt: expires, canWrite: !readOnly }
 }
 
-/**
- * Leve le droit d'ecriture, pour une duree plus courte que la session de
- * support elle-meme : un depannage qui modifie doit etre un acte deliberé,
- * pas un etat dans lequel on reste.
- */
+/** Repasse en ecriture apres une visite en lecture seule. */
 export async function allowSupportWrite(env: Env, token: string): Promise<string> {
-  const expires = isoSeconds(new Date(Date.now() + SUPPORT_WRITE_TTL_MINUTES * 60_000))
+  const expires = isoSeconds(new Date(Date.now() + SUPPORT_TTL_MINUTES * 60_000))
   await env.CONTROL.prepare(
     `UPDATE sessions
         SET support_write = 1, support_expires_at = ?
       WHERE token_hash = ? AND support_org_id IS NOT NULL`,
   ).bind(expires, await hashToken(token)).run()
   return expires
+}
+
+/** Bascule en observation : on regarde sans pouvoir toucher. */
+export async function setSupportReadOnly(env: Env, token: string): Promise<void> {
+  await env.CONTROL.prepare(
+    `UPDATE sessions SET support_write = 0
+      WHERE token_hash = ? AND support_org_id IS NOT NULL`,
+  ).bind(await hashToken(token)).run()
 }
 
 export async function endSupport(env: Env, token: string): Promise<void> {

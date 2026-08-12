@@ -3,12 +3,35 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import {
+  LayoutDashboard, Users, Award, Trophy, Wallet, UserCog,
+  ShieldAlert, Building2, Settings, LogOut, Menu, X,
+} from 'lucide-react'
 import { api, ApiError, type Me } from '@/lib/client'
-import styles from './shell.module.css'
 
-const CLUB_NAV = [
-  { href: '/dashboard', label: 'Tableau de bord' },
-  { href: '/members',   label: 'Membres' },
+// Coquille de l'application : le rail flottant en pilule de 78px, exactement
+// comme l'application d'origine. Les classes viennent de globals.css, repris
+// tel quel — c'est le systeme visuel du produit, pas une reinterpretation.
+
+interface NavItem {
+  href: string
+  label: string
+  icon: typeof LayoutDashboard
+  platformOnly?: boolean
+}
+
+const NAV: NavItem[] = [
+  { href: '/dashboard',      label: 'Tableau de bord', icon: LayoutDashboard },
+  { href: '/members',        label: 'Membres',         icon: Users },
+  { href: '/grades',         label: 'Passage de grade', icon: Award },
+  { href: '/championships',  label: 'Championnats',    icon: Trophy },
+  { href: '/comptabilite',   label: 'Comptabilite',    icon: Wallet },
+  { href: '/staff',          label: 'Equipe & droits', icon: UserCog },
+  { href: '/setup',          label: 'Configuration',   icon: Settings },
+]
+
+const PLATFORM_NAV: NavItem[] = [
+  { href: '/admin', label: 'Clubs', icon: Building2, platformOnly: true },
 ]
 
 export default function Shell({ children }: { children: ReactNode }) {
@@ -16,6 +39,7 @@ export default function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const [me, setMe] = useState<Me | null>(null)
   const [failed, setFailed] = useState(false)
+  const [drawer, setDrawer] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -29,21 +53,16 @@ export default function Shell({ children }: { children: ReactNode }) {
     return () => { alive = false }
   }, [router])
 
-  // La couleur du club ne peint que les actions, la selection et le focus.
-  // Le reste du systeme est fige, donc aucune teinte de club ne peut casser
-  // le contraste du texte ou de la chrome.
+  // La couleur du club ne repeint que --gold : tout le systeme visuel s'y
+  // accroche deja (rail actif, barres, graphiques, focus), donc un club change
+  // d'identite sans qu'aucune regle de contraste bouge.
   useEffect(() => {
-    const accent = me?.branding?.theme.accent
     const root = document.documentElement
+    const accent = me?.branding?.theme.accent
     if (accent) {
-      root.style.setProperty('--primary', accent)
-      root.style.setProperty('--primary-hover', accent)
-      root.style.setProperty('--primary-ring', `color-mix(in oklch, ${accent} 36%, transparent)`)
+      root.style.setProperty('--gold', accent)
+      root.style.setProperty('--tabs-pill-bg', accent)
     }
-    const mode = me?.branding?.theme.mode
-    if (mode === 'light' || mode === 'dark') root.setAttribute('data-theme', mode)
-    else root.removeAttribute('data-theme')
-
     if (me?.branding?.locale === 'ar') {
       root.setAttribute('lang', 'ar'); root.setAttribute('dir', 'rtl')
     } else {
@@ -51,71 +70,137 @@ export default function Shell({ children }: { children: ReactNode }) {
     }
   }, [me])
 
+  useEffect(() => { setDrawer(false) }, [pathname])
+
   if (failed) {
     return (
-      <div className={styles.centered}>
-        <p className={styles.problemTitle}>Impossible de charger votre session.</p>
-        <p className={styles.problemBody}>
-          La connexion au serveur a echoue. Reessayez dans un instant.
-        </p>
-        <button className="btn btn-secondary" onClick={() => location.reload()}>
-          Reessayer
-        </button>
+      <div className="app-shell" style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <p style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: 6 }}>
+            Impossible de charger votre session.
+          </p>
+          <p style={{ color: 'var(--muted)', fontSize: '0.875rem', marginBottom: 18 }}>
+            La connexion au serveur a echoue.
+          </p>
+          <button className="btn-dark" onClick={() => location.reload()}>Reessayer</button>
+        </div>
       </div>
     )
   }
 
-  if (!me) return <ShellSkeleton />
-
-  const inSupport = me.scope.mode === 'support'
-  const nav = me.isPlatformAdmin && !inSupport
-    ? [{ href: '/admin', label: 'Clubs' }, ...CLUB_NAV]
-    : CLUB_NAV
+  const inSupport = me?.scope.mode === 'support'
+  const items = me?.isPlatformAdmin ? [...PLATFORM_NAV, ...NAV] : NAV
+  const clubName = me?.branding?.name ?? 'GymFlow'
+  const logo = me?.branding?.logoUrl
 
   return (
-    <div className={styles.shell} data-support={inSupport || undefined}>
-      {inSupport && <SupportBar me={me} onLeft={() => { router.replace('/admin'); router.refresh() }} />}
+    <div className="app-shell">
+      {inSupport && me && <SupportBar me={me} onLeft={() => { router.replace('/admin'); router.refresh() }} />}
 
-      <aside className={styles.side}>
-        <div className={styles.brand}>
-          {me.branding?.logoUrl
-            ? <img className={styles.logo} src={me.branding.logoUrl} alt="" width={28} height={28} />
-            : <span className={styles.logoFallback} aria-hidden="true">
-                {(me.branding?.name ?? 'GF').slice(0, 2).toUpperCase()}
+      {/* Rail flottant, desktop */}
+      <aside className="rail-shell rail-desktop" aria-label="Navigation principale">
+        <Link href="/dashboard" className="rail-logo" title={clubName}>
+          {logo
+            ? <img src={logo} alt="" />
+            : <span style={{ fontWeight: 800, fontSize: '0.8rem', color: '#fff' }}>
+                {clubName.slice(0, 2).toUpperCase()}
               </span>}
-          <span className={styles.brandName}>{me.branding?.name ?? 'GymFlow'}</span>
-        </div>
+        </Link>
 
-        <nav className={styles.nav} aria-label="Navigation principale">
-          {nav.map(item => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={styles.navItem}
-              aria-current={pathname === item.href ? 'page' : undefined}
-            >
-              {item.label}
-            </Link>
-          ))}
+        <nav className="rail-nav">
+          {items.map(item => {
+            const Icon = item.icon
+            const active = pathname === item.href || pathname.startsWith(item.href + '/')
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`rail-btn${active ? ' active' : ''}`}
+                title={item.label}
+                aria-label={item.label}
+                aria-current={active ? 'page' : undefined}
+              >
+                <Icon size={19} strokeWidth={2.1} />
+              </Link>
+            )
+          })}
         </nav>
 
-        <div className={styles.foot}>
-          <div className={styles.who}>
-            <span className={styles.whoName}>{me.user.name}</span>
-            <span className={styles.whoMeta}>
-              {inSupport ? 'Support plateforme' : (me.org?.role ?? 'Sans club')}
+        <div className="rail-bottom">
+          <Link href="/account" className="rail-btn" title="Mon compte" aria-label="Mon compte">
+            <Settings size={19} strokeWidth={2.1} />
+          </Link>
+          {me && (
+            <span className="rail-avatar" title={me.user.name} aria-hidden="true">
+              {me.user.name.slice(0, 2).toUpperCase()}
             </span>
-          </div>
+          )}
           <button
-            className="btn btn-ghost btn-sm"
+            className="rail-btn"
+            title="Se deconnecter"
+            aria-label="Se deconnecter"
             onClick={async () => { await api.post('/api/auth/logout'); router.replace('/login') }}
           >
-            Quitter
+            <LogOut size={18} strokeWidth={2.1} />
           </button>
         </div>
       </aside>
 
-      <main className={styles.main}>{children}</main>
+      {/* Barre + tiroir, mobile */}
+      <div className="mobile-topbar">
+        <button
+          className="icon-btn"
+          onClick={() => setDrawer(true)}
+          aria-label="Ouvrir la navigation"
+          style={{ width: 40, height: 40 }}
+        >
+          <Menu size={19} strokeWidth={2.1} />
+        </button>
+        <div className="mobile-topbar-logo">
+          {logo && <img className="mobile-topbar-img" src={logo} alt="" />}
+          <span className="mobile-topbar-name">{clubName}</span>
+        </div>
+        <span style={{ width: 40 }} />
+      </div>
+
+      {drawer && (
+        <div className="mobile-drawer-overlay" onClick={() => setDrawer(false)}>
+          <div
+            className="mobile-drawer"
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'linear-gradient(180deg, rgba(23,25,32,0.98), rgba(14,16,22,0.99))',
+              padding: '1.5rem 1.25rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{clubName}</span>
+              <button className="icon-btn" onClick={() => setDrawer(false)} aria-label="Fermer"
+                      style={{ width: 36, height: 36 }}>
+                <X size={17} />
+              </button>
+            </div>
+            {items.map(item => {
+              const Icon = item.icon
+              const active = pathname === item.href || pathname.startsWith(item.href + '/')
+              return (
+                <Link key={item.href} href={item.href} className={`sidebar-link${active ? ' active' : ''}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0.7rem 0.85rem',
+                               borderRadius: 12, fontSize: '0.875rem', fontWeight: 600,
+                               color: active ? '#fff' : 'var(--muted)',
+                               background: active ? 'var(--gold)' : 'transparent' }}>
+                  <Icon size={18} strokeWidth={2.1} /> {item.label}
+                </Link>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      <main className="app-main">{children}</main>
     </div>
   )
 }
@@ -126,64 +211,54 @@ export default function Shell({ children }: { children: ReactNode }) {
  * il se trouve est exactement le risque a eliminer.
  */
 function SupportBar({ me, onLeft }: { me: Me; onLeft: () => void }) {
-  const [busy, setBusy] = useState<'write' | 'exit' | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
   const [canWrite, setCanWrite] = useState(me.scope.canWrite)
 
   return (
-    <div className={styles.supportBar} role="status">
-      <span className={styles.supportDot} aria-hidden="true" />
-      <span className={styles.supportText}>
+    <div
+      role="status"
+      style={{
+        position: 'fixed', top: 0, insetInline: 0, zIndex: 60,
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '0.5rem 1rem',
+        background: '#b91c1c', color: '#fff', fontSize: '0.8rem',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+      }}
+    >
+      <ShieldAlert size={16} strokeWidth={2.2} />
+      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         Mode support &mdash; <strong>{me.branding?.name ?? me.scope.orgId}</strong>
-        {canWrite
-          ? <span className={styles.supportWrite}> &middot; ecriture activee</span>
-          : <span className={styles.supportRead}> &middot; lecture seule</span>}
+        {canWrite ? ' · modification activee' : ' · lecture seule'}
       </span>
-
-      <div className={styles.supportActions}>
-        {!canWrite && (
-          <button
-            className="btn btn-secondary btn-sm"
-            data-busy={busy === 'write'}
-            onClick={async () => {
-              setBusy('write')
-              try { await api.post('/api/admin/support/write'); setCanWrite(true) }
-              finally { setBusy(null) }
-            }}
-          >
-            Activer l&apos;ecriture
-          </button>
-        )}
+      <span style={{ marginInlineStart: 'auto', display: 'flex', gap: 6, flex: 'none' }}>
         <button
-          className="btn btn-secondary btn-sm"
-          data-busy={busy === 'exit'}
+          className="btn-ghost"
+          style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem',
+                   background: 'rgba(255,255,255,0.16)', color: '#fff', borderColor: 'transparent' }}
+          disabled={busy !== null}
+          onClick={async () => {
+            setBusy('mode')
+            try {
+              await api.post(canWrite ? '/api/admin/support/read-only' : '/api/admin/support/write')
+              setCanWrite(!canWrite)
+            } finally { setBusy(null) }
+          }}
+        >
+          {canWrite ? 'Passer en lecture seule' : 'Activer la modification'}
+        </button>
+        <button
+          className="btn-ghost"
+          style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem',
+                   background: 'rgba(255,255,255,0.16)', color: '#fff', borderColor: 'transparent' }}
+          disabled={busy !== null}
           onClick={async () => {
             setBusy('exit')
-            try { await api.del('/api/admin/support'); onLeft() }
-            finally { setBusy(null) }
+            try { await api.del('/api/admin/support'); onLeft() } finally { setBusy(null) }
           }}
         >
           Sortir
         </button>
-      </div>
-    </div>
-  )
-}
-
-function ShellSkeleton() {
-  return (
-    <div className={styles.shell}>
-      <aside className={styles.side}>
-        <div className={styles.brand}>
-          <span className="skeleton" style={{ width: 28, height: 28, borderRadius: 6 }} />
-          <span className="skeleton" style={{ width: '7rem', height: '0.875rem' }} />
-        </div>
-        <nav className={styles.nav} aria-hidden="true">
-          {[0, 1, 2].map(i => (
-            <span key={i} className="skeleton" style={{ height: '2rem', margin: '0 0.5rem' }} />
-          ))}
-        </nav>
-      </aside>
-      <main className={styles.main} />
+      </span>
     </div>
   )
 }

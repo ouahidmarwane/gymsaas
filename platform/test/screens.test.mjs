@@ -83,7 +83,23 @@ test('les trois ecrans sont servis', async () => {
 
 test('la connexion est atteignable sans session', async () => {
   const res = await page('/login')
-  assert.match(res.html, /Connexion/)
+  // On verifie la presence du formulaire, pas son libelle : le texte doit
+  // pouvoir changer sans casser le test.
+  assert.match(res.html, /autoComplete="current-password"|autocomplete="current-password"/i)
+  assert.match(res.html, /type="email"/i)
+})
+
+test('toutes les routes de navigation repondent', async () => {
+  // Chaque entree du rail doit exister. Un lien vers une page absente donne
+  // un 404 que l'utilisateur lit comme « l'application est cassee ».
+  const routes = [
+    '/dashboard', '/admin', '/members', '/setup',
+    '/grades', '/championships', '/comptabilite', '/staff', '/account',
+  ]
+  for (const route of routes) {
+    const res = await page(route)
+    assert.equal(res.status, 200, `${route} a repondu ${res.status}`)
+  }
 })
 
 test('le tableau de bord dispose de tout ce qu il consomme', async () => {
@@ -138,14 +154,14 @@ test('entrer dans un club puis en sortir depuis l interface', async () => {
   // La banniere de support lit ces champs : leur absence la rendrait muette.
   const me = await operator.call('GET', '/api/me')
   assert.equal(me.data.scope.mode, 'support')
-  assert.equal(me.data.scope.canWrite, false)
+  assert.equal(me.data.scope.canWrite, true)
   assert.ok(me.data.branding?.name, 'la banniere doit pouvoir nommer le club')
 
-  // Le bouton Modifier ne doit pas s afficher en lecture seule.
+  // La disposition du club est modifiable depuis le support.
   const layout = await operator.call('GET', '/api/dashboard/layout')
   assert.equal(layout.status, 200)
-  const refused = await operator.call('PUT', '/api/dashboard/layout', { layout: layout.data.layout })
-  assert.equal(refused.status, 403, 'la disposition ne doit pas etre modifiable en lecture seule')
+  const saved = await operator.call('PUT', '/api/dashboard/layout', { layout: layout.data.layout })
+  assert.equal(saved.status, 200, 'le support doit pouvoir enregistrer la disposition')
 
   assert.equal((await operator.call('DELETE', '/api/admin/support')).status, 200)
 })

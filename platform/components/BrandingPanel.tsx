@@ -1,34 +1,30 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { Palette, Upload } from 'lucide-react'
 import { api, ApiError, type Branding } from '@/lib/client'
-import styles from './branding.module.css'
 
-// Palette proposee. Le club peut coller n'importe quelle teinte hexadecimale,
-// mais la plupart des proprietaires veulent choisir, pas composer.
-const SWATCHES = [
-  '#0e4f8f', '#a8232b', '#1f6b47', '#7a3fa8',
-  '#b45309', '#0f766e', '#be185d', '#334155',
-]
+// Palette proposee. Le club peut coller n'importe quelle teinte, mais la
+// plupart des proprietaires veulent choisir, pas composer.
+const SWATCHES = ['#2f6bff', '#9b72ff', '#16a34a', '#f59e0b', '#ef4444', '#0d9488', '#db2777', '#64748b']
 
 export default function BrandingPanel({
   initial, onSaved,
 }: { initial: Branding | null; onSaved: (b: Branding) => void }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [name, setName] = useState(initial?.name ?? '')
-  const [accent, setAccent] = useState(initial?.theme.accent ?? '#0e4f8f')
-  const [mode, setMode] = useState<Branding['theme']['mode']>(initial?.theme.mode ?? 'system')
+  const [accent, setAccent] = useState(initial?.theme.accent ?? '#2f6bff')
   const [logoUrl, setLogoUrl] = useState(initial?.logoUrl ?? null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
   // La couleur s'applique en direct : on juge une teinte sur l'interface,
-  // pas dans une pastille de 16 pixels.
+  // pas dans une pastille de seize pixels.
   function preview(next: string) {
     setAccent(next)
-    document.documentElement.style.setProperty('--primary', next)
-    document.documentElement.style.setProperty('--primary-hover', next)
+    document.documentElement.style.setProperty('--gold', next)
+    document.documentElement.style.setProperty('--tabs-pill-bg', next)
   }
 
   async function save() {
@@ -36,22 +32,18 @@ export default function BrandingPanel({
     try {
       const result = await api.put<Branding>('/api/branding', {
         name: name.trim() || undefined,
-        theme: { accent, mode },
+        theme: { accent, mode: initial?.theme.mode ?? 'system' },
       })
-      onSaved(result)
-      setSaved(true)
+      onSaved(result); setSaved(true)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Enregistrement impossible')
-    } finally {
-      setBusy(false)
-    }
+    } finally { setBusy(false) }
   }
 
   async function upload(file: File) {
     if (file.size > 2 * 1024 * 1024) { setError('Logo trop volumineux : 2 Mo maximum'); return }
     setBusy(true); setError(null)
     try {
-      // Envoi direct : le serveur fabrique la cle et la range sous le club.
       const res = await fetch('/api/branding/logo', {
         method: 'PUT',
         credentials: 'same-origin',
@@ -70,104 +62,77 @@ export default function BrandingPanel({
       onSaved(refreshed)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Envoi impossible')
-    } finally {
-      setBusy(false)
-    }
+    } finally { setBusy(false) }
   }
 
   return (
-    <section className={styles.panel} aria-label="Apparence du club">
-      <div className={styles.row}>
-        <div className={styles.logoBlock}>
-          <span className="label">Logo</span>
-          <div className={styles.logoRow}>
-            <span className={styles.preview}>
-              {logoUrl
-                ? <img src={logoUrl} alt="" width={40} height={40} className={styles.previewImg} />
-                : <span className={styles.previewFallback} style={{ background: accent }}>
-                    {(name || 'GF').slice(0, 2).toUpperCase()}
-                  </span>}
-            </span>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/svg+xml"
-              className="sr-only"
-              onChange={e => { const f = e.target.files?.[0]; if (f) upload(f) }}
-            />
-            <button className="btn btn-secondary btn-sm" onClick={() => fileRef.current?.click()} disabled={busy}>
-              Choisir un fichier
-            </button>
-          </div>
-          <span className="hint">PNG, JPG, WEBP ou SVG. 2 Mo maximum.</span>
-        </div>
-
-        <div className="field">
-          <label className="label" htmlFor="club-name">Nom affiche</label>
-          <input
-            id="club-name"
-            className="input"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            maxLength={120}
-          />
+    <section className="dz-card" aria-label="Apparence du club">
+      <div className="dz-card-head">
+        <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <Palette size={17} strokeWidth={2.1} style={{ color: 'var(--gold)' }} /> Apparence
+        </h2>
+        <div aria-live="polite" style={{ fontSize: '0.78rem' }}>
+          {error && <span style={{ color: '#fca5a5' }}>{error}</span>}
+          {saved && !error && <span style={{ color: '#6ee7b7' }}>Enregistre</span>}
         </div>
       </div>
 
-      <div className={styles.row}>
-        <fieldset className={styles.fieldset}>
-          <legend className="label">Couleur</legend>
-          <div className={styles.swatches}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 22, alignItems: 'flex-end', marginTop: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {logoUrl
+            ? <img src={logoUrl} alt="" width={48} height={48}
+                   style={{ borderRadius: '50%', objectFit: 'contain', background: 'rgba(255,255,255,0.07)' }} />
+            : <span style={{
+                width: 48, height: 48, borderRadius: '50%', display: 'grid', placeItems: 'center',
+                background: accent, color: '#fff', fontWeight: 800, fontSize: '0.85rem',
+              }}>{(name || 'GF').slice(0, 2).toUpperCase()}</span>}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            className="sr-only"
+            onChange={e => { const f = e.target.files?.[0]; if (f) upload(f) }}
+          />
+          <button className="btn-ghost" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}
+                  onClick={() => fileRef.current?.click()} disabled={busy}>
+            <Upload size={14} strokeWidth={2.2} /> Logo
+          </button>
+        </div>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 200px', minWidth: 0 }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>Nom affiche</span>
+          <input className="input-dark" value={name} onChange={e => setName(e.target.value)} maxLength={120} />
+        </label>
+
+        <fieldset style={{ border: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <legend style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>Couleur</legend>
+          <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
             {SWATCHES.map(hex => (
               <button
                 key={hex}
                 type="button"
-                className={styles.swatch}
-                style={{ background: hex }}
+                onClick={() => preview(hex)}
                 aria-label={`Couleur ${hex}`}
                 aria-pressed={accent.toLowerCase() === hex}
-                onClick={() => preview(hex)}
+                style={{
+                  width: 28, height: 28, borderRadius: '50%', padding: 0, cursor: 'pointer',
+                  background: hex,
+                  border: accent.toLowerCase() === hex ? '2px solid #fff' : '2px solid transparent',
+                  boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.25)',
+                }}
               />
             ))}
-            <label className={styles.custom}>
-              <span className="sr-only">Couleur personnalisee</span>
-              <input
-                type="color"
-                value={accent}
-                onChange={e => preview(e.target.value)}
-                className={styles.colorInput}
-              />
-            </label>
+            <input type="color" value={accent} onChange={e => preview(e.target.value)}
+                   aria-label="Couleur personnalisee"
+                   style={{ width: 28, height: 28, borderRadius: '50%', padding: 0, cursor: 'pointer',
+                            background: 'none', border: '1px dashed rgba(255,255,255,0.25)' }} />
           </div>
         </fieldset>
 
-        <fieldset className={styles.fieldset}>
-          <legend className="label">Theme</legend>
-          <div className={styles.segmented} role="radiogroup">
-            {(['system', 'light', 'dark'] as const).map(option => (
-              <button
-                key={option}
-                type="button"
-                role="radio"
-                aria-checked={mode === option}
-                className={styles.segment}
-                onClick={() => setMode(option)}
-              >
-                {option === 'system' ? 'Systeme' : option === 'light' ? 'Clair' : 'Sombre'}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        <div className={styles.actions}>
-          <div aria-live="polite" className={styles.status}>
-            {error && <span className={styles.error}>{error}</span>}
-            {saved && !error && <span className={styles.ok}>Enregistre</span>}
-          </div>
-          <button className="btn btn-primary btn-sm" onClick={save} data-busy={busy}>
-            Enregistrer l&apos;apparence
-          </button>
-        </div>
+        <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
+                onClick={save} disabled={busy}>
+          {busy ? 'Enregistrement…' : 'Enregistrer'}
+        </button>
       </div>
     </section>
   )

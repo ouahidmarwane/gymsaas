@@ -1,0 +1,252 @@
+/* Complements propres a la plateforme multi-clubs.
+   Fichier separe pour que globals.css reste la copie exacte du systeme
+   visuel d'origine : on peut le recopier sans ecraser ce qui suit.
+   Tout reprend le meme vocabulaire — pilules, cartes 28px, --gold. */
+
+/* Quand la barre de support est la, le contenu descend sous elle. */
+.app-shell:has(> [role='status']) .app-main { padding-top: 76px; }
+@media (min-width: 768px) {
+  .app-shell:has(> [role='status']) .app-main { padding-top: 68px !important; }
+  .app-shell:has(> [role='status']) .rail-shell { top: 56px; }
+}
+
+/* Supervision des clubs --------------------------------------------------- */
+
+.admin-club-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 18px;
+}
+
+.admin-club-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px;
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+.admin-club-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.admin-club-head { display: flex; align-items: center; gap: 12px; }
+
+/* La pastille porte la couleur du club : c'est ce qui permet de distinguer
+   trente clubs d'un coup d'oeil. Texte blanc quelle que soit la teinte, d'ou
+   l'ombre portee. */
+.admin-club-avatar {
+  width: 44px; height: 44px; flex: none;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  color: #fff; font-size: 0.85rem; font-weight: 800; letter-spacing: -0.01em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.admin-club-name {
+  font-size: 1.02rem; font-weight: 700; letter-spacing: -0.02em; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.admin-club-slug {
+  font-size: 0.72rem; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
+}
+
+.admin-club-figures {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px; margin: 0;
+  padding: 14px 0;
+  border-block: 1px solid rgba(255, 255, 255, 0.07);
+}
+.admin-figure { min-width: 0; }
+.admin-figure-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 0.68rem; color: var(--muted); font-weight: 600;
+}
+.admin-figure-value {
+  margin: 3px 0 0;
+  font-size: 1.15rem; font-weight: 800; letter-spacing: -0.02em; color: var(--text);
+  font-feature-settings: 'tnum' 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.admin-club-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.admin-club-fresh { font-size: 0.7rem; color: var(--muted); }
+
+/* Grille du tableau de bord ---------------------------------------------- */
+
+.gf-grid {
+  display: grid;
+  position: relative;
+  gap: 18px;
+}
+
+/* En edition, une trame discrete dit « ca s'aligne » sans meubler l'ecran. */
+.gf-grid[data-editing='true'] {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 100% calc(var(--row-h) + 18px);
+  border-radius: 28px;
+  outline: 1px dashed rgba(255, 255, 255, 0.09);
+  outline-offset: 10px;
+}
+
+.gf-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: linear-gradient(180deg, rgba(24, 26, 34, 0.92), rgba(15, 17, 24, 0.95));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 28px;
+  overflow: hidden;
+  /* Seuls transform et opacite s'animent : deplacer une carte ne doit
+     jamais declencher de recalcul de mise en page. */
+  transition: transform 260ms var(--ease-out), box-shadow 200ms var(--ease-out),
+              border-color 200ms var(--ease-out), opacity 200ms var(--ease-out);
+  will-change: transform;
+}
+
+.gf-grid[data-editing='true'] .gf-cell { border-style: dashed; border-color: rgba(255, 255, 255, 0.14); }
+.gf-grid[data-editing='true'] .gf-cell:hover { border-color: rgba(47, 107, 255, 0.5); }
+
+/* La carte saisie sort du flux : elle suit le curseur en transform pur. */
+.gf-cell[data-dragging='true'] {
+  z-index: 30;
+  transition: none;
+  border-style: solid;
+  border-color: var(--gold);
+  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(47, 107, 255, 0.4);
+  cursor: grabbing;
+}
+
+/* Les cartes bousculees glissent vers leur nouvelle place. */
+.gf-cell[data-settling='true'] { transition: transform 260ms var(--ease-out); }
+
+.gf-ghost {
+  border: 2px dashed rgba(47, 107, 255, 0.55);
+  border-radius: 28px;
+  background: rgba(47, 107, 255, 0.07);
+  pointer-events: none;
+  transition: all 200ms var(--ease-out);
+}
+
+.gf-body { flex: 1; min-height: 0; padding: 20px 22px; overflow: hidden; }
+
+.gf-chrome {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px 8px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.gf-chrome-title {
+  font-size: 0.72rem; font-weight: 700; color: var(--muted);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.gf-handle {
+  display: grid; place-items: center;
+  width: 30px; height: 26px; flex: none;
+  border: none; border-radius: 999px;
+  background: transparent; color: var(--muted);
+  cursor: grab;
+  touch-action: none;   /* sinon le navigateur fait defiler au lieu de saisir */
+}
+.gf-handle:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.gf-handle:active { cursor: grabbing; }
+
+.gf-hide {
+  width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center;
+  border: none; border-radius: 50%;
+  background: transparent; color: var(--muted);
+  cursor: pointer;
+}
+.gf-hide:hover { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+
+.gf-resize {
+  position: absolute;
+  inset-block-end: 6px; inset-inline-end: 6px;
+  width: 18px; height: 18px;
+  border: none; padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: nwse-resize;
+  touch-action: none;
+  color: var(--muted);
+}
+.gf-resize::after {
+  content: '';
+  position: absolute; inset: 4px;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  border-end-end-radius: 4px;
+}
+.gf-resize:hover { color: var(--gold); }
+[dir='rtl'] .gf-resize { cursor: nesw-resize; transform: scaleX(-1); }
+
+.gf-tray {
+  margin-top: 18px;
+  padding: 18px 20px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 28px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.gf-tray-label {
+  font-size: 0.65rem; font-weight: 600; color: var(--muted);
+  letter-spacing: 0.18em; text-transform: uppercase;
+}
+.gf-tray-items { display: flex; flex-wrap: wrap; gap: 8px; }
+.gf-tray-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: var(--muted);
+  font-size: 0.78rem; font-weight: 600;
+  cursor: pointer;
+}
+.gf-tray-btn:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); border-color: var(--gold); }
+
+/* Sur telephone la grille s'empile : une disposition pensee pour un grand
+   ecran n'a pas de sens tenue d'une main. L'edition reste au bureau. */
+@media (max-width: 900px) {
+  .gf-grid { display: flex; flex-direction: column; }
+  .gf-cell { transform: none !important; }
+  .gf-resize, .gf-handle { display: none; }
+}
+
+/* Barre d'edition --------------------------------------------------------- */
+
+.gf-editbar {
+  position: sticky; top: 12px; z-index: 25;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px;
+  border-radius: 999px;
+  background: rgba(11, 15, 26, 0.96);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid rgba(47, 107, 255, 0.3);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+.gf-editbar-text { font-size: 0.8rem; color: var(--muted); min-width: 0; }
+.gf-editbar-actions { margin-inline-start: auto; display: flex; gap: 8px; }
+
+/* Etats vides et pages a venir ------------------------------------------- */
+
+.gf-placeholder {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 4.5rem 1.5rem; text-align: center;
+}
+.gf-placeholder-icon { opacity: 0.3; }
+.gf-placeholder-title { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em; }
+.gf-placeholder-body { font-size: 0.875rem; color: var(--muted); max-width: 44ch; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}

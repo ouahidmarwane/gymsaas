@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { Pencil, Check, Undo2, Settings2 } from 'lucide-react'
 import { api, ApiError, type CardPlacement, type CardSpec, type Me } from '@/lib/client'
 import DashboardGrid from '@/components/DashboardGrid'
 import BrandingPanel from '@/components/BrandingPanel'
-import styles from './dashboard.module.css'
 
 interface Stats {
   memberCount: number
@@ -15,7 +16,7 @@ interface Stats {
 
 const LABELS: Record<string, string> = {
   members_total: 'Membres', members_active: 'Membres actifs',
-  subs_expiring: 'Abonnements a renouveler', insurance_missing: 'Assurances manquantes',
+  subs_expiring: 'A renouveler', insurance_missing: 'Assurances manquantes',
   revenue_month: 'Recette du mois', alerts_unread: 'Alertes',
   growth_chart: 'Croissance', revenue_chart: 'Recettes',
   grade_progress: 'Progression des grades', recent_members: 'Derniers inscrits',
@@ -44,11 +45,8 @@ export default function DashboardPage() {
     ])
       .then(([meData, layoutData, statsData, setup]) => {
         if (!alive) return
-        setMe(meData)
-        setLayout(layoutData.layout)
-        setSpecs(layoutData.cards)
-        setStats(statsData.stats)
-        setConfigured(setup.configured)
+        setMe(meData); setLayout(layoutData.layout); setSpecs(layoutData.cards)
+        setStats(statsData.stats); setConfigured(setup.configured)
       })
       .catch(e => { if (alive) setError(e instanceof ApiError ? e.message : 'Chargement impossible') })
     return () => { alive = false }
@@ -60,82 +58,99 @@ export default function DashboardPage() {
 
   async function save() {
     if (!draft) return
-    setSaving(true)
-    setError(null)
+    setSaving(true); setError(null)
     try {
       await api.put('/api/dashboard/layout', { layout: draft })
-      setLayout(draft)
-      setDraft(null)
-      setEditing(false)
+      setLayout(draft); setDraft(null); setEditing(false)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Enregistrement impossible')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (error && !layout) {
-    return <p className={styles.alert} role="alert">{error}</p>
+    } finally { setSaving(false) }
   }
 
   const active = draft ?? layout
+  const firstName = me?.user.name.split(' ')[0] ?? ''
 
   return (
-    <>
-      <header className={styles.head}>
-        <div className={styles.headText}>
-          <h1>{me?.branding?.name ?? 'Tableau de bord'}</h1>
-          <p className={styles.sub}>
-            {editing
-              ? 'Deplacez les cartes, redimensionnez-les par le coin, masquez celles qui ne servent pas.'
-              : today()}
+    <div className="dashboard-shell">
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <h1 className="dz-hello">
+            Bonjour, <span>{firstName}</span> !
+          </h1>
+          <p className="dz-sub">
+            {new Date().toLocaleDateString('fr-MA', {
+              weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+            })}
           </p>
         </div>
 
-        {canEdit && (
-          <div className={styles.headActions}>
-            {editing ? (
-              <>
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => { setDraft(null); setEditing(false); setError(null) }}
-                  disabled={saving}
-                >
-                  Annuler
-                </button>
-                <button className="btn btn-primary" onClick={save} data-busy={saving}>
-                  Enregistrer
-                </button>
-              </>
-            ) : (
-              <button className="btn btn-secondary" onClick={() => { setDraft(layout); setEditing(true) }}>
-                Modifier
-              </button>
-            )}
-          </div>
+        {canEdit && !editing && (
+          <button
+            className="btn-dark"
+            style={{ background: 'var(--gold)', borderColor: 'transparent' }}
+            onClick={() => { setDraft(layout); setEditing(true) }}
+          >
+            <Pencil size={15} strokeWidth={2.2} /> Modifier
+          </button>
         )}
-      </header>
-
-      <div aria-live="polite">
-        {error && layout && <p className={styles.alert} role="alert">{error}</p>}
       </div>
 
-      {/* Un club qui n'a declare ni salle ni sport ne peut rien faire d'utile :
-          on le dit avant d'afficher une grille de zeros. */}
-      {configured === false && !editing && (
-        <div className={styles.setup}>
-          <h2 className={styles.setupTitle}>Configurons votre club</h2>
-          <p className={styles.setupBody}>
-            Indiquez vos salles et les sports que vous enseignez. Rien n&apos;est
-            presuppose : vos grades, vos categories, vos noms.
-          </p>
-          <a className="btn btn-primary" href="/setup">Commencer</a>
-        </div>
+      <div aria-live="polite">
+        {error && (
+          <p role="alert" style={{
+            padding: '0.7rem 1rem', borderRadius: 14,
+            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+            color: '#fca5a5', fontSize: '0.85rem', fontWeight: 600,
+          }}>{error}</p>
+        )}
+      </div>
+
+      {editing && (
+        <>
+          <div className="gf-editbar">
+            <Settings2 size={16} strokeWidth={2.2} style={{ color: 'var(--gold)', flex: 'none' }} />
+            <span className="gf-editbar-text">
+              Glissez une carte par sa poignee, tirez le coin pour la redimensionner.
+              Au clavier : fleches pour deplacer, Maj + fleches pour redimensionner.
+            </span>
+            <span className="gf-editbar-actions">
+              <button className="btn-ghost" style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}
+                      disabled={saving}
+                      onClick={() => { setDraft(null); setEditing(false); setError(null) }}>
+                <Undo2 size={14} strokeWidth={2.2} /> Annuler
+              </button>
+              <button className="btn-dark"
+                      style={{ background: 'var(--gold)', borderColor: 'transparent', padding: '0.45rem 1rem', fontSize: '0.8rem' }}
+                      onClick={save} disabled={saving}>
+                <Check size={14} strokeWidth={2.4} /> {saving ? 'Enregistrement…' : 'Enregistrer'}
+              </button>
+            </span>
+          </div>
+
+          <BrandingPanel
+            initial={me?.branding ?? null}
+            onSaved={b => setMe(m => (m ? { ...m, branding: b } : m))}
+          />
+        </>
       )}
 
-      {editing && <BrandingPanel initial={me?.branding ?? null} onSaved={b => setMe(m => m && { ...m, branding: b })} />}
+      {/* Un club sans salle ni sport ne peut rien faire d'utile : on le dit
+          avant d'afficher une grille de zeros. */}
+      {configured === false && !editing && (
+        <section className="dz-card" style={{ borderColor: 'rgba(47,107,255,0.4)' }}>
+          <h2 className="dz-card-title">Configurons votre club</h2>
+          <p className="dz-card-note" style={{ margin: '8px 0 16px', maxWidth: '52ch' }}>
+            Indiquez vos salles et les sports que vous enseignez. Rien n&apos;est presuppose :
+            vos grades, vos categories, vos noms.
+          </p>
+          <Link className="btn-dark" href="/setup"
+                style={{ background: 'var(--gold)', borderColor: 'transparent' }}>
+            Commencer
+          </Link>
+        </section>
+      )}
 
-      {!active && <GridSkeleton />}
+      {!active && <div className="members-skeleton-row" style={{ height: 200, borderRadius: 28, border: 'none' }} />}
 
       {active && (
         <DashboardGrid
@@ -147,15 +162,17 @@ export default function DashboardPage() {
           renderCard={id => <Card id={id} stats={stats} label={LABELS[id] ?? id} />}
         />
       )}
-    </>
+    </div>
   )
 }
 
 function Card({ id, stats, label }: { id: string; stats: Stats | null; label: string }) {
-  if (!stats) return <span className="skeleton" style={{ display: 'block', height: '100%' }} />
+  if (!stats) {
+    return <span className="members-skeleton-row" style={{ display: 'block', height: '100%', border: 'none' }} />
+  }
 
   const figures: Record<string, { value: string; note?: string }> = {
-    members_total:  { value: stats.memberCount.toLocaleString('fr-MA') },
+    members_total:  { value: stats.memberCount.toLocaleString('fr-MA'), note: 'inscrits' },
     members_active: { value: stats.activeSubs.toLocaleString('fr-MA'), note: 'abonnement en cours' },
     revenue_month:  { value: `${(stats.revenueMonthCents / 100).toLocaleString('fr-MA')} DH`, note: 'ce mois-ci' },
   }
@@ -163,10 +180,10 @@ function Card({ id, stats, label }: { id: string; stats: Stats | null; label: st
   const figure = figures[id]
   if (figure) {
     return (
-      <div className={styles.metric}>
-        <span className={styles.metricLabel}>{label}</span>
-        <span className={`${styles.metricValue} num`}>{figure.value}</span>
-        {figure.note && <span className={styles.metricNote}>{figure.note}</span>}
+      <div className="dz-metric" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+        <span className="dz-metric-name">{label}</span>
+        <span className="dz-metric-value" style={{ margin: '4px 0 2px' }}>{figure.value}</span>
+        {figure.note && <span className="dz-card-note">{figure.note}</span>}
       </div>
     )
   }
@@ -174,25 +191,9 @@ function Card({ id, stats, label }: { id: string; stats: Stats | null; label: st
   // Les cartes non encore branchees le disent, plutot que d'afficher un zero
   // qui passerait pour une mesure.
   return (
-    <div className={styles.pending}>
-      <span className={styles.metricLabel}>{label}</span>
-      <span className={styles.pendingNote}>Bientot disponible</span>
-    </div>
-  )
-}
-
-function today(): string {
-  return new Date().toLocaleDateString('fr-MA', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  })
-}
-
-function GridSkeleton() {
-  return (
-    <div className={styles.skeletonGrid} aria-hidden="true">
-      {[3, 3, 3, 3, 8, 4].map((span, i) => (
-        <span key={i} className="skeleton" style={{ gridColumn: `span ${span}`, height: 88 }} />
-      ))}
+    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%', gap: 4 }}>
+      <span className="dz-metric-name">{label}</span>
+      <span className="dz-card-note">Bientot disponible</span>
     </div>
   )
 }
