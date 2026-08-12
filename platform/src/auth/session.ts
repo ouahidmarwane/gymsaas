@@ -220,28 +220,53 @@ export async function destroyAllSessionsForUser(env: Env, userId: string): Promi
   await env.CONTROL.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run()
 }
 
+/** Nom sans préfixe, utilisé en développement sur http. */
+const SESSION_COOKIE_PLAIN = 'gf_session'
+
+/** Le préfixe __Host- n'est valable qu'avec Secure, donc qu'en https. */
+function isSecure(request: Request): boolean {
+  return new URL(request.url).protocol === 'https:'
+}
+
+function cookieName(request: Request): string {
+  return isSecure(request) ? SESSION_COOKIE : SESSION_COOKIE_PLAIN
+}
+
 export function readSessionCookie(request: Request): string | null {
   const header = request.headers.get('Cookie')
   if (!header) return null
+  // Les deux noms sont acceptés à la lecture : une session ouverte avant un
+  // passage en https reste valable, et l'inverse aussi.
   for (const part of header.split(';')) {
     const eq = part.indexOf('=')
     if (eq < 0) continue
-    if (part.slice(0, eq).trim() === SESSION_COOKIE) return part.slice(eq + 1).trim()
+    const name = part.slice(0, eq).trim()
+    if (name === SESSION_COOKIE || name === SESSION_COOKIE_PLAIN) {
+      return part.slice(eq + 1).trim()
+    }
   }
   return null
 }
 
 /**
- * Le préfixe __Host- impose Secure, Path=/ et l'absence de Domain : le cookie
- * ne peut donc pas être posé par un sous-domaine voisin. SameSite=Lax bloque
- * l'envoi en requête inter-site tout en préservant la navigation normale.
+ * En https, le préfixe __Host- impose Secure, Path=/ et l'absence de Domain :
+ * le cookie ne peut donc pas être posé par un sous-domaine voisin.
+ *
+ * En http (développement local), ce préfixe rendrait le cookie invalide et la
+ * connexion échouerait silencieusement — d'où le repli sur un nom simple, sans
+ * Secure. La production étant toujours en https, elle garde la forme stricte.
+ *
+ * SameSite=Lax bloque l'envoi en requête inter-site tout en préservant la
+ * navigation normale.
  */
-export function sessionCookie(token: string): string {
+export function sessionCookie(request: Request, token: string): string {
   const maxAge = SESSION_TTL_HOURS * 3600
-  return `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`
+  const secure = isSecure(request) ? ' Secure;' : ''
+  return `${cookieName(request)}=${token}; HttpOnly;${secure} SameSite=Lax; Path=/; Max-Age=${maxAge}`
 }
 
-export function clearedCookie(): string {
-  return `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+export function clearedCookie(request: Request): string {
+  const secure = isSecure(request) ? ' Secure;' : ''
+  return `${cookieName(request)}=; HttpOnly;${secure} SameSite=Lax; Path=/; Max-Age=0`
 }
 

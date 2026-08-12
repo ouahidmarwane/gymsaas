@@ -214,7 +214,7 @@ export const api = {
 
       if (path === '/api/auth/logout' && method === 'POST') {
         if (token) await destroySession(env, token)
-        return json({ ok: true }, { headers: { 'Set-Cookie': clearedCookie() } })
+        return json({ ok: true }, { headers: { 'Set-Cookie': clearedCookie(request) } })
       }
 
       if (path === '/api/me' && method === 'GET') {
@@ -690,7 +690,7 @@ async function signup(request: Request, env: Env, ip: string | null): Promise<Re
 
   return json(
     { orgId, userId, slug },
-    { status: 201, headers: { 'Set-Cookie': sessionCookie(token) } },
+    { status: 201, headers: { 'Set-Cookie': sessionCookie(request, token) } },
   )
 }
 
@@ -859,6 +859,6 @@ async function login(request: Request, env: Env, ip: string | null): Promise<Res
 
   return json(
     { userId: user.id, orgId: membership?.org_id ?? null },
-    { headers: { 'Set-Cookie': sessionCookie(token) } },
+    { headers: { 'Set-Cookie': sessionCookie(request, token) } },
   )
 }
