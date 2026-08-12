@@ -54,12 +54,28 @@ function newId() {
   return `${time}${suffix}`
 }
 
-function d1(sql) {
-  return execFileSync(
-    process.execPath,
-    [WRANGLER, 'd1', 'execute', 'gymflow-control', remote ? '--remote' : '--local', '--json', '--command', sql],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: ROOT },
-  )
+/**
+ * Execute une requete sur le plan de controle.
+ *
+ * En local, le fichier SQLite est partage avec le serveur de developpement :
+ * une ecriture concurrente rend SQLITE_BUSY. On reessaie brievement plutot
+ * que d'echouer sur une contention passagere.
+ */
+function d1(sql, attempts = 5) {
+  for (let i = 1; ; i++) {
+    try {
+      return execFileSync(
+        process.execPath,
+        [WRANGLER, 'd1', 'execute', 'gymflow-control', remote ? '--remote' : '--local', '--json', '--command', sql],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: ROOT },
+      )
+    } catch (error) {
+      const output = `${error.stdout ?? ''}${error.stderr ?? ''}`
+      if (i >= attempts || !/SQLITE_BUSY|database is locked/i.test(output)) throw error
+      // Attente synchrone : ce script est un outil en ligne de commande.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * i)
+    }
+  }
 }
 
 const norm = email.trim().toLowerCase()

@@ -278,6 +278,12 @@ export const api = {
 
       if (path === '/api/me' && method === 'GET') {
         const scope = activeScope(principal)
+        // Les capacites accompagnent l'identite : la coquille sait alors
+        // quels ecrans meritent d'exister avant meme de les afficher, plutot
+        // que de proposer un lien qui mene a une page vide.
+        const capabilities = scope.orgId
+          ? await clubOf(env, principal).capabilities()
+          : null
         // Le mode support doit etre visible dans l'interface : une banniere
         // permanente vaut mieux qu'un exploitant qui oublie ou il se trouve.
         return json({
@@ -290,6 +296,7 @@ export const api = {
             canWrite: scope.mode === 'support' ? principal.supportWrite : true,
           },
           branding: scope.orgId ? await brandingOf(env, scope.orgId) : null,
+          capabilities,
         })
       }
 
@@ -360,7 +367,19 @@ export const api = {
 
       if (path === '/api/setup/status' && method === 'GET') {
         atLeast(principal, 'viewer')
-        return json({ configured: await clubOf(env, principal).isConfigured() })
+        return json(await clubOf(env, principal).capabilities())
+      }
+
+      // Passage de grade. Refuse pour un club dont aucune discipline n'est
+      // gradee : masquer le lien ne suffit pas, l'URL reste tapable.
+      if (path === '/api/grades' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        const club = clubOf(env, principal)
+        const { hasGrading } = await club.capabilities()
+        if (!hasGrading) {
+          return fail(409, 'Aucune discipline gradee dans ce club')
+        }
+        return json({ sessions: [] })
       }
 
       // Marque du club : nom affiche, logo, couleur.

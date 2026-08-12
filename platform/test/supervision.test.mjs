@@ -37,6 +37,32 @@ function client() {
   }
 }
 
+const WRANGLER = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url))
+
+/**
+ * Requete directe sur la base centrale.
+ *
+ * Le fichier SQLite local est partage avec le serveur de developpement :
+ * sous charge, une ecriture concurrente rend SQLITE_BUSY. On reessaie plutot
+ * que d'echouer sur une contention passagere.
+ */
+// eslint-disable-next-line no-unused-vars
+function control(sql, attempts = 6) {
+  for (let i = 1; ; i++) {
+    try {
+      return execFileSync(
+        process.execPath,
+        [WRANGLER, 'd1', 'execute', 'gymflow-control', '--local', '--json', '--command', sql],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: ROOT },
+      )
+    } catch (error) {
+      const output = String(error.stdout ?? '') + String(error.stderr ?? '')
+      if (i >= attempts || !/SQLITE_BUSY|database is locked/i.test(output)) throw error
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * i)
+    }
+  }
+}
+
 async function waitReady(attempts = 40) {
   for (let i = 0; i < attempts; i++) {
     try { if ((await fetch(`${BASE}/api/health`)).ok) return } catch { /* pas encore */ }

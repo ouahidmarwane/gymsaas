@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, Award, Trophy, Wallet, UserCog, SlidersHorizontal,
   ShieldAlert, Building2, Settings, LogOut, Menu, X,
 } from 'lucide-react'
-import { api, ApiError, type Me } from '@/lib/client'
+import { api, ApiError, type Me, type Capabilities } from '@/lib/client'
 
 // Coquille de l'application : le rail flottant en pilule de 78px, exactement
 // comme l'application d'origine. Les classes viennent de globals.css, repris
@@ -17,18 +17,29 @@ interface NavItem {
   href: string
   label: string
   icon: typeof LayoutDashboard
+  /** Ecran conditionne a ce que le club pratique reellement. */
+  needs?: (c: Capabilities) => boolean
 }
 
 /** Ecrans d'un club. Ils n'ont de sens que dans un club. */
 const CLUB_NAV: NavItem[] = [
   { href: '/dashboard',      label: 'Tableau de bord',  icon: LayoutDashboard },
   { href: '/members',        label: 'Membres',          icon: Users },
-  { href: '/grades',         label: 'Passage de grade', icon: Award },
+  // Un club de boxe sans ceinture n'a pas de passage de grade. Le lien
+  // n'apparait que si au moins une discipline du club est gradee.
+  { href: '/grades',         label: 'Passage de grade', icon: Award,
+    needs: c => c.hasGrading },
   { href: '/championships',  label: 'Championnats',     icon: Trophy },
   { href: '/comptabilite',   label: 'Comptabilite',     icon: Wallet },
   { href: '/staff',          label: 'Equipe & droits',  icon: UserCog },
   { href: '/setup',          label: 'Configuration',    icon: SlidersHorizontal },
 ]
+
+/** Un club non configure garde tout : c'est le seul moyen d'aller configurer. */
+function allowed(items: NavItem[], capabilities: Capabilities | null): NavItem[] {
+  if (!capabilities) return items
+  return items.filter(item => !item.needs || item.needs(capabilities))
+}
 
 /** Ecrans de la plateforme. L'exploitant supervise, il ne gere aucun club. */
 const PLATFORM_NAV: NavItem[] = [
@@ -112,15 +123,17 @@ export default function Shell({ children }: { children: ReactNode }) {
   //
   // Hors support, un exploitant sans club ne voit que la plateforme : lui
   // montrer Membres ou Comptabilite n'aurait rien a ouvrir.
+  const clubNav = allowed(CLUB_NAV, me?.capabilities ?? null)
+
   const items = !me
     ? []
     : inSupport
-      ? CLUB_NAV
+      ? clubNav
       : me.isPlatformAdmin && !me.org
         ? PLATFORM_NAV
         : me.isPlatformAdmin
-          ? [...PLATFORM_NAV, ...CLUB_NAV]
-          : CLUB_NAV
+          ? [...PLATFORM_NAV, ...clubNav]
+          : clubNav
 
   // Hors support, un exploitant sans club represente la plateforme, pas un
   // club : ni logo de club, ni nom de club a afficher.

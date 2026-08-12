@@ -74,6 +74,36 @@ export class ClubDatabase extends DurableObject<Env> {
     )
   }
 
+  /**
+   * Ce que le club sait faire, en une requete.
+   *
+   * Sert a n'afficher que les ecrans qui ont un sens ici : un club de boxe
+   * sans ceinture n'a rien a voir dans « Passage de grade ». La reponse
+   * decrit le club, elle n'est pas une preference d'affichage.
+   */
+  capabilities(): {
+    configured: boolean
+    branchCount: number
+    disciplineCount: number
+    hasGrading: boolean
+  } {
+    const row = this.sql.exec<{
+      branches: number; disciplines: number; graded: number
+    }>(
+      `SELECT
+         (SELECT COUNT(*) FROM branches    WHERE is_active = 1) AS branches,
+         (SELECT COUNT(*) FROM disciplines WHERE is_active = 1) AS disciplines,
+         (SELECT COUNT(*) FROM disciplines WHERE is_active = 1 AND has_grading = 1) AS graded`,
+    ).one()
+
+    return {
+      configured: row.branches > 0 && row.disciplines > 0,
+      branchCount: row.branches,
+      disciplineCount: row.disciplines,
+      hasGrading: row.graded > 0,
+    }
+  }
+
   // Succursales ----------------------------------------------------------
 
   listBranches(includeInactive = false) {

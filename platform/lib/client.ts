@@ -55,12 +55,21 @@ export interface Branding {
   locale: string
 }
 
+/** Ce que le club pratique reellement, pas une preference d'affichage. */
+export interface Capabilities {
+  configured: boolean
+  branchCount: number
+  disciplineCount: number
+  hasGrading: boolean
+}
+
 export interface Me {
   user: { id: string; name: string; email: string }
   isPlatformAdmin: boolean
   org: { id: string; role: string } | null
   scope: { mode: 'member' | 'support'; orgId: string | null; canWrite: boolean }
   branding: Branding | null
+  capabilities: Capabilities | null
 }
 
 export interface ClubRow {

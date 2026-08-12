@@ -41,12 +41,22 @@ function client() {
 const WRANGLER = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url))
 
 /** Requete directe sur la base centrale, comme le ferait un operateur. */
-function control(sql) {
-  return execFileSync(
-    process.execPath,
-    [WRANGLER, 'd1', 'execute', 'gymflow-control', '--local', '--json', '--command', sql],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: fileURLToPath(new URL('..', import.meta.url)) },
-  )
+// Le fichier SQLite local est partage avec le serveur de developpement :
+// sous charge, une ecriture concurrente rend SQLITE_BUSY. On reessaie.
+function control(sql, attempts = 6) {
+  for (let i = 1; ; i++) {
+    try {
+      return execFileSync(
+        process.execPath,
+        [WRANGLER, 'd1', 'execute', 'gymflow-control', '--local', '--json', '--command', sql],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: fileURLToPath(new URL('..', import.meta.url)) },
+      )
+    } catch (error) {
+      const output = String(error.stdout ?? '') + String(error.stderr ?? '')
+      if (i >= attempts || !/SQLITE_BUSY|database is locked/i.test(output)) throw error
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * i)
+    }
+  }
 }
 
 const uniq = () => Math.random().toString(36).slice(2, 10)
