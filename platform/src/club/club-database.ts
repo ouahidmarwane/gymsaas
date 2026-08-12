@@ -60,26 +60,136 @@ export class ClubDatabase extends DurableObject<Env> {
   }
 
   /**
-   * Amorce un club neuf : succursale et discipline par defaut.
-   * Idempotent, un second appel ne duplique rien.
+   * Un club neuf demarre VIDE : aucune succursale, aucune discipline.
+   *
+   * Rien n'est presuppose du sport pratique ni du nombre de salles : on le
+   * demande au club. L'ancienne version figeait karate / full contact /
+   * aerobic et deux succursales dans le schema, ce qui rendait le produit
+   * invendable a tout autre club.
    */
-  seed(input: { branchName: string; disciplineName: string; hasGrading: boolean }): void {
-    const existing = this.sql
-      .exec<{ n: number }>('SELECT COUNT(*) AS n FROM branches')
-      .one().n
-    if (existing > 0) return
+  isConfigured(): boolean {
+    return (
+      this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM branches').one().n > 0 &&
+      this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM disciplines').one().n > 0
+    )
+  }
 
+  // Succursales ----------------------------------------------------------
+
+  listBranches(includeInactive = false) {
+    return this.sql
+      .exec(
+        `SELECT * FROM branches ${includeInactive ? '' : 'WHERE is_active = 1'} ORDER BY name`,
+      )
+      .toArray()
+  }
+
+  addBranch(input: { name: string; nameAr?: string | null; address?: string | null }): { id: string } {
+    const id = crypto.randomUUID()
     this.sql.exec(
-      'INSERT INTO branches (id, name) VALUES (?, ?)',
-      crypto.randomUUID(),
-      input.branchName,
+      'INSERT INTO branches (id, name, name_ar, address) VALUES (?, ?, ?, ?)',
+      id, input.name, input.nameAr ?? null, input.address ?? null,
     )
+    return { id }
+  }
+
+  updateBranch(id: string, input: { name?: string; nameAr?: string | null; address?: string | null }): void {
     this.sql.exec(
-      'INSERT INTO disciplines (id, name, has_grading) VALUES (?, ?, ?)',
-      crypto.randomUUID(),
-      input.disciplineName,
-      input.hasGrading ? 1 : 0,
+      `UPDATE branches
+          SET name    = COALESCE(?, name),
+              name_ar = COALESCE(?, name_ar),
+              address = COALESCE(?, address)
+        WHERE id = ?`,
+      input.name ?? null, input.nameAr ?? null, input.address ?? null, id,
     )
+  }
+
+  /**
+   * Desactivation, jamais suppression : les membres et les paiements deja
+   * rattaches a cette succursale doivent rester lisibles.
+   */
+  deactivateBranch(id: string): void {
+    this.sql.exec('UPDATE branches SET is_active = 0 WHERE id = ?', id)
+  }
+
+  // Disciplines ----------------------------------------------------------
+
+  listDisciplines(includeInactive = false) {
+    const rows = this.sql
+      .exec(
+        `SELECT * FROM disciplines ${includeInactive ? '' : 'WHERE is_active = 1'} ORDER BY name`,
+      )
+      .toArray() as Array<Record<string, unknown>>
+
+    // Chaque discipline porte sa propre echelle de grades, si elle en a une.
+    return rows.map(d => ({
+      ...d,
+      grades: d.has_grading
+        ? this.sql
+            .exec('SELECT * FROM grade_levels WHERE discipline_id = ? ORDER BY rank', d.id as string)
+            .toArray()
+        : [],
+    }))
+  }
+
+  /**
+   * Ajoute une discipline et, si elle est gradee, son echelle complete.
+   * L'echelle est fournie par le club : ceintures de karate, kyu/dan de judo,
+   * geup de taekwondo, ou rien du tout pour une activite non gradee.
+   */
+  addDiscipline(input: {
+    name: string
+    nameAr?: string | null
+    hasGrading: boolean
+    grades?: Array<{ label: string; labelAr?: string | null; color?: string | null }>
+  }): { id: string } {
+    const id = crypto.randomUUID()
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        'INSERT INTO disciplines (id, name, name_ar, has_grading) VALUES (?, ?, ?, ?)',
+        id, input.name, input.nameAr ?? null, input.hasGrading ? 1 : 0,
+      )
+      if (input.hasGrading && input.grades?.length) {
+        input.grades.forEach((g, index) => {
+          this.sql.exec(
+            `INSERT INTO grade_levels (id, discipline_id, rank, label, label_ar, color)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            crypto.randomUUID(), id, index, g.label, g.labelAr ?? null, g.color ?? null,
+          )
+        })
+      }
+    })
+
+    return { id }
+  }
+
+  /** Remplace l'echelle de grades d'une discipline. */
+  setGradeLadder(
+    disciplineId: string,
+    grades: Array<{ label: string; labelAr?: string | null; color?: string | null }>,
+  ): void {
+    this.ctx.storage.transactionSync(() => {
+      // Les membres conservent leur grade_id : on ne supprime que les
+      // niveaux devenus orphelins, la colonne passant alors a NULL via la
+      // contrainte ON DELETE SET NULL.
+      this.sql.exec('DELETE FROM grade_levels WHERE discipline_id = ?', disciplineId)
+      grades.forEach((g, index) => {
+        this.sql.exec(
+          `INSERT INTO grade_levels (id, discipline_id, rank, label, label_ar, color)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          crypto.randomUUID(), disciplineId, index, g.label, g.labelAr ?? null, g.color ?? null,
+        )
+      })
+      this.sql.exec(
+        'UPDATE disciplines SET has_grading = ? WHERE id = ?',
+        grades.length ? 1 : 0, disciplineId,
+      )
+    })
+  }
+
+  deactivateDiscipline(id: string): void {
+    this.sql.exec('UPDATE disciplines SET is_active = 0 WHERE id = ?', id)
   }
 
   // Membres --------------------------------------------------------------

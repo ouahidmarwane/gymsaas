@@ -97,6 +97,44 @@ function str(v: unknown, field: string, max = 200): string {
   return s
 }
 
+/** Chaine facultative : absente ou vide devient null. */
+function optional(v: unknown, max = 200): string | null {
+  if (v === undefined || v === null || v === '') return null
+  if (typeof v !== 'string') throw new HttpError(400, 'Valeur attendue : texte')
+  const s = v.trim()
+  if (s.length > max) throw new HttpError(400, 'Valeur trop longue')
+  return s || null
+}
+
+const MAX_GRADES = 40
+
+function parseGrades(v: unknown): Array<{ label: string; labelAr: string | null; color: string | null }> {
+  if (v === undefined || v === null) return []
+  if (!Array.isArray(v)) throw new HttpError(400, 'grades doit etre une liste')
+  if (v.length > MAX_GRADES) throw new HttpError(400, `grades : ${MAX_GRADES} niveaux maximum`)
+  return v.map((g, i) => {
+    if (!g || typeof g !== 'object') throw new HttpError(400, `grades[${i}] invalide`)
+    const row = g as Record<string, unknown>
+    return {
+      label: str(row.label, `grades[${i}].label`, 60),
+      labelAr: optional(row.labelAr, 60),
+      color: optional(row.color, 30),
+    }
+  })
+}
+
+function parseDiscipline(body: Record<string, unknown>) {
+  const grades = parseGrades(body.grades)
+  return {
+    name: str(body.name, 'name', 80),
+    nameAr: optional(body.nameAr, 80),
+    // Une discipline est gradee si une echelle est fournie, ou si le club
+    // le declare explicitement.
+    hasGrading: grades.length > 0 || body.hasGrading === true,
+    grades,
+  }
+}
+
 async function readJson(request: Request): Promise<Record<string, unknown>> {
   try {
     const body = await request.json()
@@ -138,6 +176,76 @@ export default {
           isPlatformAdmin: principal.isPlatformAdmin,
           org: principal.orgId ? { id: principal.orgId, role: principal.role } : null,
         })
+      }
+
+      // Configuration du club : succursales et disciplines.
+      // Un club neuf n'en a aucune. Rien n'est presuppose du sport pratique
+      // ni du nombre de salles ; c'est au club de le declarer.
+
+      if (path === '/api/branches' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        return json({ branches: await clubOf(env, principal).listBranches() })
+      }
+
+      if (path === '/api/branches' && method === 'POST') {
+        atLeast(principal, 'admin')
+        const body = await readJson(request)
+        const { id } = await clubOf(env, principal).addBranch({
+          name: str(body.name, 'name', 120),
+          nameAr: optional(body.nameAr, 120),
+          address: optional(body.address, 300),
+        })
+        return json({ id }, { status: 201 })
+      }
+
+      const branchRoute = path.match(/^\/api\/branches\/([^/]+)$/)
+      if (branchRoute && (method === 'PATCH' || method === 'DELETE')) {
+        atLeast(principal, 'admin')
+        const club = clubOf(env, principal)
+        if (method === 'DELETE') {
+          await club.deactivateBranch(branchRoute[1]!)
+        } else {
+          const body = await readJson(request)
+          await club.updateBranch(branchRoute[1]!, {
+            name: optional(body.name, 120) ?? undefined,
+            nameAr: optional(body.nameAr, 120),
+            address: optional(body.address, 300),
+          })
+        }
+        return json({ ok: true })
+      }
+
+      if (path === '/api/disciplines' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        return json({ disciplines: await clubOf(env, principal).listDisciplines() })
+      }
+
+      if (path === '/api/disciplines' && method === 'POST') {
+        atLeast(principal, 'admin')
+        const { id } = await clubOf(env, principal).addDiscipline(
+          parseDiscipline(await readJson(request)),
+        )
+        return json({ id }, { status: 201 })
+      }
+
+      const ladderRoute = path.match(/^\/api\/disciplines\/([^/]+)\/grades$/)
+      if (ladderRoute && method === 'PUT') {
+        atLeast(principal, 'admin')
+        const body = await readJson(request)
+        await clubOf(env, principal).setGradeLadder(ladderRoute[1]!, parseGrades(body.grades))
+        return json({ ok: true })
+      }
+
+      const disciplineRoute = path.match(/^\/api\/disciplines\/([^/]+)$/)
+      if (disciplineRoute && method === 'DELETE') {
+        atLeast(principal, 'admin')
+        await clubOf(env, principal).deactivateDiscipline(disciplineRoute[1]!)
+        return json({ ok: true })
+      }
+
+      if (path === '/api/setup/status' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        return json({ configured: await clubOf(env, principal).isConfigured() })
       }
 
       if (path === '/api/members' && method === 'GET') {
@@ -182,11 +290,44 @@ export default {
         return json({ clubs: results })
       }
 
+      // Provisionne un club depuis le tableau de bord plateforme, en
+      // production, sans deploiement. Le Durable Object du club existant
+      // n'est ni lu ni ecrit : c'est une base distincte.
+      if (path === '/api/admin/clubs' && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        return await createClub(await readJson(request), env, principal.userId, ip)
+      }
+
       const statsRoute = path.match(/^\/api\/admin\/clubs\/([^/]+)\/stats$/)
       if (statsRoute && method === 'GET') {
         const orgId = statsRoute[1]!
         const club = await clubAsPlatformAdmin(env, principal, orgId, 'read_club_stats', ip)
         return json({ orgId, stats: await club.stats() })
+      }
+
+      // Configuration d'un club par la plateforme : ajouter ses salles et ses
+      // sports pour lui, sans avoir a se connecter a son compte.
+      const adminBranches = path.match(/^\/api\/admin\/clubs\/([^/]+)\/branches$/)
+      if (adminBranches && (method === 'GET' || method === 'POST')) {
+        const orgId = adminBranches[1]!
+        const club = await clubAsPlatformAdmin(env, principal, orgId, `${method}_branches`, ip)
+        if (method === 'GET') return json({ branches: await club.listBranches() })
+        const body = await readJson(request)
+        const { id } = await club.addBranch({
+          name: str(body.name, 'name', 120),
+          nameAr: optional(body.nameAr, 120),
+          address: optional(body.address, 300),
+        })
+        return json({ id }, { status: 201 })
+      }
+
+      const adminDisciplines = path.match(/^\/api\/admin\/clubs\/([^/]+)\/disciplines$/)
+      if (adminDisciplines && (method === 'GET' || method === 'POST')) {
+        const orgId = adminDisciplines[1]!
+        const club = await clubAsPlatformAdmin(env, principal, orgId, `${method}_disciplines`, ip)
+        if (method === 'GET') return json({ disciplines: await club.listDisciplines() })
+        const { id } = await club.addDiscipline(parseDiscipline(await readJson(request)))
+        return json({ id }, { status: 201 })
       }
 
       return fail(404, 'Route inconnue')
@@ -244,9 +385,9 @@ async function signup(request: Request, env: Env, ip: string | null): Promise<Re
     ).bind(newId(), userId, orgId),
   ])
 
-  // Cree la base du club a la premiere utilisation, puis l'amorce.
-  const club = env.CLUB.get(env.CLUB.idFromName(orgId))
-  await club.seed({ branchName: 'Principale', disciplineName: 'Karate', hasGrading: true })
+  // Le club demarre vide : ni succursale, ni discipline. On ne devine pas
+  // quel sport il pratique ni combien de salles il a, on le lui demande.
+  // Le Durable Object sera cree a sa premiere utilisation.
 
   const token = await createSession(env, userId, orgId, {
     ip, userAgent: request.headers.get('User-Agent'),
@@ -255,6 +396,80 @@ async function signup(request: Request, env: Env, ip: string | null): Promise<Re
   return json(
     { orgId, userId, slug },
     { status: 201, headers: { 'Set-Cookie': sessionCookie(token) } },
+  )
+}
+
+// Creation d'un club par la plateforme ----------------------------------------
+
+/**
+ * Ajoute un club en production depuis le tableau de bord superadmin.
+ *
+ * Aucun club existant n'est touche : ni lecture, ni ecriture, ni migration,
+ * ni interruption. La base du nouveau club est un Durable Object distinct,
+ * cree a sa premiere utilisation. Seul le catalogue central recoit trois
+ * lignes, et il ne contient aucune donnee metier.
+ */
+async function createClub(
+  body: Record<string, unknown>,
+  env: Env,
+  actorId: string,
+  ip: string | null,
+): Promise<Response> {
+  const clubName = str(body.clubName, 'clubName', 120)
+  const slug = str(body.slug, 'slug', 60).toLowerCase()
+  const ownerName = str(body.ownerName, 'ownerName', 120)
+  const ownerEmail = normEmail(str(body.ownerEmail, 'ownerEmail', 200))
+  const password = str(body.ownerPassword, 'ownerPassword', 200)
+  const plan = optional(body.plan, 20) ?? 'trial'
+
+  if (!EMAIL.test(ownerEmail)) throw new HttpError(400, 'Adresse e-mail invalide')
+  if (!SLUG.test(slug)) throw new HttpError(400, 'Identifiant de club invalide (a-z, 0-9, tirets)')
+  if (password.length < 10) throw new HttpError(400, 'Mot de passe : 10 caracteres minimum')
+  if (!['trial', 'essentiel', 'club', 'federation'].includes(plan)) {
+    throw new HttpError(400, 'Formule inconnue')
+  }
+
+  if (await env.CONTROL.prepare('SELECT 1 FROM organizations WHERE slug = ?').bind(slug).first()) {
+    throw new HttpError(409, 'Identifiant de club deja pris')
+  }
+
+  const orgId = newId()
+  const existingUser = await env.CONTROL.prepare(
+    'SELECT id FROM users WHERE email_norm = ?',
+  ).bind(ownerEmail).first<{ id: string }>()
+
+  const statements = [
+    env.CONTROL.prepare(
+      `INSERT INTO organizations (id, slug, name, plan, status, trial_ends_at)
+       VALUES (?, ?, ?, ?, 'active', ?)`,
+    ).bind(orgId, slug, clubName, plan, isoSeconds(new Date(Date.now() + 30 * 86_400_000))),
+  ]
+
+  // Un compte existant peut diriger un second club : c'est justement ce que
+  // le passage de profiles.user_id UNIQUE a une table memberships autorise.
+  const ownerId = existingUser?.id ?? newId()
+  if (!existingUser) {
+    statements.push(
+      env.CONTROL.prepare(
+        'INSERT INTO users (id, email, email_norm, name, password_hash) VALUES (?, ?, ?, ?, ?)',
+      ).bind(ownerId, ownerEmail, ownerEmail, ownerName, await hashPassword(password)),
+    )
+  }
+
+  statements.push(
+    env.CONTROL.prepare(
+      "INSERT INTO memberships (id, user_id, org_id, role) VALUES (?, ?, ?, 'owner')",
+    ).bind(newId(), ownerId, orgId),
+    env.CONTROL.prepare(
+      "INSERT INTO platform_audit (actor_id, action, org_id, detail, ip) VALUES (?, 'create_club', ?, ?, ?)",
+    ).bind(actorId, orgId, JSON.stringify({ slug, plan, ownerEmail }), ip),
+  )
+
+  await env.CONTROL.batch(statements)
+
+  return json(
+    { orgId, ownerId, slug, ownerExisted: Boolean(existingUser), configured: false },
+    { status: 201 },
   )
 }
 
