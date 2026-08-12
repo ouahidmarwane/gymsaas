@@ -192,11 +192,11 @@ function GradeBars({ label, grades }: {
             <span style={{
               width: 9, height: 9, borderRadius: '50%', flex: 'none',
               background: g.color ?? 'var(--muted)',
-              boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.25)',
+              boxShadow: 'inset 0 0 0 1px var(--border-hover)',
             }} />
             <span style={{ flex: '0 0 5.5rem', color: 'var(--muted)', overflow: 'hidden',
                            textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label}</span>
-            <span style={{ flex: 1, height: 6, borderRadius: 999, background: 'rgba(255,255,255,0.07)' }}>
+            <span style={{ flex: 1, height: 6, borderRadius: 999, background: 'var(--overlay)' }}>
               <span style={{
                 display: 'block', height: '100%', borderRadius: 999,
                 width: `${(g.count / max) * 100}%`, background: g.color ?? 'var(--gold)',
@@ -284,7 +284,7 @@ function BranchSplit({ label, branches }: {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%' }}>
         {/* Barre empilee : la proportion se lit d'un coup, sans legende a croiser. */}
         <div style={{ display: 'flex', height: 10, borderRadius: 999, overflow: 'hidden',
-                      background: 'rgba(255,255,255,0.07)' }}>
+                      background: 'var(--overlay)' }}>
           {branches.map((b, i) => (
             <span key={b.name} title={`${b.name} · ${b.count}`}
                   style={{ width: `${(b.count / total) * 100}%`, background: palette[i % palette.length] }} />

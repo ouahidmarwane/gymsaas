@@ -1,7 +1,7 @@
 /* Complements propres a la plateforme multi-clubs.
    Fichier separe pour que globals.css reste la copie exacte du systeme
    visuel d'origine : on peut le recopier sans ecraser ce qui suit.
-   Tout reprend le meme vocabulaire — pilules, cartes 28px, --gold. */
+   Tout reprend le meme vocabulaire â€” pilules, cartes 28px, --gold. */
 
 /* Quand la barre de support est la, le contenu descend sous elle. */
 .app-shell:has(> [role='status']) .app-main { padding-top: 76px; }
@@ -27,7 +27,7 @@
 }
 .admin-club-card:hover {
   transform: translateY(-3px);
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: var(--border-hover);
 }
 
 .admin-club-head { display: flex; align-items: center; gap: 12px; }
@@ -56,7 +56,7 @@
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px; margin: 0;
   padding: 14px 0;
-  border-block: 1px solid rgba(255, 255, 255, 0.07);
+  border-block: 1px solid var(--card-border);
 }
 .admin-figure { min-width: 0; }
 .admin-figure-label {
@@ -83,12 +83,12 @@
   gap: 18px;
 }
 
-/* En edition, une trame discrete dit « ca s'aligne » sans meubler l'ecran. */
+/* En edition, une trame discrete dit Â« ca s'aligne Â» sans meubler l'ecran. */
 .gf-grid[data-editing='true'] {
-  background-image: linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-image: linear-gradient(var(--grid-line) 1px, transparent 1px);
   background-size: 100% calc(var(--row-h) + 18px);
   border-radius: 28px;
-  outline: 1px dashed rgba(255, 255, 255, 0.09);
+  outline: 1px dashed var(--float-border);
   outline-offset: 10px;
 }
 
@@ -97,8 +97,8 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: linear-gradient(180deg, rgba(24, 26, 34, 0.92), rgba(15, 17, 24, 0.95));
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: 28px;
   overflow: hidden;
   /* Seuls transform et opacite s'animent : deplacer une carte ne doit
@@ -108,8 +108,8 @@
   will-change: transform;
 }
 
-.gf-grid[data-editing='true'] .gf-cell { border-style: dashed; border-color: rgba(255, 255, 255, 0.14); }
-.gf-grid[data-editing='true'] .gf-cell:hover { border-color: rgba(47, 107, 255, 0.5); }
+.gf-grid[data-editing='true'] .gf-cell { border-style: dashed; border-color: var(--overlay-strong); }
+.gf-grid[data-editing='true'] .gf-cell:hover { border-color: color-mix(in srgb, var(--gold) 50%, transparent); }
 
 /* La carte saisie sort du flux : elle suit le curseur en transform pur. */
 .gf-cell[data-dragging='true'] {
@@ -117,7 +117,7 @@
   transition: none;
   border-style: solid;
   border-color: var(--gold);
-  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(47, 107, 255, 0.4);
+  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px color-mix(in srgb, var(--gold) 40%, transparent);
   cursor: grabbing;
 }
 
@@ -125,9 +125,9 @@
 .gf-cell[data-settling='true'] { transition: transform 260ms var(--ease-out); }
 
 .gf-ghost {
-  border: 2px dashed rgba(47, 107, 255, 0.55);
+  border: 2px dashed color-mix(in srgb, var(--gold) 55%, transparent);
   border-radius: 28px;
-  background: rgba(47, 107, 255, 0.07);
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
   pointer-events: none;
   transition: all 200ms var(--ease-out);
 }
@@ -137,8 +137,8 @@
 .gf-chrome {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 10px 8px 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--overlay-soft);
+  border-bottom: 1px solid var(--hairline);
 }
 .gf-chrome-title {
   font-size: 0.72rem; font-weight: 700; color: var(--muted);
@@ -154,7 +154,7 @@
   cursor: grab;
   touch-action: none;   /* sinon le navigateur fait defiler au lieu de saisir */
 }
-.gf-handle:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.gf-handle:hover { background: var(--overlay); color: var(--text); }
 .gf-handle:active { cursor: grabbing; }
 
 .gf-hide {
@@ -199,11 +199,11 @@
   display: flex; flex-direction: column; gap: 12px;
   padding: 16px;
   border-radius: 28px;
-  background: rgba(11, 15, 26, 0.96);
+  background: var(--float-bg);
   backdrop-filter: blur(24px) saturate(1.4);
   -webkit-backdrop-filter: blur(24px) saturate(1.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 32px 72px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--overlay);
+  box-shadow: 0 32px 72px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--overlay-soft);
   animation: fadeUp 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards;
   overflow-y: auto;
 }
@@ -216,7 +216,7 @@
 .gf-palette-count {
   min-width: 20px; padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--overlay);
   color: var(--muted);
   font-size: 0.68rem; font-weight: 800; text-align: center;
 }
@@ -229,8 +229,8 @@
   width: 100%;
   padding: 0.55rem 0.7rem;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--overlay-soft);
+  border: 1px solid var(--overlay);
   color: var(--text);
   font-size: 0.8rem; font-weight: 600;
   text-align: start;
@@ -240,7 +240,7 @@
               transform var(--transition-fast);
 }
 .gf-palette-item:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--overlay);
   border-color: var(--gold);
   transform: translateY(-1px);
 }
@@ -279,10 +279,10 @@
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 12px 16px;
   border-radius: 999px;
-  background: rgba(11, 15, 26, 0.96);
+  background: var(--float-bg);
   backdrop-filter: blur(24px) saturate(1.4);
   -webkit-backdrop-filter: blur(24px) saturate(1.4);
-  border: 1px solid rgba(47, 107, 255, 0.3);
+  border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
 }
 .gf-editbar-text { font-size: 0.8rem; color: var(--muted); min-width: 0; }
@@ -321,8 +321,8 @@
   border-style: dashed;
 }
 .gf-palette-item[data-placed]:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: var(--overlay-soft);
+  border-color: var(--overlay);
   transform: none;
 }
 .gf-palette-placed { color: var(--muted); flex: none; }

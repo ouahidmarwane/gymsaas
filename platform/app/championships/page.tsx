@@ -195,7 +195,7 @@ export default function ChampionshipsPage() {
                 <div key={a.id} style={{
                   display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
                   padding: '0.6rem 0.9rem', borderRadius: 14,
-                  background: 'rgba(255,255,255,0.04)', fontSize: '0.85rem',
+                  background: 'var(--overlay-soft)', fontSize: '0.85rem',
                 }}>
                   <span style={{ flex: 1, minWidth: 120, fontWeight: 600 }}>{a.member_name}</span>
                   {a.grade_label && (

@@ -92,7 +92,7 @@ export default function AccountPage() {
           {sessions.map((s, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.82rem',
                                   padding: '0.55rem 0.85rem', borderRadius: 14,
-                                  background: 'rgba(255,255,255,0.04)' }}>
+                                  background: 'var(--overlay-soft)' }}>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
                              whiteSpace: 'nowrap' }}>
                 {s.ip ?? 'adresse inconnue'}
@@ -134,7 +134,7 @@ export default function AccountPage() {
               {supportLog.map((e, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.82rem',
                                       padding: '0.55rem 0.85rem', borderRadius: 14,
-                                      background: 'rgba(255,255,255,0.04)' }}>
+                                      background: 'var(--overlay-soft)' }}>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     {ACTION_LABEL[e.action] ?? e.action}
                     {e.actor_name && <span className="dz-card-note"> · {e.actor_name}</span>}

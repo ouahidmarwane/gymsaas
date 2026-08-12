@@ -118,7 +118,7 @@ export default function GradesPage() {
               <div key={s.id} style={{
                 display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
                 padding: '0.75rem 1rem', borderRadius: 16,
-                background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.06)',
+                background: 'var(--overlay-soft)', border: '1px solid var(--hairline)',
               }}>
                 <div style={{ flex: 1, minWidth: 150 }}>
                   <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>{s.member_name}</div>
@@ -187,7 +187,7 @@ export default function GradesPage() {
                 <div key={m.id} style={{
                   display: 'flex', alignItems: 'center', gap: 12,
                   padding: '0.55rem 0.85rem', borderRadius: 14,
-                  background: 'rgba(255,255,255,0.04)', fontSize: '0.85rem',
+                  background: 'var(--overlay-soft)', fontSize: '0.85rem',
                 }}>
                   <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden',
                                  textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</span>
@@ -217,7 +217,7 @@ export default function GradesPage() {
             {history.map(s => (
               <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12,
                                        fontSize: '0.82rem', padding: '0.5rem 0.85rem',
-                                       borderRadius: 14, background: 'rgba(255,255,255,0.03)' }}>
+                                       borderRadius: 14, background: 'var(--overlay-soft)' }}>
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
                                whiteSpace: 'nowrap' }}>{s.member_name}</span>
                 <span className="dz-card-note" style={{ flex: 'none' }}>{s.to_label ?? '—'}</span>

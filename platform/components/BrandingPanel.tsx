@@ -66,11 +66,37 @@ export default function BrandingPanel({
   }
 
   /**
-   * Meme principe pour l'habillage, applique a tout le document.
+   * Les valeurs a ecrire sont passees explicitement.
    *
-   * Il propose sa teinte signature en meme temps : un fond beige garde mal
-   * un accent bleu nuit. Le choix reste ouvert — la palette juste en dessous
-   * permet d'en reprendre une autre, et c'est elle qui sera enregistree.
+   * setState est asynchrone : un enregistrement declenche dans la foulee
+   * d'un setSkin enverrait l'habillage precedent. C'est exactement le genre
+   * de decalage qui donne l'impression que « ca n'a pas ete pris ».
+   */
+  async function persist(next: { accent?: string; skin?: SkinKey } = {}) {
+    setBusy(true); setError(null); setSaved(false)
+    try {
+      const result = await api.put<Branding>('/api/branding', {
+        name: name.trim() || undefined,
+        theme: {
+          accent: next.accent ?? accent,
+          skin: next.skin ?? skin,
+          mode: initial?.theme.mode ?? 'system',
+        },
+      })
+      onSaved(result); setSaved(true)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Enregistrement impossible')
+    } finally { setBusy(false) }
+  }
+
+  /**
+   * L'habillage s'applique a tout le document, et s'enregistre aussitot.
+   *
+   * Il proposait sa teinte sans rien ecrire : l'apercu etait immediat, le
+   * bouton d'enregistrement se trouvait plus haut dans la carte, et changer
+   * de page rendait l'ancien habillage. On avait donc un reglage qui semblait
+   * pris et ne l'etait pas. Un choix unique, visible sur-le-champ et
+   * reversible d'un clic n'a pas besoin d'une confirmation.
    */
   function previewSkin(next: SkinKey) {
     setSkin(next)
@@ -78,19 +104,7 @@ export default function BrandingPanel({
     root.setAttribute('data-theme', SKINS[next].base)
     root.setAttribute('data-skin', next)
     preview(SKINS[next].accent)
-  }
-
-  async function save() {
-    setBusy(true); setError(null); setSaved(false)
-    try {
-      const result = await api.put<Branding>('/api/branding', {
-        name: name.trim() || undefined,
-        theme: { accent, skin, mode: initial?.theme.mode ?? 'system' },
-      })
-      onSaved(result); setSaved(true)
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Enregistrement impossible')
-    } finally { setBusy(false) }
+    persist({ accent: SKINS[next].accent, skin: next })
   }
 
   async function upload(file: File) {
@@ -134,7 +148,7 @@ export default function BrandingPanel({
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {logoUrl
             ? <img src={logoUrl} alt="" width={48} height={48}
-                   style={{ borderRadius: '50%', objectFit: 'contain', background: 'rgba(255,255,255,0.07)' }} />
+                   style={{ borderRadius: '50%', objectFit: 'contain', background: 'var(--overlay)' }} />
             : <span style={{
                 width: 48, height: 48, borderRadius: '50%', display: 'grid', placeItems: 'center',
                 background: accent, color: '#fff', fontWeight: 800, fontSize: '0.85rem',
@@ -178,14 +192,10 @@ export default function BrandingPanel({
             <input type="color" value={accent} onChange={e => preview(e.target.value)}
                    aria-label="Couleur personnalisee"
                    style={{ width: 28, height: 28, borderRadius: '50%', padding: 0, cursor: 'pointer',
-                            background: 'none', border: '1px dashed rgba(255,255,255,0.25)' }} />
+                            background: 'none', border: '1px dashed var(--border-hover)' }} />
           </div>
         </fieldset>
 
-        <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
-                onClick={save} disabled={busy}>
-          {busy ? 'Enregistrement…' : 'Enregistrer'}
-        </button>
       </div>
 
       <fieldset style={{ border: 'none', margin: '22px 0 0', padding: 0 }}>
@@ -238,6 +248,15 @@ export default function BrandingPanel({
           })}
         </div>
       </fieldset>
+
+      {/* Le bouton ferme la carte : place au milieu, il avait l'air de ne
+          valider que les champs au-dessus de lui. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
+        <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
+                onClick={() => persist()} disabled={busy}>
+          {busy ? 'Enregistrement…' : 'Enregistrer le nom et la couleur'}
+        </button>
+      </div>
     </section>
   )
 }

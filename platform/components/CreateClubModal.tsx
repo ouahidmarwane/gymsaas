@@ -83,7 +83,7 @@ export default function CreateClubModal({
                    onChange={e => { setSlugTouched(true); setSlug(slugify(e.target.value)) }} />
           </Field>
 
-          <hr style={{ border: 0, borderTop: '1px solid rgba(255,255,255,0.07)', margin: '2px 0' }} />
+          <hr style={{ border: 0, borderTop: '1px solid var(--overlay)', margin: '2px 0' }} />
 
           <Field label="Nom du responsable">
             <input className="input-dark" value={ownerName} required maxLength={120}

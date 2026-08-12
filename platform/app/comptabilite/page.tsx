@@ -115,6 +115,44 @@ function ChartCard({ title, subtitle, onExpand, children }: {
   )
 }
 
+/**
+ * Couleurs du theme, resolues en valeurs concretes.
+ *
+ * Recharts pose ses couleurs en ATTRIBUTS SVG (fill, stroke), et un attribut
+ * de presentation n'interprete pas var(--x) : ecrire fill="var(--muted)"
+ * donne un axe invisible. On lit donc les variables calculees, et on
+ * reprend la lecture quand l'habillage change — sinon les graphiques
+ * garderaient les couleurs du theme precedent jusqu'au rechargement.
+ */
+function useChartInk() {
+  const [ink, setInk] = useState({
+    muted: '#8c95a8', grid: 'rgba(255,255,255,0.05)',
+    surface: '#0e1220', text: '#f5f3ef', border: 'rgba(255,255,255,0.1)',
+  })
+
+  useEffect(() => {
+    const read = () => {
+      const s = getComputedStyle(document.documentElement)
+      const pick = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback
+      setInk({
+        muted: pick('--muted', '#8c95a8'),
+        grid: pick('--grid-line', 'rgba(255,255,255,0.05)'),
+        surface: pick('--surface', '#0e1220'),
+        text: pick('--text', '#f5f3ef'),
+        border: pick('--card-border', 'rgba(255,255,255,0.1)'),
+      })
+    }
+    read()
+    const observer = new MutationObserver(read)
+    observer.observe(document.documentElement, {
+      attributes: true, attributeFilter: ['data-skin', 'data-theme'],
+    })
+    return () => observer.disconnect()
+  }, [])
+
+  return ink
+}
+
 /** Deux frames avant d'ouvrir : sans cela l'etat initial n'est jamais peint
  *  et la transition d'entree ne joue pas. */
 function useOpenAnimation() {
@@ -156,6 +194,7 @@ function ExpandModal({ title, subtitle, onClose, children }: {
 // Page -------------------------------------------------------------------
 
 export default function ComptabilitePage() {
+  const ink = useChartInk()
   const [me, setMe] = useState<Me | null>(null)
   const [data, setData] = useState<Finance | null>(null)
   const [payments, setPayments] = useState<Payment[]>([])
@@ -262,12 +301,12 @@ export default function ComptabilitePage() {
   const barChart = (height: number) => (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={chartData} barGap={4}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-        <XAxis dataKey="label" tick={{ fill: '#8c95a8', fontSize: 11 }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fill: '#8c95a8', fontSize: 11 }} axisLine={false} tickLine={false}
+        <CartesianGrid strokeDasharray="3 3" stroke={ink.grid} />
+        <XAxis dataKey="label" tick={{ fill: ink.muted, fontSize: 11 }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fill: ink.muted, fontSize: 11 }} axisLine={false} tickLine={false}
                tickFormatter={v => (v > 0 ? `${v / 1000}k` : '0')} />
-        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-        <Legend wrapperStyle={{ fontSize: 12, color: '#8c95a8', paddingTop: 8 }} />
+        <Tooltip content={<CustomTooltip />} cursor={{ fill: ink.grid }} />
+        <Legend wrapperStyle={{ fontSize: 12, color: ink.muted, paddingTop: 8 }} />
         {shown.map(b => {
           const fill = branchColor(branches.indexOf(b))
           return (
@@ -286,12 +325,12 @@ export default function ComptabilitePage() {
   const lineChart = (height: number) => (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={chartData}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-        <XAxis dataKey="label" tick={{ fill: '#8c95a8', fontSize: 11 }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fill: '#8c95a8', fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
-        <Tooltip contentStyle={{ background: '#0e1220', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10 }}
-                 labelStyle={{ color: '#f5f3ef' }} itemStyle={{ color: '#8c95a8' }} />
-        <Legend wrapperStyle={{ fontSize: 12, color: '#8c95a8', paddingTop: 8 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke={ink.grid} />
+        <XAxis dataKey="label" tick={{ fill: ink.muted, fontSize: 11 }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fill: ink.muted, fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <Tooltip contentStyle={{ background: ink.surface, border: `1px solid ${ink.border}`, borderRadius: 10, color: ink.text }}
+                 labelStyle={{ color: ink.text }} itemStyle={{ color: ink.muted }} />
+        <Legend wrapperStyle={{ fontSize: 12, color: ink.muted, paddingTop: 8 }} />
         {shown.map(b => {
           const stroke = branchColor(branches.indexOf(b))
           return (
@@ -317,7 +356,7 @@ export default function ComptabilitePage() {
             {pieData.map(e => <Cell key={e.name} fill={e.color} />)}
           </Pie>
           <Tooltip formatter={(v: unknown) => `${Number(v).toLocaleString('fr-FR')} DH`}
-                   contentStyle={{ background: '#0e1220', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10 }} />
+                   contentStyle={{ background: ink.surface, border: `1px solid ${ink.border}`, borderRadius: 10, color: ink.text }} />
         </PieChart>
       </ResponsiveContainer>
       <div className="compta-legend">
@@ -339,7 +378,7 @@ export default function ComptabilitePage() {
           <Pie data={branchPie} cx="50%" cy="50%" innerRadius={inner} outerRadius={outer} dataKey="value" paddingAngle={3}>
             {branchPie.map(e => <Cell key={e.name} fill={e.color} />)}
           </Pie>
-          <Tooltip contentStyle={{ background: '#0e1220', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10 }} />
+          <Tooltip contentStyle={{ background: ink.surface, border: `1px solid ${ink.border}`, borderRadius: 10, color: ink.text }} />
         </PieChart>
       </ResponsiveContainer>
       <div className="compta-legend">
@@ -478,16 +517,16 @@ export default function ComptabilitePage() {
           <section className="dz-card">
             <div className="dz-card-head">
               <div className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                <HandCoins size={17} strokeWidth={2.1} style={{ color: '#4ade80' }} /> Encaissements réels
+                <HandCoins size={17} strokeWidth={2.1} style={{ color: 'var(--positive)' }} /> Encaissements réels
               </div>
-              <div className="dz-card-note" style={{ color: '#4ade80', fontWeight: 800 }}>
+              <div className="dz-card-note" style={{ color: 'var(--positive)', fontWeight: 800 }}>
                 <PopNumber value={dh(paymentsTotal)} />
               </div>
             </div>
             <div style={{ maxHeight: 260, overflowY: 'auto', marginTop: 12 }}>
               <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ textAlign: 'left', color: '#8c95a8', fontSize: '0.68rem',
+                  <tr style={{ textAlign: 'left', color: 'var(--muted)', fontSize: '0.68rem',
                                fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     <th style={{ padding: '0.5rem 0.75rem' }}>Membre</th>
                     <th style={{ padding: '0.5rem 0.75rem' }}>Type</th>
@@ -497,14 +536,14 @@ export default function ComptabilitePage() {
                 </thead>
                 <tbody>
                   {payments.map(p => (
-                    <tr key={p.id} style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <tr key={p.id} style={{ borderTop: '1px solid var(--hairline)' }}>
                       <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>{p.member_name ?? '—'}</td>
-                      <td style={{ padding: '0.6rem 0.75rem', color: '#8c95a8' }}>{TYPE_LABEL[p.type] ?? p.type}</td>
-                      <td style={{ padding: '0.6rem 0.75rem', color: '#8c95a8' }}>
+                      <td style={{ padding: '0.6rem 0.75rem', color: 'var(--muted)' }}>{TYPE_LABEL[p.type] ?? p.type}</td>
+                      <td style={{ padding: '0.6rem 0.75rem', color: 'var(--muted)' }}>
                         {new Date(p.paid_at).toLocaleDateString('fr-FR')}
                       </td>
                       <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right',
-                                   color: '#86efac', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                                   color: 'var(--positive-ink)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {dh(p.amount_cents)}
                       </td>
                     </tr>

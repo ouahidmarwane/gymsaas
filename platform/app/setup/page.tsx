@@ -92,7 +92,7 @@ export default function SetupPage() {
             <li key={b.id} style={{
               display: 'flex', alignItems: 'center', gap: 12,
               padding: '0.7rem 1rem', borderRadius: 16,
-              background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.06)',
+              background: 'var(--overlay-soft)', border: '1px solid var(--hairline)',
             }}>
               <span style={{ flex: 1, fontWeight: 600, fontSize: '0.9rem' }}>{b.name}</span>
               <button
@@ -148,7 +148,7 @@ export default function SetupPage() {
           {disciplines?.map(d => (
             <li key={d.id} style={{
               padding: '0.85rem 1rem', borderRadius: 16,
-              background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.06)',
+              background: 'var(--overlay-soft)', border: '1px solid var(--hairline)',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ flex: 1, fontWeight: 600, fontSize: '0.9rem' }}>{d.name}</span>

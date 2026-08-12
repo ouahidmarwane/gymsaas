@@ -81,9 +81,19 @@ export default function Shell({ children }: { children: ReactNode }) {
     // Deux attributs, deux roles. data-theme porte la base claire ou sombre,
     // que la feuille d'origine connait deja ; data-skin porte la palette
     // par-dessus. Separer les deux evite de dupliquer la feuille claire.
-    const skin = me?.branding?.theme.skin ?? 'sombre'
-    root.setAttribute('data-theme', SKINS[skin]?.base ?? 'dark')
-    root.setAttribute('data-skin', skin)
+    //
+    // Rien n'est pose tant que la session n'a pas repondu. Chaque page monte
+    // sa propre coquille : reappliquer un defaut a chaque navigation faisait
+    // repasser l'application en sombre le temps de l'aller-retour, ce qui se
+    // lit comme un habillage perdu.
+    const skin = me?.branding?.theme.skin
+    if (skin) {
+      root.setAttribute('data-theme', SKINS[skin]?.base ?? 'dark')
+      root.setAttribute('data-skin', skin)
+      // Memorise pour que le prochain chargement complet peigne juste du
+      // premier coup (voir le script de app/layout.tsx).
+      try { localStorage.setItem('gf-skin', skin) } catch { /* mode prive */ }
+    }
     if (me?.branding?.locale === 'ar') {
       root.setAttribute('lang', 'ar'); root.setAttribute('dir', 'rtl')
     } else {

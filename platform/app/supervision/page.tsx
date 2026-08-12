@@ -122,8 +122,8 @@ export default function SupervisionPage() {
             <li key={ev.id} style={{
               display: 'flex', alignItems: 'center', gap: 12,
               padding: '0.75rem 1rem', borderRadius: 16,
-              background: ev.handled_at ? 'rgba(255,255,255,0.03)' : 'rgba(245,158,11,0.08)',
-              border: `1px solid ${ev.handled_at ? 'rgba(255,255,255,0.06)' : 'rgba(245,158,11,0.25)'}`,
+              background: ev.handled_at ? 'var(--overlay-soft)' : 'rgba(245,158,11,0.08)',
+              border: `1px solid ${ev.handled_at ? 'var(--hairline)' : 'rgba(245,158,11,0.25)'}`,
               opacity: ev.handled_at ? 0.55 : 1,
             }}>
               <EventIcon type={ev.type} />
@@ -250,8 +250,8 @@ function SessionList({
             <li key={`${s.user_id}-${i}`} style={{
               display: 'flex', alignItems: 'center', gap: 12,
               padding: '0.75rem 1rem', borderRadius: 16,
-              background: unknownIp ? 'rgba(245,158,11,0.07)' : 'rgba(255,255,255,0.045)',
-              border: `1px solid ${unknownIp ? 'rgba(245,158,11,0.25)' : 'rgba(255,255,255,0.06)'}`,
+              background: unknownIp ? 'rgba(245,158,11,0.07)' : 'var(--overlay-soft)',
+              border: `1px solid ${unknownIp ? 'rgba(245,158,11,0.25)' : 'var(--hairline)'}`,
             }}>
               <span title={online ? 'En ligne' : 'Inactif'} aria-label={online ? 'En ligne' : 'Inactif'}
                     style={{

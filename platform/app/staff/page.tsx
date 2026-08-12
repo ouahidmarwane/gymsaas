@@ -96,7 +96,7 @@ export default function StaffPage() {
               <div key={s.membership_id} style={{
                 display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
                 padding: '0.75rem 1rem', borderRadius: 16,
-                background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.06)',
+                background: 'var(--overlay-soft)', border: '1px solid var(--hairline)',
               }}>
                 <div style={{ flex: 1, minWidth: 160 }}>
                   <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>
