@@ -41,3 +41,7 @@ image.webp
 platform/node_modules/
 platform/.wrangler/
 
+platform/.open-next/
+platform/.next/
+platform/.dev.vars
+

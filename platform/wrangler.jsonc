@@ -1,28 +1,36 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "gymflow-platform",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-08-01",
-  "compatibility_flags": ["nodejs_compat"],
 
-  // Base de données centrale (plan de contrôle). UNE seule, donc un binding
+  // Entree personnalisee : elle enveloppe le worker genere par OpenNext pour
+  // y adjoindre la classe Durable Object et la tache planifiee (voir worker.ts).
+  "main": "worker.ts",
+
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // Base de donnees centrale (plan de controle). UNE seule, donc un binding
   // statique convient : elle ne se multiplie pas avec les clubs.
   "d1_databases": [
     {
       "binding": "CONTROL",
       "database_name": "gymflow-control",
-      // Local : cet identifiant n'est pas utilisé, wrangler crée une base
-      // SQLite dans .wrangler/. À remplacer par l'identifiant réel renvoyé
-      // par `wrangler d1 create gymflow-control` avant tout déploiement.
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "src/control-plane/migrations"
+      // En local, wrangler cree une base SQLite dans .wrangler/ et ignore cet
+      // identifiant. A remplacer par celui que renvoie
+      // `wrangler d1 create gymflow-control` avant tout deploiement.
+      "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
 
   // Un Durable Object SQLite par club. Un seul binding couvre un nombre
-  // illimité de clubs : l'instance est adressée par nom (idFromName), créée
-  // à la première utilisation. C'est ce qui rend l'inscription self-service
-  // possible — D1 exigerait un redéploiement du Worker par club.
+  // illimite de clubs : l'instance est adressee par nom (idFromName), creee
+  // a la premiere utilisation. C'est ce qui rend l'inscription self-service
+  // possible ; une base D1 par club exigerait un redeploiement a chaque club.
   "durable_objects": {
     "bindings": [
       { "name": "CLUB", "class_name": "ClubDatabase" }
@@ -32,8 +40,8 @@
   "migrations": [
     {
       "tag": "v1",
-      // new_sqlite_classes (et non new_classes) : indispensable pour obtenir
-      // le backend SQLite plutôt que le stockage clé-valeur historique.
+      // new_sqlite_classes, et non new_classes : indispensable pour obtenir le
+      // backend SQLite plutot que le stockage cle-valeur historique.
       "new_sqlite_classes": ["ClubDatabase"]
     }
   ],

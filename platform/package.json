@@ -4,8 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "opennextjs-cloudflare build && wrangler dev --port 8787",
+    "dev:ui": "next dev --port 3000",
+    "build": "next build",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "typecheck": "tsc --noEmit",
     "db:apply:local": "wrangler d1 execute gymflow-control --local --file=./src/control-plane/schema.sql",
     "db:apply:remote": "wrangler d1 execute gymflow-control --remote --file=./src/control-plane/schema.sql",
@@ -13,11 +17,20 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260812.1",
+    "@opennextjs/cloudflare": "^1.20.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "typescript": "^5.6.0",
     "wrangler": "^4.121.0"
   },
   "allowScripts": {
     "esbuild@0.28.1": true,
-    "workerd@1.20260804.1": true
+    "workerd@1.20260804.1": true,
+    "esbuild@0.25.4": true
+  },
+  "dependencies": {
+    "next": "^16.3.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   }
 }

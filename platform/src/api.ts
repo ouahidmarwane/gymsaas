@@ -1,5 +1,8 @@
 import type { Env } from './env'
-import { ClubDatabase } from './club/club-database'
+// Type seulement : importer la classe comme valeur entrainerait le module
+// 'cloudflare:workers' dans le bundle de l'API, qui echoue a se resoudre hors
+// de workerd. La classe est exportee par worker.ts, la ou elle doit l'etre.
+import type { ClubDatabase } from './club/club-database'
 import { hashPassword, verifyPassword, newId } from './auth/crypto'
 import {
   createSession, resolveSession, destroySession, readSessionCookie,
@@ -11,7 +14,6 @@ import {
   parseTheme, readTheme, logoKey, logoExtension, isOwnLogoKey, BrandingError,
 } from './club/branding'
 
-export { ClubDatabase }
 
 // Reponses -------------------------------------------------------------------
 
@@ -185,8 +187,14 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
 }
 
 // Routeur --------------------------------------------------------------------
+//
+// Expose une fonction pure (request, env) -> Response, montee par Next sous
+// app/api/[[...path]]/route.ts. Garder un routeur unique plutot que d'eclater
+// une vingtaine de fichiers de route conserve la logique d'autorisation au
+// meme endroit : la portee du club et le mode support sont decides une fois,
+// pas redecides a chaque fichier.
 
-export default {
+export const api = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     const path = url.pathname
@@ -615,6 +623,10 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>
+
+export const handleApi = (request: Request, env: Env) => api.fetch(request, env)
+export const refreshAllStats = (env: Env) =>
+  api.scheduled(undefined as unknown as ScheduledController, env)
 
 // Inscription ----------------------------------------------------------------
 
