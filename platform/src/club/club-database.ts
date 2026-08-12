@@ -328,6 +328,428 @@ export class ClubDatabase extends DurableObject<Env> {
     return { id }
   }
 
+  updateMember(id: string, input: {
+    name?: string
+    phone?: string
+    email?: string | null
+    branchId?: string | null
+    disciplineId?: string | null
+    gradeId?: string | null
+    subExpiry?: string | null
+    insExpiry?: string | null
+    isInsured?: boolean
+    notes?: string | null
+    status?: 'active' | 'inactive' | 'archived'
+    actorId?: string
+    actorName?: string
+  }): void {
+    // COALESCE partout : un champ absent garde sa valeur. Le formulaire peut
+    // donc n'envoyer que ce qui a change.
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE members SET
+           name          = COALESCE(?, name),
+           phone         = COALESCE(?, phone),
+           email         = COALESCE(?, email),
+           branch_id     = COALESCE(?, branch_id),
+           discipline_id = COALESCE(?, discipline_id),
+           grade_id      = COALESCE(?, grade_id),
+           sub_expiry    = COALESCE(?, sub_expiry),
+           ins_expiry    = COALESCE(?, ins_expiry),
+           is_insured    = COALESCE(?, is_insured),
+           notes         = COALESCE(?, notes),
+           status        = COALESCE(?, status)
+         WHERE id = ?`,
+        input.name ?? null, input.phone ?? null, input.email ?? null,
+        input.branchId ?? null, input.disciplineId ?? null, input.gradeId ?? null,
+        input.subExpiry ?? null, input.insExpiry ?? null,
+        input.isInsured === undefined ? null : (input.isInsured ? 1 : 0),
+        input.notes ?? null, input.status ?? null, id,
+      )
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, actor_id, actor_name)
+         VALUES ('member_update', 'member', ?, ?, ?)`,
+        id, input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+  }
+
+  archiveMember(id: string, actor: { id?: string; name?: string }): void {
+    // Archive plutot que supprime : les paiements deja encaisses doivent
+    // rester rattaches a quelqu'un.
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec("UPDATE members SET status = 'archived' WHERE id = ?", id)
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, actor_id, actor_name)
+         VALUES ('member_archive', 'member', ?, ?, ?)`,
+        id, actor.id ?? null, actor.name ?? null,
+      )
+    })
+  }
+
+  /** Renouvelle l'abonnement d'un mois ET enregistre l'encaissement. */
+  renewSubscription(input: {
+    memberId: string
+    amountCents: number
+    actorId?: string
+    actorName?: string
+  }): { subExpiry: string } {
+    const member = this.sql
+      .exec<{ sub_expiry: string | null; branch_id: string | null; discipline_id: string | null }>(
+        'SELECT sub_expiry, branch_id, discipline_id FROM members WHERE id = ?', input.memberId,
+      ).one()
+
+    // Prolonge depuis l'echeance si elle court encore, sinon depuis
+    // aujourd'hui : renouveler en avance ne doit pas faire perdre de jours.
+    const today = new Date().toISOString().slice(0, 10)
+    const from = member.sub_expiry && member.sub_expiry > today ? member.sub_expiry : today
+    const next = new Date(`${from}T00:00:00Z`)
+    next.setUTCMonth(next.getUTCMonth() + 1)
+    const subExpiry = next.toISOString().slice(0, 10)
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec('UPDATE members SET sub_expiry = ? WHERE id = ?', subExpiry, input.memberId)
+      // L'encaissement accompagne le renouvellement : les separer laissait la
+      // comptabilite diverger de la realite des le premier oubli.
+      if (input.amountCents > 0) {
+        this.sql.exec(
+          `INSERT INTO payments (id, member_id, amount_cents, type, branch_id, discipline_id, recorded_by)
+           VALUES (?, ?, ?, 'monthly', ?, ?, ?)`,
+          crypto.randomUUID(), input.memberId, input.amountCents,
+          member.branch_id, member.discipline_id, input.actorId ?? null,
+        )
+      }
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, detail, actor_id, actor_name)
+         VALUES ('subscription_renew', 'member', ?, ?, ?, ?)`,
+        input.memberId, subExpiry, input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+
+    return { subExpiry }
+  }
+
+  // Paiements --------------------------------------------------------------
+
+  listPayments(opts: { year?: number; month?: number; limit?: number } = {}) {
+    const limit = Number.isFinite(opts.limit) ? Math.min(Math.max(opts.limit!, 1), 500) : 300
+    const conditions: string[] = []
+    const params: unknown[] = []
+
+    if (Number.isFinite(opts.year)) {
+      conditions.push("strftime('%Y', p.paid_at) = ?")
+      params.push(String(opts.year))
+    }
+    if (Number.isFinite(opts.month)) {
+      conditions.push("strftime('%m', p.paid_at) = ?")
+      params.push(String(opts.month).padStart(2, '0'))
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    return this.sql.exec(
+      `SELECT p.*, m.name AS member_name, b.name AS branch_name
+         FROM payments p
+         LEFT JOIN members m  ON m.id = p.member_id
+         LEFT JOIN branches b ON b.id = p.branch_id
+         ${where}
+        ORDER BY p.paid_at DESC, p.created_at DESC
+        LIMIT ?`,
+      ...params, limit,
+    ).toArray()
+  }
+
+  addPayment(input: {
+    memberId: string
+    amountCents: number
+    type: string
+    paidAt?: string
+    notes?: string | null
+    actorId?: string
+    actorName?: string
+  }): { id: string } {
+    const id = crypto.randomUUID()
+    const member = this.sql
+      .exec<{ branch_id: string | null; discipline_id: string | null; name: string }>(
+        'SELECT branch_id, discipline_id, name FROM members WHERE id = ?', input.memberId,
+      ).one()
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO payments (id, member_id, amount_cents, type, paid_at, branch_id, discipline_id, notes, recorded_by)
+         VALUES (?, ?, ?, ?, COALESCE(?, date('now')), ?, ?, ?, ?)`,
+        id, input.memberId, input.amountCents, input.type, input.paidAt ?? null,
+        member.branch_id, member.discipline_id, input.notes ?? null, input.actorId ?? null,
+      )
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, detail, actor_id, actor_name)
+         VALUES ('payment_add', 'payment', ?, ?, ?, ?, ?)`,
+        id, member.name, String(input.amountCents), input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+    return { id }
+  }
+
+  /** Recettes par mois sur douze mois, pour le graphique de comptabilite. */
+  revenueByMonth(): Array<{ month: string; cents: number }> {
+    return this.sql.exec<{ month: string; cents: number }>(
+      `SELECT strftime('%Y-%m', paid_at) AS month, SUM(amount_cents) AS cents
+         FROM payments
+        WHERE paid_at >= date('now','-11 months','start of month')
+        GROUP BY month ORDER BY month`,
+    ).toArray()
+  }
+
+  revenueByType(): Array<{ type: string; cents: number }> {
+    return this.sql.exec<{ type: string; cents: number }>(
+      `SELECT type, SUM(amount_cents) AS cents
+         FROM payments
+        WHERE paid_at >= date('now','start of month')
+        GROUP BY type`,
+    ).toArray()
+  }
+
+  // Alertes ----------------------------------------------------------------
+
+  /**
+   * Etat de conformite du club, calcule a la volee.
+   *
+   * Pas de table d'alertes a regenerer : la verite est dans les dates
+   * d'echeance, et un calcul direct ne peut pas se desynchroniser.
+   */
+  alerts(): Array<{
+    memberId: string; name: string; phone: string
+    kind: 'sub_expired' | 'sub_expiring' | 'ins_expired' | 'ins_expiring' | 'ins_missing'
+    dueDate: string | null; daysLeft: number | null
+  }> {
+    return this.sql.exec(
+      `SELECT id AS memberId, name, phone,
+              CASE
+                WHEN sub_expiry IS NOT NULL AND sub_expiry <  date('now') THEN 'sub_expired'
+                WHEN sub_expiry IS NOT NULL AND sub_expiry <= date('now','+7 days') THEN 'sub_expiring'
+                WHEN is_insured = 0 THEN 'ins_missing'
+                WHEN ins_expiry IS NOT NULL AND ins_expiry <  date('now') THEN 'ins_expired'
+                ELSE 'ins_expiring'
+              END AS kind,
+              CASE
+                WHEN sub_expiry IS NOT NULL AND sub_expiry <= date('now','+7 days') THEN sub_expiry
+                ELSE ins_expiry
+              END AS dueDate,
+              CAST(julianday(
+                CASE
+                  WHEN sub_expiry IS NOT NULL AND sub_expiry <= date('now','+7 days') THEN sub_expiry
+                  ELSE ins_expiry
+                END
+              ) - julianday(date('now')) AS INTEGER) AS daysLeft
+         FROM members
+        WHERE status = 'active'
+          AND (
+            (sub_expiry IS NOT NULL AND sub_expiry <= date('now','+7 days'))
+            OR is_insured = 0
+            OR (ins_expiry IS NOT NULL AND ins_expiry <= date('now','+30 days'))
+          )
+        ORDER BY dueDate IS NULL DESC, dueDate
+        LIMIT 200`,
+    ).toArray() as never
+  }
+
+  // Passage de grade --------------------------------------------------------
+
+  listGradeSessions(status?: string) {
+    const where = status ? 'WHERE g.status = ?' : ''
+    const params = status ? [status] : []
+    return this.sql.exec(
+      `SELECT g.*, m.name AS member_name, m.phone,
+              f.label AS from_label, t.label AS to_label, t.color AS to_color
+         FROM grade_sessions g
+         JOIN members m ON m.id = g.member_id
+         LEFT JOIN grade_levels f ON f.id = g.from_grade_id
+         LEFT JOIN grade_levels t ON t.id = g.to_grade_id
+         ${where}
+        ORDER BY g.scheduled_date, m.name
+        LIMIT 300`,
+      ...params,
+    ).toArray()
+  }
+
+  /** Membres eligibles : gradables, abonnement a jour, pas deja convoques. */
+  eligibleForGrading() {
+    return this.sql.exec(
+      `SELECT m.id, m.name, m.grade_id,
+              g.label AS current_label, g.rank AS current_rank, m.discipline_id
+         FROM members m
+         JOIN disciplines d ON d.id = m.discipline_id AND d.has_grading = 1
+         LEFT JOIN grade_levels g ON g.id = m.grade_id
+        WHERE m.status = 'active'
+          AND (m.sub_expiry IS NULL OR m.sub_expiry >= date('now'))
+          AND m.join_date <= date('now','-3 months')
+          AND NOT EXISTS (
+            SELECT 1 FROM grade_sessions s
+             WHERE s.member_id = m.id AND s.status = 'pending'
+          )
+        ORDER BY m.name
+        LIMIT 200`,
+    ).toArray()
+  }
+
+  createGradeSession(input: {
+    memberId: string; scheduledDate: string; actorId?: string; actorName?: string
+  }): { id: string } {
+    const id = crypto.randomUUID()
+    const member = this.sql
+      .exec<{ grade_id: string | null; discipline_id: string | null; name: string }>(
+        'SELECT grade_id, discipline_id, name FROM members WHERE id = ?', input.memberId,
+      ).one()
+
+    // Le niveau vise est le suivant sur l'echelle de SA discipline.
+    const next = this.sql.exec<{ id: string }>(
+      `SELECT id FROM grade_levels
+        WHERE discipline_id = ?
+          AND rank > COALESCE((SELECT rank FROM grade_levels WHERE id = ?), -1)
+        ORDER BY rank LIMIT 1`,
+      member.discipline_id, member.grade_id,
+    ).toArray()[0]
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO grade_sessions (id, member_id, from_grade_id, to_grade_id, scheduled_date)
+         VALUES (?, ?, ?, ?, ?)`,
+        id, input.memberId, member.grade_id, next?.id ?? null, input.scheduledDate,
+      )
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, actor_id, actor_name)
+         VALUES ('grade_session_create', 'grade_session', ?, ?, ?, ?)`,
+        id, member.name, input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+    return { id }
+  }
+
+  decideGradeSession(input: {
+    sessionId: string; passed: boolean; notes?: string | null
+    actorId?: string; actorName?: string
+  }): void {
+    const session = this.sql
+      .exec<{ member_id: string; to_grade_id: string | null }>(
+        'SELECT member_id, to_grade_id FROM grade_sessions WHERE id = ?', input.sessionId,
+      ).one()
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE grade_sessions
+            SET status = ?, notes = ?, decided_at = ${NOW}, decided_by = ?
+          WHERE id = ?`,
+        input.passed ? 'passed' : 'failed', input.notes ?? null,
+        input.actorId ?? null, input.sessionId,
+      )
+      // Le grade du membre ne monte qu'en cas de reussite.
+      if (input.passed && session.to_grade_id) {
+        this.sql.exec('UPDATE members SET grade_id = ? WHERE id = ?',
+          session.to_grade_id, session.member_id)
+      }
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, detail, actor_id, actor_name)
+         VALUES ('grade_session_decide', 'grade_session', ?, ?, ?, ?)`,
+        input.sessionId, input.passed ? 'passed' : 'failed',
+        input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+  }
+
+  /** Repartition des membres par niveau, pour le graphique du tableau de bord. */
+  gradeDistribution(): Array<{ label: string; color: string | null; count: number }> {
+    return this.sql.exec<{ label: string; color: string | null; count: number }>(
+      `SELECT g.label, g.color, COUNT(m.id) AS count
+         FROM grade_levels g
+         LEFT JOIN members m ON m.grade_id = g.id AND m.status = 'active'
+        GROUP BY g.id
+        HAVING count > 0
+        ORDER BY g.rank`,
+    ).toArray()
+  }
+
+  // Championnats ------------------------------------------------------------
+
+  listChampionships() {
+    return this.sql.exec(
+      `SELECT c.*, d.name AS discipline_name, b.name AS branch_name,
+              (SELECT COUNT(*) FROM championship_athletes a WHERE a.championship_id = c.id) AS athletes,
+              (SELECT COUNT(*) FROM championship_athletes a
+                WHERE a.championship_id = c.id AND a.place IS NOT NULL) AS medals
+         FROM championships c
+         LEFT JOIN disciplines d ON d.id = c.discipline_id
+         LEFT JOIN branches b    ON b.id = c.branch_id
+        ORDER BY c.event_date DESC
+        LIMIT 200`,
+    ).toArray()
+  }
+
+  createChampionship(input: {
+    name: string; eventDate: string; location?: string | null
+    disciplineId?: string | null; branchId?: string | null
+    actorId?: string; actorName?: string
+  }): { id: string } {
+    const id = crypto.randomUUID()
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO championships (id, name, event_date, location, discipline_id, branch_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        id, input.name, input.eventDate, input.location ?? null,
+        input.disciplineId ?? null, input.branchId ?? null,
+      )
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, actor_id, actor_name)
+         VALUES ('championship_create', 'championship', ?, ?, ?, ?)`,
+        id, input.name, input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+    return { id }
+  }
+
+  championshipAthletes(championshipId: string) {
+    return this.sql.exec(
+      `SELECT a.*, m.name AS member_name, g.label AS grade_label
+         FROM championship_athletes a
+         JOIN members m ON m.id = a.member_id
+         LEFT JOIN grade_levels g ON g.id = m.grade_id
+        WHERE a.championship_id = ?
+        ORDER BY a.place IS NULL, a.place, m.name`,
+      championshipId,
+    ).toArray()
+  }
+
+  addAthlete(input: {
+    championshipId: string; memberId: string
+    category?: string | null; weightClass?: string | null
+  }): { id: string } {
+    const id = crypto.randomUUID()
+    this.sql.exec(
+      `INSERT INTO championship_athletes (id, championship_id, member_id, category, weight_class)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (championship_id, member_id) DO UPDATE SET
+         category = excluded.category, weight_class = excluded.weight_class`,
+      id, input.championshipId, input.memberId,
+      input.category ?? null, input.weightClass ?? null,
+    )
+    return { id }
+  }
+
+  setAthleteResult(athleteId: string, place: number | null, notes?: string | null): void {
+    this.sql.exec(
+      'UPDATE championship_athletes SET place = ?, result_notes = ? WHERE id = ?',
+      place, notes ?? null, athleteId,
+    )
+  }
+
+  // Journal ------------------------------------------------------------------
+
+  auditLog(limit = 100) {
+    return this.sql.exec(
+      `SELECT action, entity, entity_name, detail, actor_name, created_at
+         FROM audit_logs ORDER BY created_at DESC LIMIT ?`,
+      Math.min(Math.max(limit, 1), 300),
+    ).toArray()
+  }
+
   // Agregats -------------------------------------------------------------
 
   /**
@@ -361,6 +783,90 @@ export class ClubDatabase extends DurableObject<Env> {
       lastActivityAt: this.sql
         .exec<{ t: string | null }>('SELECT MAX(created_at) AS t FROM audit_logs')
         .one().t,
+    }
+  }
+
+  /**
+   * Tout ce qu'affiche le tableau de bord, en un aller-retour.
+   *
+   * Douze cartes qui interrogeraient chacune l'objet feraient douze allers
+   * pour un seul ecran ; ici la base est locale au thread, donc autant tout
+   * calculer d'un coup.
+   */
+  dashboard(): {
+    membersTotal: number
+    membersActive: number
+    subsExpiring: number
+    insuranceMissing: number
+    revenueMonthCents: number
+    alertsCount: number
+    growth: Array<{ month: string; total: number }>
+    revenue: Array<{ month: string; cents: number }>
+    grades: Array<{ label: string; color: string | null; count: number }>
+    recentMembers: Array<{ id: string; name: string; join_date: string }>
+    upcomingGrades: Array<{ id: string; member_name: string; scheduled_date: string; to_label: string | null }>
+    branchSplit: Array<{ name: string; count: number }>
+  } {
+    const one = <T extends Record<string, SqlStorageValue>>(sql: string, ...p: unknown[]) =>
+      this.sql.exec<T>(sql, ...p).one()
+
+    return {
+      membersTotal: one<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM members WHERE status != 'archived'").n,
+      membersActive: one<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM members
+          WHERE status = 'active' AND (sub_expiry IS NULL OR sub_expiry >= date('now'))`).n,
+      subsExpiring: one<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM members
+          WHERE status = 'active' AND sub_expiry IS NOT NULL
+            AND sub_expiry BETWEEN date('now') AND date('now','+7 days')`).n,
+      insuranceMissing: one<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM members
+          WHERE status = 'active'
+            AND (is_insured = 0 OR ins_expiry IS NULL OR ins_expiry < date('now'))`).n,
+      revenueMonthCents: one<{ s: number | null }>(
+        "SELECT SUM(amount_cents) AS s FROM payments WHERE paid_at >= date('now','start of month')").s ?? 0,
+      alertsCount: one<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM members
+          WHERE status = 'active'
+            AND ((sub_expiry IS NOT NULL AND sub_expiry <= date('now','+7 days'))
+                 OR is_insured = 0
+                 OR (ins_expiry IS NOT NULL AND ins_expiry <= date('now','+30 days')))`).n,
+
+      // Croissance cumulee : le total des inscrits a la fin de chaque mois.
+      growth: this.sql.exec<{ month: string; total: number }>(
+        `WITH RECURSIVE months(m) AS (
+           SELECT date('now','start of month','-11 months')
+           UNION ALL SELECT date(m,'+1 month') FROM months WHERE m < date('now','start of month')
+         )
+         SELECT strftime('%Y-%m', m) AS month,
+                (SELECT COUNT(*) FROM members
+                  WHERE join_date <= date(m,'+1 month','-1 day') AND status != 'archived') AS total
+           FROM months`).toArray(),
+
+      revenue: this.revenueByMonth(),
+      grades: this.gradeDistribution(),
+
+      recentMembers: this.sql.exec<{ id: string; name: string; join_date: string }>(
+        `SELECT id, name, join_date FROM members
+          WHERE status != 'archived' ORDER BY created_at DESC LIMIT 8`).toArray(),
+
+      upcomingGrades: this.sql.exec<{
+        id: string; member_name: string; scheduled_date: string; to_label: string | null
+      }>(
+        `SELECT g.id, m.name AS member_name, g.scheduled_date, t.label AS to_label
+           FROM grade_sessions g
+           JOIN members m ON m.id = g.member_id
+           LEFT JOIN grade_levels t ON t.id = g.to_grade_id
+          WHERE g.status = 'pending'
+          ORDER BY g.scheduled_date LIMIT 8`).toArray(),
+
+      branchSplit: this.sql.exec<{ name: string; count: number }>(
+        `SELECT b.name, COUNT(m.id) AS count
+           FROM branches b
+           LEFT JOIN members m ON m.branch_id = b.id AND m.status = 'active'
+          WHERE b.is_active = 1
+          GROUP BY b.id ORDER BY count DESC`).toArray(),
     }
   }
 

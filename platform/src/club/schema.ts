@@ -168,4 +168,58 @@ export const MIGRATIONS: Migration[] = [
   },
 ]
 
+MIGRATIONS.push({
+  version: 2,
+  name: 'grades-et-championnats',
+  statements: [
+    // Passage de grade.
+    // La cible est un niveau de l'echelle du club, pas un entier fige :
+    // chaque club a la sienne, y compris aucune.
+    `CREATE TABLE IF NOT EXISTS grade_sessions (
+       id             TEXT PRIMARY KEY,
+       member_id      TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+       from_grade_id  TEXT REFERENCES grade_levels(id) ON DELETE SET NULL,
+       to_grade_id    TEXT REFERENCES grade_levels(id) ON DELETE SET NULL,
+       scheduled_date TEXT NOT NULL,
+       status         TEXT NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending','passed','failed')),
+       notes          TEXT,
+       decided_at     TEXT,
+       decided_by     TEXT,
+       created_at     TEXT NOT NULL DEFAULT (${NOW})
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_grade_sessions_member ON grade_sessions(member_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_grade_sessions_status ON grade_sessions(status, scheduled_date)`,
+
+    // Championnats. Categories et poids sont du texte libre : les
+    // federations ne les decoupent pas de la meme facon d'un sport a l'autre.
+    `CREATE TABLE IF NOT EXISTS championships (
+       id            TEXT PRIMARY KEY,
+       name          TEXT NOT NULL,
+       event_date    TEXT NOT NULL,
+       location      TEXT,
+       discipline_id TEXT REFERENCES disciplines(id) ON DELETE SET NULL,
+       branch_id     TEXT REFERENCES branches(id) ON DELETE SET NULL,
+       status        TEXT NOT NULL DEFAULT 'upcoming'
+                       CHECK (status IN ('upcoming','ongoing','completed','cancelled')),
+       notes         TEXT,
+       created_at    TEXT NOT NULL DEFAULT (${NOW})
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_championships_date ON championships(event_date DESC)`,
+
+    `CREATE TABLE IF NOT EXISTS championship_athletes (
+       id              TEXT PRIMARY KEY,
+       championship_id TEXT NOT NULL REFERENCES championships(id) ON DELETE CASCADE,
+       member_id       TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+       category        TEXT,
+       weight_class    TEXT,
+       place           INTEGER CHECK (place IS NULL OR place BETWEEN 1 AND 3),
+       result_notes    TEXT,
+       added_at        TEXT NOT NULL DEFAULT (${NOW}),
+       UNIQUE (championship_id, member_id)
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_champ_athletes ON championship_athletes(championship_id)`,
+  ],
+})
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

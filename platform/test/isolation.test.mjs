@@ -148,9 +148,10 @@ test('une connexion reussie efface les echecs precedents', async () => {
   const s = uniq()
   const email = `reset-${s}@example.ma`
   const password = 'motdepasse-solide-reset'
-  await client().call('POST', '/api/auth/signup', {
+  const created = await client().call('POST', '/api/auth/signup', {
     clubName: 'Reset', slug: `reset-${s}`, name: 'Reset', email, password,
   })
+  assert.equal(created.status, 201, `inscription refusee : ${JSON.stringify(created.data)}`)
 
   // Quelques echecs, puis une reussite : l'ardoise doit repartir a zero,
   // sinon de vieux echecs continueraient a compter contre un utilisateur

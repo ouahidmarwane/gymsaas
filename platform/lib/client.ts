@@ -99,4 +99,9 @@ export interface CardPlacement {
   visible: boolean
 }
 
-export interface CardSpec { minW: number; maxW: number; minH: number; maxH: number }
+export interface CardSpec {
+  minW: number; maxW: number; minH: number; maxH: number
+  label: string
+  group: string
+  needsGrading?: boolean
+}

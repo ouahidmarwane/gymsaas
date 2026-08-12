@@ -9,7 +9,11 @@ import {
   sessionCookie, clearedCookie, isoSeconds, activeScope,
   beginSupport, allowSupportWrite, setSupportReadOnly, endSupport, type Principal,
 } from './auth/session'
-import { parseLayout, defaultLayout, LayoutError, CARD_REGISTRY, GRID_COLUMNS } from './club/layout'
+import { hashToken } from './auth/crypto'
+import {
+  parseLayout, defaultLayout, LayoutError, GRID_COLUMNS,
+  isPageKey, cardsFor, layoutKey,
+} from './club/layout'
 import {
   parseTheme, readTheme, logoKey, logoExtension, isOwnLogoKey, BrandingError,
 } from './club/branding'
@@ -427,10 +431,138 @@ export const api = {
         atLeast(principal, 'viewer')
         const club = clubOf(env, principal)
         const { hasGrading } = await club.capabilities()
-        if (!hasGrading) {
-          return fail(409, 'Aucune discipline gradee dans ce club')
+        if (!hasGrading) return fail(409, 'Aucune discipline gradee dans ce club')
+        const [sessions, eligible] = await Promise.all([
+          club.listGradeSessions(),
+          club.eligibleForGrading(),
+        ])
+        return json({ sessions, eligible })
+      }
+
+      if (path === '/api/grades/sessions' && method === 'POST') {
+        atLeast(principal, 'staff', true)
+        const body = await readJson(request)
+        const { id } = await clubOf(env, principal).createGradeSession({
+          memberId: str(body.memberId, 'memberId', 60),
+          scheduledDate: str(body.scheduledDate, 'scheduledDate', 10),
+          actorId: principal.userId, actorName: principal.name,
+        })
+        return json({ id }, { status: 201 })
+      }
+
+      const gradeDecide = path.match(/^\/api\/grades\/sessions\/([^/]+)\/decision$/)
+      if (gradeDecide && method === 'POST') {
+        atLeast(principal, 'staff', true)
+        const body = await readJson(request)
+        await clubOf(env, principal).decideGradeSession({
+          sessionId: gradeDecide[1]!,
+          passed: body.passed === true,
+          notes: optional(body.notes, 500),
+          actorId: principal.userId, actorName: principal.name,
+        })
+        return json({ ok: true })
+      }
+
+      // Alertes : calculees a la volee depuis les echeances, jamais stockees.
+      if (path === '/api/alerts' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        return json({ alerts: await clubOf(env, principal).alerts() })
+      }
+
+      // Comptabilite -----------------------------------------------------
+
+      if (path === '/api/payments' && method === 'GET') {
+        atLeast(principal, 'admin')
+        const club = clubOf(env, principal)
+        const year = url.searchParams.get('year')
+        const month = url.searchParams.get('month')
+        const [payments, byMonth, byType] = await Promise.all([
+          club.listPayments({
+            year: year ? Number(year) : undefined,
+            month: month ? Number(month) : undefined,
+          }),
+          club.revenueByMonth(),
+          club.revenueByType(),
+        ])
+        return json({ payments, byMonth, byType })
+      }
+
+      if (path === '/api/payments' && method === 'POST') {
+        atLeast(principal, 'staff', true)
+        const body = await readJson(request)
+        const amount = Number(body.amountCents)
+        if (!Number.isFinite(amount) || amount < 0 || amount > 100_000_000) {
+          throw new HttpError(400, 'Montant invalide')
         }
-        return json({ sessions: [] })
+        const type = str(body.type, 'type', 20)
+        if (!['monthly', 'insurance', 'registration', 'other'].includes(type)) {
+          throw new HttpError(400, 'Type de paiement inconnu')
+        }
+        const { id } = await clubOf(env, principal).addPayment({
+          memberId: str(body.memberId, 'memberId', 60),
+          amountCents: Math.round(amount),
+          type,
+          paidAt: optional(body.paidAt, 10) ?? undefined,
+          notes: optional(body.notes, 300),
+          actorId: principal.userId, actorName: principal.name,
+        })
+        return json({ id }, { status: 201 })
+      }
+
+      // Championnats -----------------------------------------------------
+
+      if (path === '/api/championships' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        return json({ championships: await clubOf(env, principal).listChampionships() })
+      }
+
+      if (path === '/api/championships' && method === 'POST') {
+        atLeast(principal, 'staff', true)
+        const body = await readJson(request)
+        const { id } = await clubOf(env, principal).createChampionship({
+          name: str(body.name, 'name', 160),
+          eventDate: str(body.eventDate, 'eventDate', 10),
+          location: optional(body.location, 160),
+          disciplineId: optional(body.disciplineId, 60),
+          branchId: optional(body.branchId, 60),
+          actorId: principal.userId, actorName: principal.name,
+        })
+        return json({ id }, { status: 201 })
+      }
+
+      const champAthletes = path.match(/^\/api\/championships\/([^/]+)\/athletes$/)
+      if (champAthletes && (method === 'GET' || method === 'POST')) {
+        const club = clubOf(env, principal)
+        if (method === 'GET') {
+          atLeast(principal, 'viewer')
+          return json({ athletes: await club.championshipAthletes(champAthletes[1]!) })
+        }
+        atLeast(principal, 'staff', true)
+        const body = await readJson(request)
+        const { id } = await club.addAthlete({
+          championshipId: champAthletes[1]!,
+          memberId: str(body.memberId, 'memberId', 60),
+          category: optional(body.category, 80),
+          weightClass: optional(body.weightClass, 40),
+        })
+        return json({ id }, { status: 201 })
+      }
+
+      const athleteResult = path.match(/^\/api\/championships\/athletes\/([^/]+)\/result$/)
+      if (athleteResult && method === 'POST') {
+        atLeast(principal, 'staff', true)
+        const body = await readJson(request)
+        const place = body.place === null || body.place === undefined ? null : Number(body.place)
+        if (place !== null && ![1, 2, 3].includes(place)) throw new HttpError(400, 'Place invalide')
+        await clubOf(env, principal).setAthleteResult(athleteResult[1]!, place, optional(body.notes, 300))
+        return json({ ok: true })
+      }
+
+      // Journal du club ---------------------------------------------------
+
+      if (path === '/api/audit' && method === 'GET') {
+        atLeast(principal, 'admin')
+        return json({ entries: await clubOf(env, principal).auditLog(150) })
       }
 
       // Marque du club : nom affiche, logo, couleur.
@@ -528,39 +660,63 @@ export const api = {
       // club visite : la portee suit la session, comme partout ailleurs.
       if (path === '/api/dashboard/stats' && method === 'GET') {
         atLeast(principal, 'viewer')
-        return json({ stats: await clubOf(env, principal).stats() })
+        // Un seul aller-retour pour les douze cartes : la base est locale au
+        // thread de l'objet, autant tout calculer d'un coup.
+        return json({ stats: await clubOf(env, principal).dashboard() })
       }
 
-      if (path === '/api/dashboard/layout' && method === 'GET') {
-        atLeast(principal, 'viewer')
-        const stored = await clubOf(env, principal).getSetting('dashboard_layout')
-        // Une disposition enregistree est revalidee a la lecture : si le
-        // registre des cartes a change depuis, elle est ramenee a un etat
-        // coherent au lieu de casser la page.
-        let layout
-        try {
-          layout = stored ? parseLayout(stored) : defaultLayout()
-        } catch {
-          layout = defaultLayout()
+      // Disposition, par ecran. Chaque page a son catalogue et sa mise en
+      // page : le mode modification n'est plus reserve au tableau de bord.
+      const layoutRoute = path.match(/^\/api\/layout\/([a-z]+)$/)
+      if (layoutRoute) {
+        const page = layoutRoute[1]!
+        if (!isPageKey(page)) return fail(404, 'Ecran inconnu')
+
+        const club = clubOf(env, principal)
+
+        if (method === 'GET') {
+          atLeast(principal, 'viewer')
+          const stored = await club.getSetting(layoutKey(page))
+          // Une disposition enregistree est revalidee a la lecture : si le
+          // catalogue a change depuis, elle est ramenee a un etat coherent
+          // plutot que de casser la page.
+          let layout
+          try {
+            layout = stored ? parseLayout(page, stored) : defaultLayout(page)
+          } catch {
+            layout = defaultLayout(page)
+          }
+
+          // Un club sans grade ne se voit pas proposer les cartes de grade,
+          // ni dans la grille ni dans le catalogue.
+          const { hasGrading } = await club.capabilities()
+          const catalogue = Object.fromEntries(
+            Object.entries(cardsFor(page)).filter(([, spec]) => hasGrading || !spec.needsGrading),
+          )
+          return json({
+            page,
+            layout: layout.filter(c => catalogue[c.id]),
+            columns: GRID_COLUMNS,
+            cards: catalogue,
+          })
         }
-        return json({ layout, columns: GRID_COLUMNS, cards: CARD_REGISTRY })
-      }
 
-      if (path === '/api/dashboard/layout' && method === 'PUT') {
-        atLeast(principal, 'admin', true)
-        const body = await readJson(request)
-        const layout = parseLayout(body.layout)
-        await clubOf(env, principal).setSetting('dashboard_layout', layout)
-        if (activeScope(principal).mode === 'support') {
-          await auditSupport(env, principal, 'support_write_layout', { cards: layout.length }, ip)
+        if (method === 'PUT') {
+          atLeast(principal, 'admin', true)
+          const body = await readJson(request)
+          const layout = parseLayout(page, body.layout)
+          await club.setSetting(layoutKey(page), layout)
+          if (activeScope(principal).mode === 'support') {
+            await auditSupport(env, principal, 'support_write_layout', { page, cards: layout.length }, ip)
+          }
+          return json({ layout })
         }
-        return json({ layout })
-      }
 
-      if (path === '/api/dashboard/layout' && method === 'DELETE') {
-        atLeast(principal, 'admin', true)
-        await clubOf(env, principal).setSetting('dashboard_layout', defaultLayout())
-        return json({ layout: defaultLayout() })
+        if (method === 'DELETE') {
+          atLeast(principal, 'admin', true)
+          await club.setSetting(layoutKey(page), defaultLayout(page))
+          return json({ layout: defaultLayout(page) })
+        }
       }
 
       // Le club voit qui, cote plateforme, a ouvert sa base et quand.
@@ -610,6 +766,179 @@ export const api = {
           actorName: principal.name,
         })
         return json({ id }, { status: 201 })
+      }
+
+      const memberRoute = path.match(/^\/api\/members\/([^/]+)$/)
+      if (memberRoute && (method === 'PATCH' || method === 'DELETE')) {
+        atLeast(principal, 'staff', true)
+        const club = clubOf(env, principal)
+        if (method === 'DELETE') {
+          // Archive, jamais supprime : les encaissements doivent rester
+          // rattaches a quelqu'un.
+          await club.archiveMember(memberRoute[1]!, { id: principal.userId, name: principal.name })
+          return json({ ok: true })
+        }
+        const body = await readJson(request)
+        await club.updateMember(memberRoute[1]!, {
+          name: optional(body.name, 200) ?? undefined,
+          phone: optional(body.phone, 30) ?? undefined,
+          email: optional(body.email, 200),
+          branchId: optional(body.branchId, 60),
+          disciplineId: optional(body.disciplineId, 60),
+          gradeId: optional(body.gradeId, 60),
+          subExpiry: optional(body.subExpiry, 10),
+          insExpiry: optional(body.insExpiry, 10),
+          isInsured: typeof body.isInsured === 'boolean' ? body.isInsured : undefined,
+          notes: optional(body.notes, 1000),
+          actorId: principal.userId, actorName: principal.name,
+        })
+        return json({ ok: true })
+      }
+
+      const renewRoute = path.match(/^\/api\/members\/([^/]+)\/renew$/)
+      if (renewRoute && method === 'POST') {
+        atLeast(principal, 'staff', true)
+        const body = await readJson(request)
+        const amount = Number(body.amountCents ?? 0)
+        if (!Number.isFinite(amount) || amount < 0 || amount > 100_000_000) {
+          throw new HttpError(400, 'Montant invalide')
+        }
+        const result = await clubOf(env, principal).renewSubscription({
+          memberId: renewRoute[1]!,
+          amountCents: Math.round(amount),
+          actorId: principal.userId, actorName: principal.name,
+        })
+        return json(result)
+      }
+
+      // Equipe du club ----------------------------------------------------
+      //
+      // Les comptes vivent dans le plan de controle, pas dans le club : c'est
+      // la meme identite qui peut servir dans plusieurs clubs.
+
+      if (path === '/api/staff' && method === 'GET') {
+        atLeast(principal, 'admin')
+        const { results } = await env.CONTROL.prepare(
+          `SELECT m.id AS membership_id, m.role, m.status, m.created_at,
+                  u.id AS user_id, u.name, u.email, u.last_login_at
+             FROM memberships m
+             JOIN users u ON u.id = m.user_id
+            WHERE m.org_id = ?
+            ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1
+                                 WHEN 'staff' THEN 2 ELSE 3 END, u.name`,
+        ).bind(scopedOrgId(principal)).all()
+        return json({ staff: results })
+      }
+
+      if (path === '/api/staff' && method === 'POST') {
+        atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        const body = await readJson(request)
+
+        const name = str(body.name, 'name', 120)
+        const email = normEmail(str(body.email, 'email', 200))
+        const password = str(body.password, 'password', 200)
+        const role = str(body.role, 'role', 20)
+        if (!EMAIL.test(email)) throw new HttpError(400, 'Adresse e-mail invalide')
+        if (password.length < 10) throw new HttpError(400, 'Mot de passe : 10 caracteres minimum')
+        // On ne cree jamais un proprietaire : il n'y en a qu'un, celui qui a
+        // recu le club.
+        if (!['admin', 'staff', 'viewer'].includes(role)) throw new HttpError(400, 'Role inconnu')
+
+        const existing = await env.CONTROL.prepare(
+          'SELECT id FROM users WHERE email_norm = ?',
+        ).bind(email).first<{ id: string }>()
+
+        const userId = existing?.id ?? newId()
+        const statements = []
+        if (!existing) {
+          statements.push(env.CONTROL.prepare(
+            'INSERT INTO users (id, email, email_norm, name, password_hash) VALUES (?, ?, ?, ?, ?)',
+          ).bind(userId, email, email, name, await hashPassword(password)))
+        }
+        statements.push(env.CONTROL.prepare(
+          `INSERT INTO memberships (id, user_id, org_id, role) VALUES (?, ?, ?, ?)
+           ON CONFLICT (user_id, org_id) DO UPDATE SET role = excluded.role, status = 'active'`,
+        ).bind(newId(), userId, orgId, role))
+
+        await env.CONTROL.batch(statements)
+        return json({ userId, existed: Boolean(existing) }, { status: 201 })
+      }
+
+      const staffRoute = path.match(/^\/api\/staff\/([^/]+)$/)
+      if (staffRoute && (method === 'PATCH' || method === 'DELETE')) {
+        atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        const membershipId = staffRoute[1]!
+
+        const target = await env.CONTROL.prepare(
+          'SELECT user_id, role FROM memberships WHERE id = ? AND org_id = ?',
+        ).bind(membershipId, orgId).first<{ user_id: string; role: string }>()
+        if (!target) return fail(404, 'Compte introuvable dans ce club')
+
+        // Garde-fous : on ne se retire pas soi-meme, et le proprietaire ne se
+        // revoque pas — sinon le club se retrouve sans personne aux commandes.
+        if (target.user_id === principal.userId) {
+          return fail(400, 'Vous ne pouvez pas modifier votre propre acces ici')
+        }
+        if (target.role === 'owner') return fail(400, 'Le proprietaire ne peut pas etre modifie')
+
+        if (method === 'DELETE') {
+          await env.CONTROL.batch([
+            env.CONTROL.prepare("UPDATE memberships SET status = 'revoked' WHERE id = ?").bind(membershipId),
+            env.CONTROL.prepare('DELETE FROM sessions WHERE user_id = ? AND org_id = ?')
+              .bind(target.user_id, orgId),
+          ])
+          return json({ ok: true })
+        }
+
+        const body = await readJson(request)
+        const role = str(body.role, 'role', 20)
+        if (!['admin', 'staff', 'viewer'].includes(role)) throw new HttpError(400, 'Role inconnu')
+        await env.CONTROL.prepare('UPDATE memberships SET role = ? WHERE id = ?')
+          .bind(role, membershipId).run()
+        return json({ ok: true })
+      }
+
+      // Mon compte ---------------------------------------------------------
+
+      if (path === '/api/account/password' && method === 'POST') {
+        const body = await readJson(request)
+        const current = str(body.currentPassword, 'currentPassword', 200)
+        const next = str(body.newPassword, 'newPassword', 200)
+        if (next.length < 10) throw new HttpError(400, 'Mot de passe : 10 caracteres minimum')
+
+        const row = await env.CONTROL.prepare('SELECT password_hash FROM users WHERE id = ?')
+          .bind(principal.userId).first<{ password_hash: string }>()
+        if (!row || !(await verifyPassword(current, row.password_hash))) {
+          return fail(401, 'Mot de passe actuel incorrect')
+        }
+
+        await env.CONTROL.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+          .bind(await hashPassword(next), principal.userId).run()
+        // Toutes les autres sessions tombent : un changement de mot de passe
+        // doit chasser qui serait deja connecte ailleurs.
+        await env.CONTROL.prepare(
+          'DELETE FROM sessions WHERE user_id = ? AND token_hash != ?',
+        ).bind(principal.userId, await hashToken(token!)).run()
+        return json({ ok: true })
+      }
+
+      if (path === '/api/account' && method === 'PATCH') {
+        const body = await readJson(request)
+        const name = optional(body.name, 120)
+        if (!name) throw new HttpError(400, 'Nom requis')
+        await env.CONTROL.prepare('UPDATE users SET name = ? WHERE id = ?')
+          .bind(name, principal.userId).run()
+        return json({ ok: true })
+      }
+
+      if (path === '/api/account/sessions' && method === 'GET') {
+        const { results } = await env.CONTROL.prepare(
+          `SELECT created_at, last_seen_at, ip, user_agent, support_org_id
+             FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC LIMIT 20`,
+        ).bind(principal.userId).all()
+        return json({ sessions: results })
       }
 
       // Plateforme (superadmin) ------------------------------------------
@@ -943,7 +1272,10 @@ async function signup(request: Request, env: Env, ip: string | null): Promise<Re
   // un oracle d'existence de compte, et sans plafond il se parcourt a
   // volonte. Le plafond ne le supprime pas — il faudra une confirmation par
   // e-mail pour cela — mais il le ramene au meme rythme que la connexion.
-  if (await throttled(env, `signup:${ip ?? 'inconnu'}`, ip)) {
+  //
+  // Uniquement quand l'adresse est connue : sans elle, un compteur commun
+  // ferait d'un plafond individuel un verrou global qui bloque tout le monde.
+  if (ip && await throttled(env, `signup:${ip}`, ip)) {
     return fail(429, 'Trop de tentatives. Reessayez dans quelques minutes.')
   }
 
@@ -964,7 +1296,7 @@ async function signup(request: Request, env: Env, ip: string | null): Promise<Re
   if (existing) {
     // Une tentative comptabilisee : l'enumeration coute alors le meme prix
     // qu'une attaque de mot de passe, et se heurte au meme plafond.
-    await recordAttempt(env, `signup:${ip ?? 'inconnu'}`, ip, false)
+    if (ip) await recordAttempt(env, `signup:${ip}`, ip, false)
     throw new HttpError(409, 'Un compte existe deja pour cette adresse')
   }
 

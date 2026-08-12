@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { GripVertical, X, Plus } from 'lucide-react'
+import { GripVertical, X, Plus, Check } from 'lucide-react'
 import type { CardPlacement, CardSpec } from '@/lib/client'
 import { COLUMNS, moveCard, resizeCard, rows } from '@/lib/grid'
 
@@ -56,6 +56,16 @@ export default function DashboardGrid({
   const visible = preview.filter(c => c.visible)
   const hidden = preview.filter(c => !c.visible)
   const rowCount = Math.max(rows(preview), 1)
+
+  // Catalogue groupe par famille, dans l'ordre ou les groupes apparaissent.
+  const catalogue = useMemo(() => {
+    const groups: Record<string, string[]> = {}
+    for (const [id, spec] of Object.entries(specs)) {
+      const group = spec.group ?? 'Elements'
+      ;(groups[group] ??= []).push(id)
+    }
+    return groups
+  }, [specs])
 
   const metrics = useCallback(() => {
     const width = gridRef.current?.clientWidth ?? 0
@@ -314,9 +324,11 @@ export default function DashboardGrid({
         })}
       </div>
 
-      {/* Palette : les cartes disponibles, a poser sur la grille.
-          Un panneau lateral plutot qu'un tiroir en bas — on garde la grille
-          et le catalogue dans le meme champ de vision pendant qu'on compose. */}
+      {/* Catalogue des elements, a poser sur la grille.
+          Un panneau lateral plutot qu'un tiroir en bas : on garde la grille
+          et le catalogue dans le meme champ de vision pendant qu'on compose.
+          Groupe par famille, et les elements deja poses restent visibles mais
+          desactives — sinon on cherche pourquoi une carte a disparu. */}
       {editing && (
         <aside className="gf-palette" aria-label="Elements disponibles">
           <div className="gf-palette-head">
@@ -324,32 +336,42 @@ export default function DashboardGrid({
             <span className="gf-palette-count">{hidden.length}</span>
           </div>
 
-          {hidden.length === 0 ? (
-            <p className="gf-palette-empty">
-              Toutes les cartes sont sur le tableau. Masquez-en une avec la croix
-              pour la retrouver ici.
-            </p>
-          ) : (
-            <div className="gf-palette-items">
-              {hidden.map(card => (
-                <button
-                  key={card.id}
-                  type="button"
-                  className="gf-palette-item"
-                  title={`Glisser ${labelFor(card.id)} sur le tableau, ou cliquer pour l'ajouter`}
-                  onPointerDown={e => addFromPalette(e, card.id)}
-                  onClick={() => onChange(moveCard(
-                    layout.map(c => (c.id === card.id ? { ...c, visible: true } : c)),
-                    card.id, 0, 999,
-                  ))}
-                >
-                  <GripVertical size={13} strokeWidth={2.2} className="gf-palette-grip" />
-                  <span className="gf-palette-label">{labelFor(card.id)}</span>
-                  <Plus size={13} strokeWidth={2.4} className="gf-palette-plus" />
-                </button>
-              ))}
+          {Object.entries(catalogue).map(([group, ids]) => (
+            <div key={group} className="gf-palette-group">
+              <span className="gf-palette-group-name">{group}</span>
+              <div className="gf-palette-items">
+                {ids.map(id => {
+                  const placed = visible.some(c => c.id === id)
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className="gf-palette-item"
+                      data-placed={placed || undefined}
+                      disabled={placed}
+                      title={placed
+                        ? `${labelFor(id)} est deja sur l'ecran`
+                        : `Glisser ${labelFor(id)} sur l'ecran, ou cliquer pour l'ajouter`}
+                      onPointerDown={e => { if (!placed) addFromPalette(e, id) }}
+                      onClick={() => {
+                        if (placed) return
+                        onChange(moveCard(
+                          layout.map(c => (c.id === id ? { ...c, visible: true } : c)),
+                          id, 0, 999,
+                        ))
+                      }}
+                    >
+                      <GripVertical size={13} strokeWidth={2.2} className="gf-palette-grip" />
+                      <span className="gf-palette-label">{labelFor(id)}</span>
+                      {placed
+                        ? <Check size={13} strokeWidth={2.4} className="gf-palette-placed" />
+                        : <Plus size={13} strokeWidth={2.4} className="gf-palette-plus" />}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-          )}
+          ))}
         </aside>
       )}
     </>

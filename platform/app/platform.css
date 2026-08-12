@@ -303,3 +303,40 @@
   padding: 0; margin: -1px; overflow: hidden;
   clip-path: inset(50%); white-space: nowrap;
 }
+
+/* Catalogue groupe : les familles rendent la liste lisible des qu'elle
+   depasse une poignee d'elements. */
+.gf-palette-group { display: flex; flex-direction: column; gap: 6px; }
+.gf-palette-group-name {
+  font-size: 0.6rem; font-weight: 700; color: var(--muted);
+  letter-spacing: 0.14em; text-transform: uppercase;
+  opacity: 0.75;
+}
+
+/* Un element deja pose reste visible mais eteint : le faire disparaitre
+   laissait chercher pourquoi la liste avait change. */
+.gf-palette-item[data-placed] {
+  opacity: 0.45;
+  cursor: default;
+  border-style: dashed;
+}
+.gf-palette-item[data-placed]:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: none;
+}
+.gf-palette-placed { color: var(--muted); flex: none; }
+
+/* Le mode modification n'a pas de sens sur telephone : les poignees y sont
+   masquees. On masque aussi le bouton, plutot que d'ouvrir une impasse. */
+@media (max-width: 900px) {
+  .gf-editbar, .gf-palette { display: none; }
+}
+
+/* Reduction des animations : exige par le systeme visuel, absent ici. */
+@media (prefers-reduced-motion: reduce) {
+  .gf-cell, .gf-ghost, .gf-palette-item, .admin-club-card {
+    transition: none !important;
+  }
+  .gf-palette { animation: none !important; }
+}

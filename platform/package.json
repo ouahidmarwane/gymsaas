@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:apply:local": "wrangler d1 execute gymflow-control --local --file=./src/control-plane/schema.sql",
     "db:apply:remote": "wrangler d1 execute gymflow-control --remote --file=./src/control-plane/schema.sql",
-    "test": "node --test test/isolation.test.mjs test/superadmin.test.mjs test/provisioning.test.mjs test/support-mode.test.mjs test/layout.test.mjs test/screens.test.mjs test/supervision.test.mjs test/capabilities.test.mjs"
+    "test": "node --test --test-concurrency=1 test/isolation.test.mjs test/superadmin.test.mjs test/provisioning.test.mjs test/support-mode.test.mjs test/layout.test.mjs test/screens.test.mjs test/supervision.test.mjs test/capabilities.test.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260812.1",

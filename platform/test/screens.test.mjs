@@ -67,14 +67,14 @@ test('toutes les routes de navigation repondent', async () => {
 test('le tableau de bord dispose de tout ce qu il consomme', async () => {
   // La page emet ces quatre appels au montage ; s'ils divergent, l'ecran
   // reste vide sans qu'aucun test d'API ne bronche.
-  for (const path of ['/api/me', '/api/dashboard/layout', '/api/dashboard/stats', '/api/setup/status']) {
+  for (const path of ['/api/me', '/api/layout/dashboard', '/api/dashboard/stats', '/api/setup/status']) {
     const res = await owner.call('GET', path)
     assert.equal(res.status, 200, `${path} a repondu ${res.status}`)
   }
 })
 
 test('la disposition arrive avec le registre des cartes', async () => {
-  const res = await owner.call('GET', '/api/dashboard/layout')
+  const res = await owner.call('GET', '/api/layout/dashboard')
   assert.equal(res.data.columns, 12)
   assert.ok(res.data.layout.length > 0)
   // L'interface lit les bornes dans la reponse plutot que de les coder en dur.
@@ -84,11 +84,22 @@ test('la disposition arrive avec le registre des cartes', async () => {
 })
 
 test('les chiffres du tableau de bord ont la forme attendue', async () => {
+  // Les douze cartes se servent dans cette reponse : si un champ disparait,
+  // la carte correspondante se vide sans qu'aucun test d'API ne bronche.
   const res = await owner.call('GET', '/api/dashboard/stats')
   const s = res.data.stats
-  for (const key of ['memberCount', 'activeSubs', 'revenueMonthCents']) {
+
+  for (const key of ['membersTotal', 'membersActive', 'subsExpiring',
+                     'insuranceMissing', 'revenueMonthCents', 'alertsCount']) {
     assert.equal(typeof s[key], 'number', `${key} devrait etre un nombre`)
   }
+  for (const key of ['growth', 'revenue', 'grades', 'recentMembers',
+                     'upcomingGrades', 'branchSplit']) {
+    assert.ok(Array.isArray(s[key]), `${key} devrait etre une liste`)
+  }
+  // La croissance couvre douze mois, meme sans donnees : une courbe a un
+  // seul point ne se trace pas.
+  assert.equal(s.growth.length, 12, 'douze mois de croissance attendus')
 })
 
 test('la supervision renvoie ce que la liste affiche', async () => {
@@ -120,9 +131,9 @@ test('entrer dans un club puis en sortir depuis l interface', async () => {
   assert.ok(me.data.branding?.name, 'la banniere doit pouvoir nommer le club')
 
   // La disposition du club est modifiable depuis le support.
-  const layout = await operator.call('GET', '/api/dashboard/layout')
+  const layout = await operator.call('GET', '/api/layout/dashboard')
   assert.equal(layout.status, 200)
-  const saved = await operator.call('PUT', '/api/dashboard/layout', { layout: layout.data.layout })
+  const saved = await operator.call('PUT', '/api/layout/dashboard', { layout: layout.data.layout })
   assert.equal(saved.status, 200, 'le support doit pouvoir enregistrer la disposition')
 
   assert.equal((await operator.call('DELETE', '/api/admin/support')).status, 200)

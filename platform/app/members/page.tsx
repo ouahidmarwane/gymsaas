@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Search, X } from 'lucide-react'
 import { api, ApiError, type Me } from '@/lib/client'
+import EditablePage from '@/components/EditablePage'
+import PageState from '@/components/PageState'
 
 interface Member {
   id: string
@@ -59,31 +61,20 @@ export default function MembersPage() {
   }, [members, search])
 
   return (
-    <div className="dashboard-shell">
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-        <div>
-          <h1 className="dz-hello">Membres</h1>
-          <p className="dz-sub">
-            {members ? `${members.length} membre${members.length > 1 ? 's' : ''}` : 'Chargement…'}
-          </p>
-        </div>
-        {canWrite && (
-          <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
-                  onClick={() => setAdding(true)}>
-            <Plus size={15} strokeWidth={2.4} /> Ajouter
-          </button>
-        )}
-      </div>
+    <EditablePage
+      page="members"
+      me={me}
+      title="Membres"
+      subtitle={members ? `${members.length} membre${members.length > 1 ? 's' : ''}` : 'Chargement…'}
+      actions={canWrite ? (
+        <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
+                onClick={() => setAdding(true)}>
+          <Plus size={15} strokeWidth={2.4} /> Ajouter
+        </button>
+      ) : undefined}
+    >
 
-      <div aria-live="polite">
-        {error && (
-          <p role="alert" style={{
-            padding: '0.7rem 1rem', borderRadius: 14,
-            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
-            color: '#fca5a5', fontSize: '0.85rem', fontWeight: 600,
-          }}>{error}</p>
-        )}
-      </div>
+      <PageState error={error} onRetry={() => { setError(null); reload().catch(() => {}) }} />
 
       <div style={{ position: 'relative', maxWidth: 380 }}>
         <Search size={15} strokeWidth={2.2} style={{
@@ -181,10 +172,10 @@ export default function MembersPage() {
           branches={branches}
           disciplines={disciplines}
           onClose={() => setAdding(false)}
-          onSaved={() => { setAdding(false); reload() }}
+          onSaved={() => { setAdding(false); reload().catch(() => {}) }}
         />
       )}
-    </div>
+    </EditablePage>
   )
 }
 
