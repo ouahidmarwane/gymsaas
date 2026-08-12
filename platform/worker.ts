@@ -6,7 +6,9 @@
 // is exported from the worker ». On enveloppe donc la sortie d'OpenNext pour
 // y adjoindre la classe et la tache planifiee.
 //
-// @ts-expect-error genere au build par opennextjs-cloudflare
+// Genere au build par opennextjs-cloudflare : absent avant le premier build,
+// present ensuite. tsc le resout donc parfois, jamais dans un arbre propre.
+// @ts-ignore
 import openNextHandler from './.open-next/worker.js'
 import { ClubDatabase } from './src/club/club-database'
 import { refreshAllStats } from './src/api'

@@ -1,0 +1,124 @@
+/* Grille du tableau de bord.
+   Les cartes se rangent sur 12 colonnes ; rien ne se positionne au pixel.
+   Un canvas libre casserait l'affichage telephone et lutterait contre le RTL. */
+
+.grid {
+  display: grid;
+  position: relative;
+  touch-action: manipulation;
+}
+
+.grid[data-editing] {
+  /* Trame discrete : elle dit "ca s'aligne" sans meubler l'ecran. */
+  background-image:
+    linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+  background-size: 100% 100px;
+  border-radius: var(--radius-lg);
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: box-shadow var(--base) var(--ease), border-color var(--fast) var(--ease);
+}
+
+.grid[data-editing] .cell {
+  border-style: dashed;
+  border-color: var(--line-2);
+}
+.grid[data-editing] .cell:hover { border-color: var(--primary); }
+
+/* Seule la carte saisie s'eleve, et uniquement via l'ombre : animer la
+   position en grille declencherait un reflow a chaque image. */
+.cell[data-dragging] {
+  z-index: var(--z-drag);
+  box-shadow: var(--shadow-3);
+  border-style: solid;
+  border-color: var(--primary);
+  opacity: 0.92;
+}
+
+.ghost {
+  border: 2px dashed var(--primary);
+  border-radius: var(--radius-lg);
+  background: var(--primary-soft);
+  pointer-events: none;
+}
+
+.body { flex: 1; min-height: 0; padding: 0.875rem 1rem; overflow: hidden; }
+
+/* Chrome d'edition ------------------------------------------------------ */
+
+.chrome {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.25rem 0.375rem;
+  background: var(--panel);
+  border-block-end: 1px solid var(--line);
+}
+
+.handle {
+  display: grid; place-items: center;
+  width: 1.75rem; height: 1.5rem;
+  border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--ink-3);
+  cursor: grab;
+  touch-action: none;   /* sinon le navigateur fait defiler la page */
+}
+.handle:hover { background: var(--raised); color: var(--ink); }
+.handle:active { cursor: grabbing; }
+
+.hide {
+  width: 1.5rem; height: 1.5rem;
+  display: grid; place-items: center;
+  border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--ink-3);
+  font-size: 1rem; line-height: 1;
+  cursor: pointer;
+}
+.hide:hover { background: var(--danger-soft); color: var(--danger); }
+
+.resize {
+  position: absolute;
+  inset-block-end: 0; inset-inline-end: 0;
+  width: 1rem; height: 1rem;
+  cursor: nwse-resize;
+  touch-action: none;
+  background:
+    linear-gradient(-45deg, transparent 45%, var(--ink-3) 45%, var(--ink-3) 55%, transparent 55%);
+}
+:global([dir='rtl']) .resize { cursor: nesw-resize; transform: scaleX(-1); }
+.resize:hover { background:
+  linear-gradient(-45deg, transparent 45%, var(--primary) 45%, var(--primary) 55%, transparent 55%); }
+
+/* Tiroir des cartes masquees -------------------------------------------- */
+
+.tray {
+  margin-block-start: 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-lg);
+  display: flex; flex-direction: column; gap: 0.625rem;
+}
+.trayLabel { font-size: 0.8125rem; font-weight: 550; color: var(--ink-2); }
+.trayItems { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+
+/* Sur telephone la grille s'empile : une disposition pensee pour un ecran
+   large n'a pas de sens tenue d'une main. L'edition reste desktop. */
+@media (max-width: 53.75rem) {
+  .grid {
+    display: flex; flex-direction: column;
+    min-height: 0 !important;
+  }
+  .cell {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    min-height: 6rem;
+  }
+  .resize { display: none; }
+}

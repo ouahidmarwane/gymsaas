@@ -1,0 +1,151 @@
+// Verifie que les ecrans sont reellement servis et que les donnees qu'ils
+// consomment existent. Ce n'est pas un test visuel : il couvre le contrat
+// entre les pages et l'API, la ou une regression casse l'interface sans
+// casser un seul test d'API.
+//
+//   npm run dev      (dans un autre terminal)
+//   node --test test/screens.test.mjs
+import { test, before } from 'node:test'
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8787'
+const WRANGLER = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url))
+
+function client() {
+  let cookie = null
+  return {
+    async call(method, path, body) {
+      const res = await fetch(BASE + path, {
+        method,
+        headers: {
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      const sc = res.headers.get('set-cookie')
+      if (sc) { const raw = sc.split(';')[0]; cookie = raw.endsWith('=') ? null : raw }
+      let data = null
+      if ((res.headers.get('content-type') ?? '').includes('json')) {
+        try { data = await res.json() } catch { /* vide */ }
+      }
+      return { status: res.status, data }
+    },
+  }
+}
+
+function control(sql) {
+  return execFileSync(
+    process.execPath,
+    [WRANGLER, 'd1', 'execute', 'gymflow-control', '--local', '--json', '--command', sql],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: fileURLToPath(new URL('..', import.meta.url)) },
+  )
+}
+
+const uniq = () => Math.random().toString(36).slice(2, 10)
+const page = (path) => fetch(BASE + path).then(async r => ({ status: r.status, html: await r.text() }))
+
+let owner, operator, clubId
+
+before(async () => {
+  assert.equal((await client().call('GET', '/api/health')).status, 200, `App injoignable sur ${BASE}`)
+
+  const c = uniq()
+  owner = client()
+  const created = await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Ecrans', slug: `ecrans-${c}`, name: 'Owner Ecrans',
+    email: `ecrans-${c}@example.ma`, password: 'motdepasse-solide-e1',
+  })
+  assert.equal(created.status, 201, JSON.stringify(created.data))
+  clubId = created.data.orgId
+
+  const o = uniq()
+  const opEmail = `opecrans-${o}@example.ma`
+  const tmp = client()
+  await tmp.call('POST', '/api/auth/signup', {
+    clubName: 'Ops Ecrans', slug: `opsecrans-${o}`, name: 'Ops',
+    email: opEmail, password: 'motdepasse-solide-e2',
+  })
+  control(`UPDATE users SET is_platform_admin = 1 WHERE email_norm = '${opEmail}'`)
+  operator = client()
+  await operator.call('POST', '/api/auth/login', { email: opEmail, password: 'motdepasse-solide-e2' })
+})
+
+test('les trois ecrans sont servis', async () => {
+  for (const path of ['/login', '/dashboard', '/admin']) {
+    const res = await page(path)
+    assert.equal(res.status, 200, `${path} a repondu ${res.status}`)
+    assert.ok(res.html.includes('<html'), `${path} ne renvoie pas de document`)
+  }
+})
+
+test('la connexion est atteignable sans session', async () => {
+  const res = await page('/login')
+  assert.match(res.html, /Connexion/)
+})
+
+test('le tableau de bord dispose de tout ce qu il consomme', async () => {
+  // La page emet ces quatre appels au montage ; s'ils divergent, l'ecran
+  // reste vide sans qu'aucun test d'API ne bronche.
+  for (const path of ['/api/me', '/api/dashboard/layout', '/api/dashboard/stats', '/api/setup/status']) {
+    const res = await owner.call('GET', path)
+    assert.equal(res.status, 200, `${path} a repondu ${res.status}`)
+  }
+})
+
+test('la disposition arrive avec le registre des cartes', async () => {
+  const res = await owner.call('GET', '/api/dashboard/layout')
+  assert.equal(res.data.columns, 12)
+  assert.ok(res.data.layout.length > 0)
+  // L'interface lit les bornes dans la reponse plutot que de les coder en dur.
+  for (const card of res.data.layout) {
+    assert.ok(res.data.cards[card.id], `borne manquante pour ${card.id}`)
+  }
+})
+
+test('les chiffres du tableau de bord ont la forme attendue', async () => {
+  const res = await owner.call('GET', '/api/dashboard/stats')
+  const s = res.data.stats
+  for (const key of ['memberCount', 'activeSubs', 'revenueMonthCents']) {
+    assert.equal(typeof s[key], 'number', `${key} devrait etre un nombre`)
+  }
+})
+
+test('la supervision renvoie ce que la liste affiche', async () => {
+  const res = await operator.call('GET', '/api/admin/overview')
+  assert.equal(res.status, 200)
+  const club = res.data.clubs.find(c => c.id === clubId)
+  assert.ok(club)
+  for (const key of ['name', 'slug', 'plan', 'status', 'theme', 'staff_count']) {
+    assert.ok(key in club, `champ manquant dans la vue d ensemble : ${key}`)
+  }
+  assert.match(club.theme.accent, /^#[0-9a-f]{6}$/i, 'la couleur doit etre exploitable en CSS')
+})
+
+test('la marque renvoie une URL de logo proxifiee, jamais une cle brute', async () => {
+  const res = await owner.call('GET', '/api/branding')
+  assert.equal(res.status, 200)
+  assert.equal(res.data.logoUrl, null, 'aucun logo pose pour l instant')
+  assert.match(res.data.theme.accent, /^#[0-9a-f]{6}$/i)
+})
+
+test('entrer dans un club puis en sortir depuis l interface', async () => {
+  const enter = await operator.call('POST', `/api/admin/clubs/${clubId}/support`)
+  assert.equal(enter.status, 200)
+
+  // La banniere de support lit ces champs : leur absence la rendrait muette.
+  const me = await operator.call('GET', '/api/me')
+  assert.equal(me.data.scope.mode, 'support')
+  assert.equal(me.data.scope.canWrite, false)
+  assert.ok(me.data.branding?.name, 'la banniere doit pouvoir nommer le club')
+
+  // Le bouton Modifier ne doit pas s afficher en lecture seule.
+  const layout = await operator.call('GET', '/api/dashboard/layout')
+  assert.equal(layout.status, 200)
+  const refused = await operator.call('PUT', '/api/dashboard/layout', { layout: layout.data.layout })
+  assert.equal(refused.status, 403, 'la disposition ne doit pas etre modifiable en lecture seule')
+
+  assert.equal((await operator.call('DELETE', '/api/admin/support')).status, 200)
+})

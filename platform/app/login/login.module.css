@@ -1,0 +1,59 @@
+/* Connexion. Un ecran, une tache : pas de colonne marketing a cote. */
+
+.page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: var(--panel);
+}
+
+.form {
+  width: 100%;
+  max-width: 22.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+  padding: 2rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+
+/* Marque provisoire : remplacee par le logo du club une fois connecte. */
+.mark {
+  width: 2.5rem;
+  height: 2.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: var(--ink-inv);
+  font-size: 0.9375rem;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+
+.head { display: flex; flex-direction: column; gap: 0.25rem; }
+
+.sub {
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+
+.alert {
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* Sur un telephone tenu d'une main, la carte occupe la largeur et remonte :
+   le clavier logiciel ne doit pas la pousser hors ecran. */
+@media (max-width: 30rem) {
+  .page { place-items: start center; padding-top: 3rem; }
+  .form { padding: 1.5rem; box-shadow: none; }
+}

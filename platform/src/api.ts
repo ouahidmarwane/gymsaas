@@ -372,6 +372,13 @@ export const api = {
 
       // Disposition du tableau de bord.
 
+      // Chiffres du club de l'appelant. En mode support, ce sont ceux du
+      // club visite : la portee suit la session, comme partout ailleurs.
+      if (path === '/api/dashboard/stats' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        return json({ stats: await clubOf(env, principal).stats() })
+      }
+
       if (path === '/api/dashboard/layout' && method === 'GET') {
         atLeast(principal, 'viewer')
         const stored = await clubOf(env, principal).getSetting('dashboard_layout')
