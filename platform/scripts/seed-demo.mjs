@@ -84,6 +84,9 @@ const CLUBS = [
 const today = new Date()
 const inDays = n => new Date(today.getTime() + n * 86_400_000).toISOString().slice(0, 10)
 
+// Mois d'adhesion, bornes plus bas au mois courant.
+const JOIN_MONTHS = [0, 3, 4, 4, 5, 7, 1, 6, 2, 9]
+
 console.log(`Cible : ${BASE}\n`)
 
 // --reset vide le plan de controle avant de semer.
@@ -128,15 +131,47 @@ for (const club of CLUBS) {
 
   // Echeances etalees : certains abonnements courent, un expire bientot, un
   // a deja expire. Un tableau de bord ou tout est vert n'apprend rien.
-  club.members.forEach.length
+  //
+  // Les dates d'adhesion sont reparties sur l'annee, et jamais dans le futur :
+  // la comptabilite compte les inscriptions par mois, un seul mois rempli ne
+  // montrerait pas ce que le graphique sait faire.
   for (const [index, [name, phone]] of club.members.entries()) {
     const offsets = [40, 22, 5, -3, 60, 15]
-    await call('POST', '/api/members', {
+    const month = Math.min(JOIN_MONTHS[index % JOIN_MONTHS.length], today.getMonth())
+    const day = 1 + ((index * 7) % 27)
+    const joinDate = `${today.getFullYear()}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
+    // Un non-assure par club : c'est precisement ce cas que l'ecran des
+    // alertes doit faire remonter.
+    const insured = index % 4 !== 3
+
+    const { id } = await call('POST', '/api/members', {
       name, phone,
       branchId: branchIds[index % branchIds.length],
       disciplineId: disciplineIds[0],
       subExpiry: inDays(offsets[index % offsets.length]),
+      joinDate,
+      isInsured: insured,
+      insExpiry: insured ? inDays(offsets[index % offsets.length] + 30) : null,
     })
+
+    // Encaissements : l'inscription au jour de l'adhesion, l'assurance dans
+    // la foulee, puis quelques mensualites. La caisse reelle diverge donc de
+    // l'estimation tarifaire — c'est exactement ce que la page doit montrer.
+    await call('POST', '/api/payments', {
+      memberId: id, amountCents: 15_000, type: 'registration', paidAt: joinDate,
+    })
+    if (insured) {
+      await call('POST', '/api/payments', {
+        memberId: id, amountCents: 5_000, type: 'insurance', paidAt: joinDate,
+      })
+    }
+    for (let m = month; m <= today.getMonth(); m += 2) {
+      await call('POST', '/api/payments', {
+        memberId: id, amountCents: 10_000, type: 'monthly',
+        paidAt: `${today.getFullYear()}-${String(m + 1).padStart(2, '0')}-05`,
+      })
+    }
   }
 
   console.log(`  ${club.name.padEnd(22)} ${club.email.padEnd(16)} ${club.members.length} membres  ${orgId}`)

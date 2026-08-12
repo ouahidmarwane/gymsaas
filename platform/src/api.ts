@@ -246,6 +246,24 @@ function optional(v: unknown, max = 200): string | null {
   return s || null
 }
 
+/**
+ * Date calendaire au format ISO, ou null.
+ *
+ * Le format seul ne suffit pas : « 2026-02-31 » le respecte et n'existe pas.
+ * On reconstruit la date et on verifie qu'elle se renormalise a l'identique,
+ * ce qui elimine les jours hors mois sans table de correspondance.
+ */
+function dateOnly(v: unknown, field: string): string | null {
+  const s = optional(v, 10)
+  if (s === null) return null
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new HttpError(400, `Date invalide : ${field}`)
+  const d = new Date(`${s}T00:00:00Z`)
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) {
+    throw new HttpError(400, `Date invalide : ${field}`)
+  }
+  return s
+}
+
 const MAX_GRADES = 40
 
 function parseGrades(v: unknown): Array<{ label: string; labelAr: string | null; color: string | null }> {
@@ -509,6 +527,41 @@ export const api = {
         return json({ id }, { status: 201 })
       }
 
+      // Comptabilite previsionnelle : effectifs x tarifs, par salle.
+      if (path === '/api/finance' && method === 'GET') {
+        atLeast(principal, 'admin')
+        const branchId = url.searchParams.get('branchId')
+        const year = url.searchParams.get('year')
+        const month = url.searchParams.get('month')
+        const num = (v: string | null) => (v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null)
+        return json(await clubOf(env, principal).finance({
+          // Une chaine vide veut dire « toutes les salles », pas « la salle
+          // sans nom » : seul un parametre absent ou vide leve le filtre.
+          branchId: branchId === null || branchId === 'all' ? null : branchId,
+          year: num(year),
+          month: num(month),
+        }))
+      }
+
+      if (path === '/api/finance/prices' && method === 'PUT') {
+        atLeast(principal, 'admin', true)
+        const body = await readJson(request)
+        const price = (key: string) => {
+          const v = Number(body[key])
+          if (!Number.isFinite(v) || v < 0 || v > 100_000_000) {
+            throw new HttpError(400, `Tarif invalide : ${key}`)
+          }
+          return Math.round(v)
+        }
+        const prices = {
+          monthlyCents: price('monthlyCents'),
+          insuranceCents: price('insuranceCents'),
+          registrationCents: price('registrationCents'),
+        }
+        await clubOf(env, principal).setPrices(prices, { id: principal.userId, name: principal.name })
+        return json({ prices })
+      }
+
       // Championnats -----------------------------------------------------
 
       if (path === '/api/championships' && method === 'GET') {
@@ -761,7 +814,10 @@ export const api = {
           email: typeof body.email === 'string' ? normEmail(body.email) : null,
           branchId: typeof body.branchId === 'string' ? body.branchId : null,
           disciplineId: typeof body.disciplineId === 'string' ? body.disciplineId : null,
-          subExpiry: typeof body.subExpiry === 'string' ? body.subExpiry : null,
+          subExpiry: dateOnly(body.subExpiry, 'subExpiry'),
+          joinDate: dateOnly(body.joinDate, 'joinDate'),
+          insExpiry: dateOnly(body.insExpiry, 'insExpiry'),
+          isInsured: body.isInsured === true,
           actorId: principal.userId,
           actorName: principal.name,
         })
@@ -786,8 +842,9 @@ export const api = {
           branchId: optional(body.branchId, 60),
           disciplineId: optional(body.disciplineId, 60),
           gradeId: optional(body.gradeId, 60),
-          subExpiry: optional(body.subExpiry, 10),
-          insExpiry: optional(body.insExpiry, 10),
+          subExpiry: dateOnly(body.subExpiry, 'subExpiry'),
+          insExpiry: dateOnly(body.insExpiry, 'insExpiry'),
+          joinDate: dateOnly(body.joinDate, 'joinDate'),
           isInsured: typeof body.isInsured === 'boolean' ? body.isInsured : undefined,
           notes: optional(body.notes, 1000),
           actorId: principal.userId, actorName: principal.name,

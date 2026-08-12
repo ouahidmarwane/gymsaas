@@ -295,6 +295,12 @@ export class ClubDatabase extends DurableObject<Env> {
     branchId?: string | null
     disciplineId?: string | null
     subExpiry?: string | null
+    // Date d'adhesion reelle : un club qui reprend son fichier papier inscrit
+    // des membres arrives il y a trois ans. Sans elle, la comptabilite
+    // previsionnelle les compterait tous comme des inscriptions du jour.
+    joinDate?: string | null
+    isInsured?: boolean
+    insExpiry?: string | null
     actorId?: string
     actorName?: string
   }): { id: string } {
@@ -304,8 +310,9 @@ export class ClubDatabase extends DurableObject<Env> {
     // l'autre. Sur un Durable Object elle est synchrone et locale.
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        `INSERT INTO members (id, name, phone, email, branch_id, discipline_id, sub_expiry, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO members (id, name, phone, email, branch_id, discipline_id,
+                              sub_expiry, join_date, is_insured, ins_expiry, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, date('now')), ?, ?, ?)`,
         id,
         input.name,
         input.phone,
@@ -313,6 +320,9 @@ export class ClubDatabase extends DurableObject<Env> {
         input.branchId ?? null,
         input.disciplineId ?? null,
         input.subExpiry ?? null,
+        input.joinDate ?? null,
+        input.isInsured ? 1 : 0,
+        input.insExpiry ?? null,
         input.actorId ?? null,
       )
       this.sql.exec(
@@ -337,6 +347,7 @@ export class ClubDatabase extends DurableObject<Env> {
     gradeId?: string | null
     subExpiry?: string | null
     insExpiry?: string | null
+    joinDate?: string | null
     isInsured?: boolean
     notes?: string | null
     status?: 'active' | 'inactive' | 'archived'
@@ -356,13 +367,14 @@ export class ClubDatabase extends DurableObject<Env> {
            grade_id      = COALESCE(?, grade_id),
            sub_expiry    = COALESCE(?, sub_expiry),
            ins_expiry    = COALESCE(?, ins_expiry),
+           join_date     = COALESCE(?, join_date),
            is_insured    = COALESCE(?, is_insured),
            notes         = COALESCE(?, notes),
            status        = COALESCE(?, status)
          WHERE id = ?`,
         input.name ?? null, input.phone ?? null, input.email ?? null,
         input.branchId ?? null, input.disciplineId ?? null, input.gradeId ?? null,
-        input.subExpiry ?? null, input.insExpiry ?? null,
+        input.subExpiry ?? null, input.insExpiry ?? null, input.joinDate ?? null,
         input.isInsured === undefined ? null : (input.isInsured ? 1 : 0),
         input.notes ?? null, input.status ?? null, id,
       )
@@ -506,6 +518,148 @@ export class ClubDatabase extends DurableObject<Env> {
         WHERE paid_at >= date('now','start of month')
         GROUP BY type`,
     ).toArray()
+  }
+
+  /**
+   * Tarifs du club, en centimes.
+   *
+   * Trois lignes seulement, mais elles vivent dans settings plutot que dans
+   * une table : un club qui vend aussi des stages ou du materiel en ajoutera
+   * d'autres, et une colonne par tarif obligerait a migrer chaque base.
+   */
+  getPrices(): { monthlyCents: number; insuranceCents: number; registrationCents: number } {
+    const raw = this.getSetting('prices') as Record<string, unknown> | null
+    const read = (key: string, fallback: number) => {
+      const v = Number(raw?.[key])
+      return Number.isFinite(v) && v >= 0 ? Math.round(v) : fallback
+    }
+    return {
+      monthlyCents: read('monthlyCents', 10_000),
+      insuranceCents: read('insuranceCents', 5_000),
+      registrationCents: read('registrationCents', 15_000),
+    }
+  }
+
+  setPrices(input: { monthlyCents: number; insuranceCents: number; registrationCents: number },
+            actor: { id?: string; name?: string } = {}): void {
+    this.ctx.storage.transactionSync(() => {
+      this.setSetting('prices', input)
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, detail, actor_id, actor_name)
+         VALUES ('prices_update', 'settings', 'prices', 'Tarifs', ?, ?, ?)`,
+        JSON.stringify(input), actor.id ?? null, actor.name ?? null,
+      )
+    })
+  }
+
+  /**
+   * Comptabilite previsionnelle : ce que les tarifs represente sur l'effectif
+   * actuel, par salle.
+   *
+   * Ce n'est pas la caisse — les encaissements reels vivent dans payments.
+   * Les deux coexistent volontairement : l'estimation dit ce qui est du, la
+   * caisse dit ce qui est rentre, et l'ecart entre les deux est precisement
+   * l'information qu'un gerant cherche.
+   *
+   * Le serveur renvoie des effectifs, pas des montants : la multiplication se
+   * fait a l'affichage, ce qui permet de changer un tarif et de voir le
+   * resultat sans requete supplementaire.
+   */
+  finance(opts: { branchId?: string | null; year?: number | null; month?: number | null } = {}): {
+    prices: { monthlyCents: number; insuranceCents: number; registrationCents: number }
+    chartYear: number
+    years: number[]
+    branches: Array<{ id: string; name: string; total: number; insured: number }>
+    scope: { total: number; insured: number; registrations: number }
+    byMonth: Array<{ month: number; counts: Record<string, number> }>
+  } {
+    // '' represente les membres sans salle affectee. Ils comptent dans le
+    // total global : les ignorer ferait mentir la somme sans que personne ne
+    // voie pourquoi.
+    const NONE = ''
+    const branchFilter = opts.branchId ?? null
+    const matches = (bid: string) => branchFilter === null || bid === branchFilter
+
+    const known = this.sql
+      .exec<{ id: string; name: string }>('SELECT id, name FROM branches ORDER BY name')
+      .toArray()
+
+    const perBranch = this.sql.exec<{ bid: string; total: number; insured: number }>(
+      `SELECT COALESCE(branch_id, '') AS bid,
+              COUNT(*) AS total,
+              COALESCE(SUM(is_insured), 0) AS insured
+         FROM members WHERE status != 'archived'
+        GROUP BY bid`,
+    ).toArray()
+    const counts = new Map(perBranch.map(r => [r.bid, r]))
+
+    const branches = known.map(b => ({
+      id: b.id,
+      name: b.name,
+      total: counts.get(b.id)?.total ?? 0,
+      insured: counts.get(b.id)?.insured ?? 0,
+    }))
+    const orphans = counts.get(NONE)
+    if (orphans && orphans.total > 0) {
+      branches.push({ id: NONE, name: 'Sans salle', total: orphans.total, insured: orphans.insured })
+    }
+
+    const scope = branches.filter(b => matches(b.id)).reduce(
+      (acc, b) => ({ total: acc.total + b.total, insured: acc.insured + b.insured }),
+      { total: 0, insured: 0 },
+    )
+
+    // Les annees proposees viennent des donnees, pas d'une fenetre glissante
+    // arbitraire : un club qui importe dix ans d'historique doit pouvoir le
+    // consulter, un club ouvert cette annee ne doit pas voir quatre annees vides.
+    const currentYear = new Date().getUTCFullYear()
+    const seen = this.sql.exec<{ y: string }>(
+      `SELECT DISTINCT strftime('%Y', join_date) AS y
+         FROM members WHERE status != 'archived' AND join_date IS NOT NULL
+        ORDER BY y DESC`,
+    ).toArray().map(r => Number(r.y)).filter(Number.isFinite)
+    const years = [...new Set([currentYear, ...seen])].sort((a, b) => b - a)
+
+    const chartYear = Number.isFinite(opts.year) ? Number(opts.year) : currentYear
+
+    const rows = this.sql.exec<{ bid: string; m: number; n: number }>(
+      `SELECT COALESCE(branch_id, '') AS bid,
+              CAST(strftime('%m', join_date) AS INTEGER) - 1 AS m,
+              COUNT(*) AS n
+         FROM members
+        WHERE status != 'archived' AND strftime('%Y', join_date) = ?
+        GROUP BY bid, m`,
+      String(chartYear),
+    ).toArray()
+
+    const byMonth = Array.from({ length: 12 }, (_, month) => ({
+      month, counts: {} as Record<string, number>,
+    }))
+    for (const b of branches) for (const bucket of byMonth) bucket.counts[b.id] = 0
+    for (const r of rows) {
+      if (r.m < 0 || r.m > 11) continue
+      if (!matches(r.bid)) continue
+      const bucket = byMonth[r.m]!
+      bucket.counts[r.bid] = (bucket.counts[r.bid] ?? 0) + r.n
+    }
+
+    // Les inscriptions suivent la periode choisie ; l'effectif, lui, reste
+    // l'effectif du jour. Melanger les deux donnerait un total qui ne
+    // correspond a aucune realite.
+    const month = Number.isFinite(opts.month) ? Number(opts.month) : null
+    const registrations = opts.year == null
+      ? scope.total
+      : byMonth.reduce((sum, bucket, i) => {
+          if (month !== null && i !== month) return sum
+          return sum + Object.values(bucket.counts).reduce((a, b) => a + b, 0)
+        }, 0)
+
+    return {
+      prices: this.getPrices(),
+      chartYear, years, branches,
+      scope: { ...scope, registrations },
+      byMonth,
+    }
   }
 
   // Alertes ----------------------------------------------------------------

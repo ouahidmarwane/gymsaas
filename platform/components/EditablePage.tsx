@@ -16,10 +16,11 @@ import { renderCard, type Stats } from '@/components/DashboardCards'
  * palette, enregistrement — est identique partout.
  */
 export default function EditablePage({
-  page, me, title, subtitle, actions, children,
+  page, me, eyebrow, title, subtitle, actions, children,
 }: {
   page: string
   me: Me | null
+  eyebrow?: ReactNode
   title: ReactNode
   subtitle?: ReactNode
   actions?: ReactNode
@@ -82,6 +83,7 @@ export default function EditablePage({
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
                     gap: 16, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0 }}>
+          {eyebrow && <p className="section-heading" style={{ marginBottom: 6 }}>{eyebrow}</p>}
           <h1 className="dz-hello">{title}</h1>
           {subtitle && <p className="dz-sub">{subtitle}</p>}
         </div>

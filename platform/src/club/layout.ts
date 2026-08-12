@@ -123,9 +123,12 @@ const DEFAULTS: Record<PageKey, CardPlacement[]> = {
     { id: 'recent_members',    x: 0, y: 1, w: 6, h: 3, visible: false },
     { id: 'branch_split',      x: 6, y: 1, w: 6, h: 3, visible: false },
   ],
+  // La comptabilite porte deja ses propres indicateurs : afficher en plus la
+  // recette du mois ferait doublon des le premier coup d'oeil. Les cartes
+  // restent au catalogue pour qui veut les ajouter.
   comptabilite: [
-    { id: 'revenue_month',  x: 0, y: 0, w: 4, h: 1, visible: true },
-    { id: 'members_active', x: 4, y: 0, w: 4, h: 1, visible: true },
+    { id: 'revenue_month',  x: 0, y: 0, w: 4, h: 1, visible: false },
+    { id: 'members_active', x: 4, y: 0, w: 4, h: 1, visible: false },
     { id: 'revenue_chart',  x: 0, y: 1, w: 12, h: 3, visible: false },
     { id: 'branch_split',   x: 0, y: 1, w: 6, h: 3, visible: false },
   ],
