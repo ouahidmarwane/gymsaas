@@ -384,10 +384,9 @@ Les trois clubs portent volontairement trois états d'abonnement différents :
    reporter l'identifiant réel dans `wrangler.jsonc`, qui contient encore
    `00000000-0000-0000-0000-000000000000`.
 2. **Appliquer le schéma** — `npm run db:apply:remote`.
-3. **Poser les secrets** — `GOOGLE_MAPS_API_KEY` si la carte est activée.
-   **Ne jamais poser `TRUST_FORWARDED_IP` en production** : cet en-tête y est
+3. **Ne jamais poser `TRUST_FORWARDED_IP` en production** : cet en-tête y est
    choisi par l'appelant, et l'accepter permettrait de contourner les plafonds
-   de tentatives et la liste noire.
+   de tentatives et la liste noire. Aucun autre secret n'est requis.
 4. **Créer le compte exploitant** à la main, via
    `scripts/create-operator.mjs`.
 5. **Régler le CORS du bucket R2** sur le domaine réel
@@ -395,13 +394,22 @@ Les trois clubs portent volontairement trois états d'abonnement différents :
 6. **Pousser le dépôt** — les 31 commits sont locaux. Le dépôt GitHub est
    public et vide ; le passer en privé avant de pousser.
 
-### Non vérifié
+### La carte
 
-**Le rendu de la carte Google Maps n'a jamais tourné**, faute de clé. Tout ce
-qui est derrière — charge utile, validation des coordonnées, isolation, repli
-en liste sans clé — est couvert par les tests. La clé doit être une clé *de
-navigateur*, restreinte par référent HTTP et limitée à la seule API « Maps
-JavaScript », avec un plafond de facturation.
+**OpenStreetMap via Leaflet** — ni compte, ni clé, ni facturation. Leaflet est
+importé dans l'effet, jamais au niveau du module : il touche `window` dès son
+évaluation et le rendu serveur échouerait.
+
+Les marqueurs sont des `divIcon`, donc des nœuds du DOM : c'est ce qui permet
+le halo néon en CSS, qu'une image de marqueur ne permettrait pas. Ils sont mis
+à jour **en place** — sur un rafraîchissement toutes les dix secondes, les
+recréer ferait clignoter la carte.
+
+**L'attribution OpenStreetMap est obligatoire et ne doit pas être masquée.**
+Sur un habillage sombre, les tuiles sont inversées en CSS plutôt que de
+dépendre d'un second fournisseur et de ses conditions. Les tuiles gratuites
+suffisent à cette charge ; en gros trafic, seul l'URL du `tileLayer` serait à
+changer.
 
 ---
 

@@ -57,7 +57,6 @@ interface Payload {
   offenders: Offender[]
   blocklist: Blocked[]
   clubs: MapClub[]
-  mapsKey: string | null
 }
 
 const REFRESH_MS = 10_000
@@ -241,7 +240,6 @@ export default function SupervisionPage() {
         </div>
         <ClubsMap
           clubs={clubs}
-          mapsKey={data?.mapsKey ?? null}
           onEnter={club => router.push(`/admin?club=${encodeURIComponent(club.slug)}`)}
           onLocate={async (club, at) => {
             await api.put(`/api/admin/clubs/${club.id}/location`, at)

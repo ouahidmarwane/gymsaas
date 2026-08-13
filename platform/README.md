@@ -34,31 +34,28 @@ local fidele : `next dev` s'execute dans Node, ou `cloudflare:workers` ne se
 resout pas et ou les Durable Objects ne fonctionnent pas. `npm run dev:ui`
 reste disponible pour iterer vite sur l'interface, sans API ni base.
 
-### Carte de supervision (facultatif)
+### Carte de supervision
 
-L'ecran Supervision affiche les salles sur une carte Google. Sans cle, il
-affiche la meme information en liste : la carte est un confort, pas une
-dependance, et son absence ne doit pas fermer un ecran de securite.
+L'ecran Supervision affiche les salles sur **OpenStreetMap, via Leaflet**. Ni
+compte, ni cle, ni facturation : rien a configurer.
 
-Pour l'activer, poser une cle **de navigateur** avec l'API « Maps JavaScript »
-activee :
+Leaflet est importe **dans l'effet**, jamais au niveau du module — il touche
+`window` des son evaluation, et le rendu serveur echouerait.
 
-```bash
-echo 'GOOGLE_MAPS_API_KEY=AIza...' >> .dev.vars    # local
-wrangler secret put GOOGLE_MAPS_API_KEY            # production
-```
+Les salles se placent depuis l'ecran Supervision, bouton « Situer » : un clic
+droit dans n'importe quelle carte donne le couple de coordonnees a coller. Pas
+de geocodage automatique — le service gratuit de Nominatim interdit l'usage en
+masse, et il se trompe sur les adresses marocaines mal normalisees.
 
-Deux precautions cote Google Cloud, parce que la cle voyage jusqu'au
-navigateur et ne peut donc pas rester secrete :
+Deux points a ne pas defaire :
 
-- la restreindre par **referent HTTP** au domaine de la plateforme ;
-- la restreindre a la seule API « Maps JavaScript », et poser un plafond de
-  facturation.
+- **L'attribution OpenStreetMap est obligatoire.** Elle est stylee pour rester
+  lisible sur les deux bases, jamais masquee.
+- Les tuiles gratuites suffisent a cette charge. En gros trafic il faudrait un
+  fournisseur de tuiles ; le seul changement serait l'URL du `tileLayer`.
 
-Le serveur ne la transmet qu'a un compte exploitant, jamais dans le bundle
-des pages publiques. Les salles se placent depuis l'ecran Supervision, bouton
-« Situer » : un clic droit dans Google Maps donne le couple de coordonnees a
-coller.
+Sur un habillage sombre, les tuiles sont inversees en CSS plutot que de
+dependre d'un second fournisseur et de ses conditions.
 
 ## Tests
 

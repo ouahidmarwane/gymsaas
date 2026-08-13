@@ -193,5 +193,6 @@ test('la supervision livre ce que la carte consomme', async () => {
   for (const key of ['name', 'slug', 'theme', 'online', 'open_alerts', 'under_support']) {
     assert.ok(key in club, `champ manquant pour la carte : ${key}`)
   }
-  assert.ok('mapsKey' in res.data, 'la cle de carte doit accompagner la reponse')
+  // La carte est sur OpenStreetMap : aucune cle a transporter.
+  assert.ok(!('mapsKey' in res.data), 'plus aucune cle de carte dans la reponse')
 })

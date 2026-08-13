@@ -1346,10 +1346,6 @@ export const api = {
             const c = row as Record<string, unknown>
             return { ...c, theme: readTheme(c.theme as string | null) }
           }),
-          // La cle de carte ne voyage que vers un exploitant, et jamais dans
-          // le bundle de toutes les pages : c'est une cle publique, mais
-          // inutile de la distribuer a chaque visiteur de l'ecran de login.
-          mapsKey: env.GOOGLE_MAPS_API_KEY ?? null,
           serverTime: isoSeconds(new Date()),
         })
       }

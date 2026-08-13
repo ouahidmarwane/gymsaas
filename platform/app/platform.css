@@ -362,16 +362,49 @@
   background: var(--overlay-soft);
 }
 
+/* Leaflet pose ses propres fonds blancs : on les reprend pour que la carte
+   appartienne a l'interface plutot que de flotter dedans. */
+.gf-map .leaflet-container { background: var(--overlay-soft); font: inherit; }
+
+/* L'attribution OpenStreetMap est obligatoire. On la rend lisible sur les
+   deux bases plutot que de la masquer. */
+.gf-map .leaflet-control-attribution {
+  background: var(--float-bg);
+  color: var(--muted);
+  font-size: 0.66rem;
+  padding: 2px 7px;
+  border-radius: 8px 0 0 0;
+}
+.gf-map .leaflet-control-attribution a { color: var(--gold); }
+
+.gf-map .leaflet-bar a {
+  background: var(--float-bg);
+  color: var(--text);
+  border-color: var(--float-border);
+}
+.gf-map .leaflet-bar a:hover { background: var(--overlay); }
+
+/* Tuiles sur un habillage sombre.
+   OpenStreetMap ne publie que des tuiles claires ; les inverser evite de
+   dependre d'un second fournisseur et de ses conditions. Le double
+   hue-rotate rend les couleurs a l'endroit apres inversion. */
+html[data-theme='dark'] .gf-map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.9) saturate(0.7);
+}
+
+/* Le conteneur du divIcon ne sert a rien : le marqueur se place lui-meme. */
+.gf-pin-wrap { background: none; border: 0; }
+
 /* Marqueur : un noeud du DOM, donc animable.
    Le halo est un element separe — animer une ombre portee sur le point
    lui-meme forcerait un repaint a chaque image. */
 .gf-pin {
-  position: absolute; top: 0; left: 0;
+  position: absolute; bottom: 0; left: 0;
   display: flex; align-items: center; gap: 7px;
   padding: 0; border: 0; background: none;
   cursor: pointer;
   white-space: nowrap;
-  will-change: transform;
+  transform: translate(-6.5px, 6.5px);
 }
 
 .gf-pin-dot {

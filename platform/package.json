@@ -18,6 +18,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260812.1",
     "@opennextjs/cloudflare": "^1.20.2",
+    "@types/leaflet": "^1.9.22",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "autoprefixer": "^10.5.4",
@@ -33,6 +34,7 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "leaflet": "^1.9.4",
     "lucide-react": "^1.31.0",
     "next": "^16.3.0",
     "react": "^19.2.8",
