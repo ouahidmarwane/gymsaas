@@ -1256,6 +1256,87 @@ export const api = {
         return json({ lat, lng })
       }
 
+      /**
+       * Suppression definitive d'un club.
+       *
+       * Trois choses meurent ensemble, et l'ordre compte : la base du club
+       * (le Durable Object), ses fichiers dans R2, puis sa ligne centrale.
+       * Commencer par la ligne centrale ferait perdre l'identifiant, donc
+       * l'adresse de l'objet et le prefixe des fichiers — on laisserait
+       * derriere soi une base et des images que plus rien ne designe.
+       *
+       * Le corps doit reprendre le slug exact. Une confirmation dans
+       * l'interface seule ne protege pas d'un appel direct, et il n'y a pas
+       * de corbeille : ce qui part ne revient pas.
+       */
+      const deleteClubRoute = path.match(/^\/api\/admin\/clubs\/([^/]+)$/)
+      if (deleteClubRoute && method === 'DELETE') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const orgId = deleteClubRoute[1]!
+
+        const org = await env.CONTROL.prepare(
+          'SELECT id, slug, name, logo_key FROM organizations WHERE id = ?',
+        ).bind(orgId).first<{ id: string; slug: string; name: string; logo_key: string | null }>()
+        if (!org) return fail(404, 'Club inconnu')
+
+        const body = await readJson(request)
+        if (str(body.slug, 'slug', 60) !== org.slug) {
+          return fail(400, `Pour confirmer, saisissez exactement : ${org.slug}`)
+        }
+
+        // 1. La base du club. Sans cela le Durable Object survivrait, et un
+        //    club recree sous le meme nom en heriterait les donnees.
+        await env.CLUB.get(env.CLUB.idFromName(orgId)).destroyAll()
+
+        // 2. Les fichiers. On balaie le prefixe plutot que de se fier a la
+        //    seule cle enregistree : les logos precedents restent en place a
+        //    chaque remplacement.
+        let cursor: string | undefined
+        do {
+          const page = await env.MEDIA.list({ prefix: `org-logos/${orgId}/`, cursor })
+          if (page.objects.length > 0) {
+            await env.MEDIA.delete(page.objects.map(o => o.key))
+          }
+          cursor = page.truncated ? page.cursor : undefined
+        } while (cursor)
+
+        // 3. Le plan de controle. Les dependances sont supprimees a la main :
+        //    les cascades dependent d'un PRAGMA par connexion, ce qui est une
+        //    hypothese trop fragile pour une suppression definitive.
+        const batch = [
+          env.CONTROL.prepare('DELETE FROM sessions WHERE org_id = ? OR support_org_id = ?').bind(orgId, orgId),
+          env.CONTROL.prepare('DELETE FROM memberships WHERE org_id = ?').bind(orgId),
+          env.CONTROL.prepare('DELETE FROM org_stats WHERE org_id = ?').bind(orgId),
+          env.CONTROL.prepare('DELETE FROM org_locations WHERE org_id = ?').bind(orgId),
+          // Les evenements de securite gardent leur trace, prives de club :
+          // effacer l'historique d'une alerte parce que le club a ferme
+          // reviendrait a effacer la preuve.
+          env.CONTROL.prepare('UPDATE security_events SET org_id = NULL WHERE org_id = ?').bind(orgId),
+          env.CONTROL.prepare('DELETE FROM organizations WHERE id = ?').bind(orgId),
+        ]
+        await env.CONTROL.batch(batch)
+
+        // Les comptes qui ne servaient que ce club n'ont plus rien a ouvrir.
+        // Les laisser bloquerait leur adresse e-mail pour une inscription
+        // future, sans leur donner acces a quoi que ce soit.
+        const orphans = await env.CONTROL.prepare(
+          `DELETE FROM users
+            WHERE is_platform_admin = 0
+              AND id NOT IN (SELECT user_id FROM memberships)
+          RETURNING email`,
+        ).all<{ email: string }>()
+
+        await env.CONTROL.prepare(
+          "INSERT INTO platform_audit (actor_id, action, detail, ip) VALUES (?, 'club_delete', ?, ?)",
+        ).bind(
+          principal.userId,
+          JSON.stringify({ orgId, slug: org.slug, name: org.name, orphans: orphans.results.length }),
+          ip,
+        ).run()
+
+        return json({ ok: true, orphanedAccounts: orphans.results.length })
+      }
+
       // Liste noire d'adresses.
       if (path === '/api/admin/blocklist' && method === 'POST') {
         if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')

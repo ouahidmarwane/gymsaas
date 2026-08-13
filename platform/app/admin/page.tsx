@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogIn, Users, Wallet, Building2, Plus } from 'lucide-react'
+import { LogIn, Users, Wallet, Building2, Plus, Trash2, AlertTriangle } from 'lucide-react'
 import { api, ApiError, type ClubRow } from '@/lib/client'
 import CreateClubModal from '@/components/CreateClubModal'
 
@@ -14,6 +14,8 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null)
   const [entering, setEntering] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  const [doomed, setDoomed] = useState<ClubRow | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const load = useCallback(() =>
@@ -90,6 +92,13 @@ export default function AdminPage() {
             color: '#fca5a5', fontSize: '0.85rem', fontWeight: 600,
           }}>{error}</p>
         )}
+        {notice && !error && (
+          <p role="status" style={{
+            padding: '0.7rem 1rem', borderRadius: 14,
+            background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)',
+            color: '#6ee7b7', fontSize: '0.85rem', fontWeight: 600,
+          }}>{notice}</p>
+        )}
       </div>
 
       {!clubs && <SkeletonList />}
@@ -145,16 +154,31 @@ export default function AdminPage() {
 
               <footer className="admin-club-foot">
                 <span className="admin-club-fresh">{freshness(club.refreshed_at, now)}</span>
-                <button
-                  className="btn-dark"
-                  style={{ background: 'var(--gold)', borderColor: 'transparent', padding: '0.5rem 1.1rem' }}
-                  disabled={entering !== null}
-                  onClick={() => enter(club)}
-                >
-                  <LogIn size={15} strokeWidth={2.2} />
-                  {entering === club.id ? 'Ouverture…' : 'Entrer'}
-                  <span className="sr-only"> dans le club {club.name}</span>
-                </button>
+                <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {/* La suppression est discrete a dessein : elle est
+                      definitive, elle ne doit pas se trouver sous le pouce
+                      juste a cote de l'action courante. */}
+                  <button
+                    className="gf-mini-btn"
+                    data-tone="danger"
+                    disabled={entering !== null}
+                    onClick={() => setDoomed(club)}
+                    title={`Supprimer ${club.name}`}
+                  >
+                    <Trash2 size={13} strokeWidth={2.3} />
+                    <span className="sr-only">Supprimer le club {club.name}</span>
+                  </button>
+                  <button
+                    className="btn-dark"
+                    style={{ background: 'var(--gold)', borderColor: 'transparent', padding: '0.5rem 1.1rem' }}
+                    disabled={entering !== null}
+                    onClick={() => enter(club)}
+                  >
+                    <LogIn size={15} strokeWidth={2.2} />
+                    {entering === club.id ? 'Ouverture…' : 'Entrer'}
+                    <span className="sr-only"> dans le club {club.name}</span>
+                  </button>
+                </span>
               </footer>
             </article>
           ))}
@@ -167,6 +191,112 @@ export default function AdminPage() {
           onCreated={() => { setCreating(false); load() }}
         />
       )}
+
+      {doomed && (
+        <DeleteClubModal
+          club={doomed}
+          onClose={() => setDoomed(null)}
+          onDeleted={message => { setDoomed(null); setNotice(message); load() }}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Confirmation de suppression.
+ *
+ * Le slug se retape a la main. Un « Etes-vous sur ? » se clique sans lire ;
+ * recopier « judo-atlas » oblige a regarder quel club on est en train de
+ * detruire, et c'est le seul garde-fou qui reste — il n'y a pas de corbeille.
+ */
+function DeleteClubModal({ club, onClose, onDeleted }: {
+  club: ClubRow
+  onClose: () => void
+  onDeleted: (message: string) => void
+}) {
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const matches = typed.trim() === club.slug
+
+  return (
+    <div className="compta-modal-overlay" onClick={onClose}
+         role="dialog" aria-modal="true" aria-label={`Supprimer ${club.name}`}>
+      <div className="compta-modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <AlertTriangle size={19} strokeWidth={2.3} style={{ color: '#f87171', flex: 'none' }} />
+          <h2 style={{ fontSize: '1.05rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
+            Supprimer {club.name}
+          </h2>
+        </div>
+
+        <p className="dz-card-note" style={{ marginBottom: 8 }}>
+          Cette action est definitive. Sont detruits :
+        </p>
+        <ul className="dz-card-note" style={{ margin: '0 0 16px', paddingInlineStart: '1.1rem',
+                                              display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <li>la base du club — membres, paiements, grades, championnats ;</li>
+          <li>son logo et ses fichiers ;</li>
+          <li>ses comptes, s&apos;ils ne servent aucun autre club.</li>
+        </ul>
+        <p className="dz-card-note" style={{ marginBottom: 16 }}>
+          Les evenements de securite le concernant sont conserves : effacer une
+          alerte parce que le club ferme reviendrait a effacer la preuve.
+        </p>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>
+            Saisissez <code style={{ color: 'var(--text)', fontWeight: 700 }}>{club.slug}</code> pour confirmer
+          </span>
+          <input className="input-dark" value={typed} autoFocus autoComplete="off" spellCheck={false}
+                 onChange={e => { setTyped(e.target.value); setProblem(null) }} />
+        </label>
+
+        <div aria-live="polite">
+          {problem && (
+            <p role="alert" style={{
+              padding: '0.6rem 0.85rem', marginTop: 12, borderRadius: 12,
+              background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+              color: '#fca5a5', fontSize: '0.82rem', fontWeight: 600,
+            }}>{problem}</p>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
+          <button className="btn-ghost" style={{ flex: 1 }} onClick={onClose} disabled={busy}>
+            Annuler
+          </button>
+          <button
+            className="btn-dark"
+            style={{
+              flex: 1, borderColor: 'transparent',
+              background: matches ? '#dc2626' : 'var(--overlay)',
+              color: matches ? '#fff' : 'var(--muted)',
+              cursor: matches ? 'pointer' : 'not-allowed',
+            }}
+            disabled={busy}
+            onClick={async () => {
+              if (!matches) { setProblem(`Saisissez exactement : ${club.slug}`); return }
+              setBusy(true); setProblem(null)
+              try {
+                const res = await api.del<{ orphanedAccounts: number }>(
+                  `/api/admin/clubs/${club.id}`, { slug: club.slug },
+                )
+                const extra = res.orphanedAccounts > 0
+                  ? ` ${res.orphanedAccounts} compte(s) devenu(s) sans club ont ete supprimes.`
+                  : ''
+                onDeleted(`${club.name} a ete supprime.${extra}`)
+              } catch (e) {
+                setProblem(e instanceof ApiError ? e.message : 'Suppression impossible')
+                setBusy(false)
+              }
+            }}
+          >
+            {busy ? 'Suppression…' : 'Supprimer definitivement'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
