@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  ShieldAlert, LogOut, Check, Activity, Lock, Ban, MapPin, Unlock,
+  ShieldAlert, LogOut, Check, Activity, Lock, Ban, MapPin, Unlock, ChevronDown,
 } from 'lucide-react'
 import { api, ApiError } from '@/lib/client'
 import ClubsMap, { type MapClub } from '@/components/ClubsMap'
@@ -118,6 +118,19 @@ export default function SupervisionPage() {
   const online = sessions.filter(s => now - Date.parse(s.last_seen_at) < ONLINE_MS).length
   const openEvents = events.filter(e => !e.handled_at).length
 
+  // Les sessions en ligne d'abord : c'est ce qui se regarde en premier, et
+  // c'est ce qui doit survivre au repli.
+  const ordered = useMemo(() => {
+    const live = (s: Session) => Date.now() - Date.parse(s.last_seen_at) < ONLINE_MS
+    return [...sessions].sort((a, b) => Number(live(b)) - Number(live(a))
+      || Date.parse(b.last_seen_at) - Date.parse(a.last_seen_at))
+  }, [sessions])
+
+  const foldSessions = useFold(ordered, 6)
+  const foldOffenders = useFold(offenders, 5)
+  const foldBlocked = useFold(blocklist, 5)
+  const foldEvents = useFold(events, 6)
+
   return (
     <div className="dashboard-shell">
       <div>
@@ -135,26 +148,7 @@ export default function SupervisionPage() {
         {notice && !error && <Banner tone="ok">{notice}</Banner>}
       </div>
 
-      {/* Carte : ou sont les salles, et laquelle bouge en ce moment. */}
-      <section className="dz-card">
-        <div className="dz-card-head">
-          <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-            <MapPin size={17} strokeWidth={2.1} style={{ color: 'var(--gold)' }} /> Salles abonnees
-          </h2>
-          <span className="dz-card-note">{clubs.length} club(s)</span>
-        </div>
-        <ClubsMap
-          clubs={clubs}
-          mapsKey={data?.mapsKey ?? null}
-          onEnter={club => router.push(`/admin?club=${encodeURIComponent(club.slug)}`)}
-          onLocate={async (club, at) => {
-            await api.put(`/api/admin/clubs/${club.id}/location`, at)
-            await load()
-          }}
-        />
-      </section>
-
-      {/* Comptes connectes */}
+      {/* Comptes connectes, en tete : c'est ce qu'on vient verifier. */}
       <section className="dz-card">
         <div className="dz-card-head">
           <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
@@ -180,7 +174,7 @@ export default function SupervisionPage() {
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((s, i) => {
+                {foldSessions.shown.map((s, i) => {
                   const isOnline = now - Date.parse(s.last_seen_at) < ONLINE_MS
                   const unknownIp = s.ip_known === 0 && s.ip
                   return (
@@ -229,10 +223,32 @@ export default function SupervisionPage() {
           </div>
         )}
 
+        <FoldButton hidden={foldSessions.hidden} open={foldSessions.open}
+                    onToggle={foldSessions.toggle} singular="autre session" plural="autres sessions" />
+
         <p className="dz-card-note" style={{ marginTop: 14 }}>
           « En ligne » = battement recu il y a moins de 2 min. « Deconnecter » revoque
           immediatement toutes les sessions du compte, sur tous ses appareils.
         </p>
+      </section>
+
+      {/* Carte : ou sont les salles, et laquelle bouge en ce moment. */}
+      <section className="dz-card">
+        <div className="dz-card-head">
+          <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <MapPin size={17} strokeWidth={2.1} style={{ color: 'var(--gold)' }} /> Salles abonnees
+          </h2>
+          <span className="dz-card-note">{clubs.length} club(s)</span>
+        </div>
+        <ClubsMap
+          clubs={clubs}
+          mapsKey={data?.mapsKey ?? null}
+          onEnter={club => router.push(`/admin?club=${encodeURIComponent(club.slug)}`)}
+          onLocate={async (club, at) => {
+            await api.put(`/api/admin/clubs/${club.id}/location`, at)
+            await load()
+          }}
+        />
       </section>
 
       {/* Adresses en echec : la maille utile pour bloquer. */}
@@ -257,7 +273,7 @@ export default function SupervisionPage() {
                 <tr><th>Adresse</th><th>Echecs</th><th>Comptes vises</th><th>Dernier</th><th>Action</th></tr>
               </thead>
               <tbody>
-                {offenders.map(o => (
+                {foldOffenders.shown.map(o => (
                   <tr key={o.ip}>
                     <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{o.ip}</td>
                     <td>
@@ -296,6 +312,8 @@ export default function SupervisionPage() {
             </table>
           </div>
         )}
+        <FoldButton hidden={foldOffenders.hidden} open={foldOffenders.open}
+                    onToggle={foldOffenders.toggle} singular="autre adresse" plural="autres adresses" />
       </section>
 
       {blocklist.length > 0 && (
@@ -308,7 +326,7 @@ export default function SupervisionPage() {
             <table className="gf-table">
               <thead><tr><th>Adresse</th><th>Motif</th><th>Par</th><th>Quand</th><th>Action</th></tr></thead>
               <tbody>
-                {blocklist.map(b => (
+                {foldBlocked.shown.map(b => (
                   <tr key={b.ip}>
                     <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{b.ip}</td>
                     <td className="gf-table-sub">{b.reason ?? '—'}</td>
@@ -327,6 +345,8 @@ export default function SupervisionPage() {
               </tbody>
             </table>
           </div>
+          <FoldButton hidden={foldBlocked.hidden} open={foldBlocked.open}
+                      onToggle={foldBlocked.toggle} singular="autre adresse" plural="autres adresses" />
         </section>
       )}
 
@@ -353,7 +373,7 @@ export default function SupervisionPage() {
                 <tr><th>Type</th><th>Compte</th><th>Detail</th><th>Adresse</th><th>Quand</th><th>Action</th></tr>
               </thead>
               <tbody>
-                {events.map(ev => (
+                {foldEvents.shown.map(ev => (
                   <tr key={ev.id} style={{ opacity: ev.handled_at ? 0.5 : 1 }}>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <Lock size={13} strokeWidth={2.4}
@@ -392,6 +412,8 @@ export default function SupervisionPage() {
             </table>
           </div>
         )}
+        <FoldButton hidden={foldEvents.hidden} open={foldEvents.open}
+                    onToggle={foldEvents.toggle} singular="autre evenement" plural="autres evenements" />
       </section>
     </div>
   )
@@ -415,6 +437,37 @@ const Skeleton = () => (
   <div className="members-skeleton-row"
        style={{ height: 56, borderRadius: 16, border: 'none', marginTop: 16 }} />
 )
+
+/**
+ * Replie une liste au-dela de quelques lignes.
+ *
+ * Cinquante sessions et trente-cinq salles depliees d'emblee, c'est trois
+ * ecrans de defilement avant d'atteindre les alertes — donc une page de
+ * securite ou l'on ne voit plus ce qui compte. On montre les premieres
+ * lignes, la fleche donne le reste.
+ */
+function useFold<T>(rows: T[], visible: number) {
+  const [open, setOpen] = useState(false)
+  const hidden = Math.max(0, rows.length - visible)
+  return {
+    shown: open ? rows : rows.slice(0, visible),
+    hidden,
+    open,
+    toggle: () => setOpen(o => !o),
+  }
+}
+
+function FoldButton({ hidden, open, onToggle, singular, plural }: {
+  hidden: number; open: boolean; onToggle: () => void; singular: string; plural: string
+}) {
+  if (hidden === 0) return null
+  return (
+    <button className="gf-fold" onClick={onToggle} aria-expanded={open}>
+      <ChevronDown size={15} strokeWidth={2.4} data-open={open ? 'true' : 'false'} />
+      {open ? 'Réduire' : `Voir les ${hidden} ${hidden > 1 ? plural : singular}`}
+    </button>
+  )
+}
 
 const tone = (t: SecurityEvent['type']) =>
   t === 'failed_burst' ? '#f87171' : t === 'new_ip' ? '#f59e0b' : '#a78bfa'

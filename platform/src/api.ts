@@ -335,12 +335,33 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
 // meme endroit : la portee du club et le mode support sont decides une fois,
 // pas redecides a chaque fichier.
 
+/**
+ * Adresse du client.
+ *
+ * CF-Connecting-IP est pose par Cloudflare devant le Worker : l'appelant ne
+ * peut pas le falsifier. C'est la seule source digne de confiance, et c'est
+ * elle qui arme le plafond de tentatives et la liste noire.
+ *
+ * En local il n'y a pas de Cloudflare devant, donc pas d'entete, donc un
+ * ecran de supervision rempli de tirets. On accepte alors X-Forwarded-For,
+ * mais uniquement si TRUST_FORWARDED_IP vaut '1' dans .dev.vars. Accepter cet
+ * entete sans garde-fou reviendrait a laisser n'importe qui choisir son
+ * adresse — et donc contourner le plafond comme le blocage.
+ */
+function clientIp(request: Request, env: Env): string | null {
+  const real = request.headers.get('CF-Connecting-IP')
+  if (real) return real
+  if (env.TRUST_FORWARDED_IP !== '1') return null
+  const forwarded = request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
+  return forwarded || null
+}
+
 export const api = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     const path = url.pathname
     const method = request.method
-    const ip = request.headers.get('CF-Connecting-IP')
+    const ip = clientIp(request, env)
 
     try {
       if (path === '/api/health') return json({ ok: true })

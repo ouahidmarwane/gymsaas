@@ -16,4 +16,10 @@ export interface Env {
    * transmet qu'à un exploitant, pas à chaque visiteur.
    */
   GOOGLE_MAPS_API_KEY?: string
+  /**
+   * Développement uniquement : accepter `X-Forwarded-For` faute de
+   * `CF-Connecting-IP`. À ne jamais poser en production — l'en-tête y est
+   * fourni par l'appelant, donc choisi par lui.
+   */
+  TRUST_FORWARDED_IP?: string
 }

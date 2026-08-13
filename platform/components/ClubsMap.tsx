@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MapPin, ExternalLink } from 'lucide-react'
+import { MapPin, ExternalLink, ChevronDown } from 'lucide-react'
 
 /**
  * Carte des salles abonnees.
@@ -105,6 +105,7 @@ export default function ClubsMap({
   onLocate: (club: MapClub, at: { lat: number; lng: number; label: string }) => Promise<void>
 }) {
   const [locating, setLocating] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const holder = useRef<HTMLDivElement>(null)
   const map = useRef<Gm>(null)
   const pinClass = useRef<Gm>(null)
@@ -249,6 +250,16 @@ export default function ClubsMap({
 
   const missing = clubs.length - located.length
 
+  const RANK = { support: 0, alert: 1, online: 2, idle: 3 } as const
+  const sorted = useMemo(
+    () => [...clubs].sort((a, b) => RANK[stateOf(a)] - RANK[stateOf(b)] || a.name.localeCompare(b.name, 'fr')),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [clubs],
+  )
+  const VISIBLE = 6
+  const shown = expanded ? sorted : sorted.slice(0, VISIBLE)
+  const rest = sorted.length - shown.length
+
   return (
     <div className="gf-map-wrap">
       {mapsKey && !error && <div ref={holder} className="gf-map" role="application" aria-label="Carte des salles" />}
@@ -268,9 +279,14 @@ export default function ClubsMap({
       )}
 
       {/* Toujours presente : c'est elle qui rend l'ecran utilisable sans cle,
-          et c'est aussi la seule facon de reperer une salle sans coordonnees. */}
+          et c'est aussi la seule facon de reperer une salle sans coordonnees.
+
+          Repliee au-dela de six lignes, et triee par ce qui se passe : avec
+          trente-cinq clubs, une liste complete repousse les alertes hors de
+          l'ecran, et une salle sous support finirait plus bas qu'une salle
+          endormie a cause de l'ordre alphabetique. */}
       <ul className="gf-map-list">
-        {clubs.map(club => {
+        {shown.map(club => {
           const state = stateOf(club)
           return (
             <li key={club.id} style={{ '--pin': club.theme?.accent ?? '#2f6bff' } as React.CSSProperties}>
@@ -308,6 +324,13 @@ export default function ClubsMap({
           )
         })}
       </ul>
+
+      {(rest > 0 || expanded) && (
+        <button className="gf-fold" onClick={() => setExpanded(o => !o)} aria-expanded={expanded}>
+          <ChevronDown size={15} strokeWidth={2.4} data-open={expanded ? 'true' : 'false'} />
+          {expanded ? 'Réduire' : `Voir les ${rest} autre${rest > 1 ? 's' : ''} salle${rest > 1 ? 's' : ''}`}
+        </button>
+      )}
 
       {missing > 0 && (
         <p className="dz-card-note" style={{ marginTop: 10 }}>
