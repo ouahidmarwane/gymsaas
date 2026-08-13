@@ -75,21 +75,34 @@ function daysUntil(iso: string | null, today: string): number | null {
  * Calcule a partir de la date de fin, jamais stocke : un statut fige se
  * desynchronise des que le temps passe, une date se compare.
  */
-type State = 'expired' | 'soon' | 'active' | 'unset'
+type State = 'expired' | 'renew' | 'soon' | 'active' | 'unset'
 const SOON_DAYS = 14
 
+/**
+ * Deux facons de n'etre plus couvert, et elles n'appellent pas le meme geste.
+ *
+ * « Expire » veut dire : une echeance est ouverte et n'a pas ete reglee — on
+ * relance le club. « A renouveler » veut dire : tout ce qui a ete facture est
+ * paye, mais aucune echeance ne couvre la periode en cours — c'est a nous
+ * d'en emettre une.
+ *
+ * Les confondre affichait « Expire » a un club qui venait de tout regler, et
+ * lui reclamait un montant qui n'avait jamais ete facture.
+ */
 function stateOf(club: ClubBilling, today: string): State {
-  if (!club.expires_at) return 'unset'
+  if (!club.expires_at) return club.unpaid_cents > 0 ? 'expired' : 'unset'
   const left = daysUntil(club.expires_at, today)!
-  if (left < 0) return 'expired'
+  if (left < 0) return club.unpaid_cents > 0 ? 'expired' : 'renew'
   return left <= SOON_DAYS ? 'soon' : 'active'
 }
 
 const STATE_LABEL: Record<State, string> = {
-  expired: 'Expiré', soon: 'Expire bientôt', active: 'À jour', unset: 'Pas d’abonnement',
+  expired: 'Expiré · impayé', renew: 'À renouveler', soon: 'Expire bientôt',
+  active: 'À jour', unset: 'Pas d’abonnement',
 }
 const STATE_COLOR: Record<State, string> = {
-  expired: '#ef4444', soon: '#f59e0b', active: '#16a34a', unset: '#64748b',
+  expired: '#ef4444', renew: '#38bdf8', soon: '#f59e0b',
+  active: '#16a34a', unset: '#64748b',
 }
 
 /**
@@ -107,14 +120,17 @@ function waLink(phone: string, message: string): string {
 
 function reminderText(club: ClubBilling, state: State, today: string): string {
   const left = daysUntil(club.expires_at, today)
-  const amount = club.unpaid_cents > 0 ? dh(club.unpaid_cents) : dh(club.price_cents ?? 0)
+  // On ne cite un montant que s'il a ete facture. Annoncer le tarif du
+  // catalogue a un club qui n'a recu aucune echeance, c'est lui reclamer
+  // quelque chose qu'on ne lui a jamais demande.
+  const due = club.unpaid_cents > 0 ? ` Montant dû : ${dh(club.unpaid_cents)}.` : ''
   if (state === 'expired') {
     return `Bonjour, l'abonnement GymFlow de ${club.name} a expiré le ${day(club.expires_at)}`
-      + ` (${Math.abs(left ?? 0)} jour(s)). Montant dû : ${amount}.`
+      + ` (${Math.abs(left ?? 0)} jour(s)).${due}`
       + ` Merci de régulariser pour rétablir l'accès.`
   }
   return `Bonjour, l'abonnement GymFlow de ${club.name} arrive à échéance le ${day(club.expires_at)}`
-    + ` (dans ${left} jour(s)). Montant : ${amount}. Merci de prévoir le renouvellement.`
+    + ` (dans ${left} jour(s)).${due} Merci de prévoir le renouvellement.`
 }
 
 // Page -------------------------------------------------------------------
@@ -159,7 +175,7 @@ export default function FacturationPage() {
 
   // Tri par urgence : expire d'abord, puis ce qui va expirer. L'ordre
   // alphabetique enterrerait un impaye au milieu de la liste.
-  const RANK: Record<State, number> = { expired: 0, soon: 1, unset: 2, active: 3 }
+  const RANK: Record<State, number> = { expired: 0, renew: 1, soon: 2, unset: 3, active: 4 }
   const ranked = useMemo(
     () => [...clubs].sort((a, b) =>
       RANK[stateOf(a, today)] - RANK[stateOf(b, today)] || a.name.localeCompare(b.name, 'fr')),
@@ -170,7 +186,7 @@ export default function FacturationPage() {
   const counts = ranked.reduce((acc, c) => {
     acc[stateOf(c, today)]++
     return acc
-  }, { expired: 0, soon: 0, active: 0, unset: 0 } as Record<State, number>)
+  }, { expired: 0, renew: 0, soon: 0, active: 0, unset: 0 } as Record<State, number>)
 
   const billed = (data?.chart ?? []).reduce((s, m) => s + m.billed, 0)
   const cashed = (data?.chart ?? []).reduce((s, m) => s + m.paid, 0)
@@ -182,12 +198,13 @@ export default function FacturationPage() {
     'Encaissé': Math.round(m.paid / 100),
   }))
 
-  const pie = (['expired', 'soon', 'active', 'unset'] as State[])
+  const pie = (['expired', 'renew', 'soon', 'active', 'unset'] as State[])
     .map(s => ({ name: STATE_LABEL[s], value: counts[s], color: STATE_COLOR[s] }))
     .filter(d => d.value > 0)
 
-  // Relances : tout ce qui est expire ou sur le point de l'etre.
-  const toChase = ranked.filter(c => ['expired', 'soon'].includes(stateOf(c, today)))
+  // Tout ce qui demande un geste, quel qu'il soit : relancer un impaye,
+  // emettre l'echeance suivante, ou prevenir avant l'expiration.
+  const toHandle = ranked.filter(c => ['expired', 'renew', 'soon'].includes(stateOf(c, today)))
 
   return (
     <div className="dashboard-shell">
@@ -228,8 +245,9 @@ export default function FacturationPage() {
              sub={`${clubs.reduce((s, c) => s + c.unpaid_count, 0)} échéance(s) ouverte(s)`} />
         <Kpi label="Clubs à jour" value={String(counts.active)} icon={CheckCircle2} color="#2f6bff"
              sub={`${counts.unset} sans abonnement défini`} />
-        <Kpi label="À relancer" value={String(counts.expired + counts.soon)} icon={AlertTriangle} color="#ef4444"
-             sub={`${counts.expired} expiré(s), ${counts.soon} sous ${SOON_DAYS} jours`} />
+        <Kpi label="À traiter" value={String(counts.expired + counts.renew + counts.soon)}
+             icon={AlertTriangle} color="#ef4444"
+             sub={`${counts.expired} impayé(s), ${counts.renew} à renouveler, ${counts.soon} sous ${SOON_DAYS} j`} />
       </div>
 
       <div className="compta-charts-row">
@@ -284,23 +302,24 @@ export default function FacturationPage() {
       </div>
 
       {/* Relances : la raison d'etre de l'ecran. */}
-      {toChase.length > 0 && (
+      {toHandle.length > 0 && (
         <section className="dz-card">
           <div className="dz-card-head">
             <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
               <MessageCircle size={17} strokeWidth={2.1} style={{ color: '#25D366' }} />
-              Relances à envoyer
+              À traiter
             </h2>
-            <span className="dz-card-note">{toChase.length} club(s)</span>
+            <span className="dz-card-note">{toHandle.length} club(s)</span>
           </div>
 
           <div className="gf-table-wrap">
             <table className="gf-table">
               <thead>
-                <tr><th>Club</th><th>Échéance</th><th>Reste</th><th>Dû</th><th>WhatsApp</th></tr>
+                <tr><th>Club</th><th>Couvert jusqu&apos;au</th><th>Reste</th>
+                    <th>Dû</th><th>Situation</th><th>Action</th></tr>
               </thead>
               <tbody>
-                {toChase.map(club => {
+                {toHandle.map(club => {
                   const state = stateOf(club, today)
                   const left = daysUntil(club.expires_at, today)
                   return (
@@ -315,9 +334,24 @@ export default function FacturationPage() {
                           : left < 0 ? `${Math.abs(left)} j de retard`
                           : `${left} j`}
                       </td>
-                      <td style={{ fontWeight: 700 }}>{dh(club.unpaid_cents || (club.price_cents ?? 0))}</td>
+                      {/* Un tiret quand rien n'est facture : c'est different de zero. */}
+                      <td style={{ fontWeight: 700 }}>
+                        {club.unpaid_cents > 0 ? dh(club.unpaid_cents) : '—'}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap', color: STATE_COLOR[state], fontWeight: 700 }}>
+                        {STATE_LABEL[state]}
+                      </td>
                       <td>
-                        {club.phone ? (
+                        {/* Rien n'est du : le geste attendu n'est pas de
+                            relancer, c'est d'emettre la periode suivante. */}
+                        {state === 'renew' ? (
+                          <button className="gf-mini-btn" onClick={() => setInvoicing(club)}
+                                  disabled={club.price_cents === null}
+                                  style={{ background: 'rgba(56,189,248,0.14)',
+                                           borderColor: 'rgba(56,189,248,0.35)', color: '#38bdf8' }}>
+                            <Plus size={12} strokeWidth={2.6} /> Créer l’échéance
+                          </button>
+                        ) : club.phone ? (
                           <a className="gf-mini-btn" data-tone="whatsapp"
                              href={waLink(club.phone, reminderText(club, state, today))}
                              target="_blank" rel="noopener noreferrer">
@@ -336,8 +370,11 @@ export default function FacturationPage() {
             </table>
           </div>
           <p className="dz-card-note" style={{ marginTop: 12 }}>
-            Le lien ouvre WhatsApp avec le message prérempli. Vous relisez, puis vous envoyez :
-            aucune relance ne part toute seule.
+            <strong>Expiré · impayé</strong> : une échéance est ouverte, on relance le club.
+            <strong> À renouveler</strong> : tout est réglé, mais aucune échéance ne couvre
+            la période en cours — c&apos;est à vous d&apos;en émettre une.
+            Le lien WhatsApp ouvre la conversation avec le message prérempli ; vous relisez,
+            puis vous envoyez.
           </p>
         </section>
       )}
