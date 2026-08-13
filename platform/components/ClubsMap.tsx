@@ -105,7 +105,10 @@ export default function ClubsMap({
   onLocate: (club: MapClub, at: { lat: number; lng: number; label: string }) => Promise<void>
 }) {
   const [locating, setLocating] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState(false)
+  // Devoilement par paliers, comme les tableaux de supervision : tout ouvrir
+  // d'un coup remplace un mur par un autre.
+  const STEP = 6
+  const [count, setCount] = useState(STEP)
   const holder = useRef<HTMLDivElement>(null)
   const map = useRef<Gm>(null)
   const pinClass = useRef<Gm>(null)
@@ -256,9 +259,8 @@ export default function ClubsMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [clubs],
   )
-  const VISIBLE = 6
-  const shown = expanded ? sorted : sorted.slice(0, VISIBLE)
-  const rest = sorted.length - shown.length
+  const shown = sorted.slice(0, count)
+  const rest = Math.max(0, sorted.length - count)
 
   return (
     <div className="gf-map-wrap">
@@ -325,11 +327,23 @@ export default function ClubsMap({
         })}
       </ul>
 
-      {(rest > 0 || expanded) && (
-        <button className="gf-fold" onClick={() => setExpanded(o => !o)} aria-expanded={expanded}>
-          <ChevronDown size={15} strokeWidth={2.4} data-open={expanded ? 'true' : 'false'} />
-          {expanded ? 'Réduire' : `Voir les ${rest} autre${rest > 1 ? 's' : ''} salle${rest > 1 ? 's' : ''}`}
-        </button>
+      {(rest > 0 || count > STEP) && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {rest > 0 && (
+            <button className="gf-fold" onClick={() => setCount(c => c + STEP)}>
+              <ChevronDown size={15} strokeWidth={2.4} />
+              Afficher {Math.min(STEP, rest)} de plus
+              <span className="gf-fold-rest">
+                {rest} salle{rest > 1 ? 's' : ''} restante{rest > 1 ? 's' : ''}
+              </span>
+            </button>
+          )}
+          {count > STEP && (
+            <button className="gf-fold" onClick={() => setCount(STEP)}>
+              <ChevronDown size={15} strokeWidth={2.4} data-open="true" /> Réduire
+            </button>
+          )}
+        </div>
       )}
 
       {missing > 0 && (

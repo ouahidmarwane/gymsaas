@@ -223,8 +223,7 @@ export default function SupervisionPage() {
           </div>
         )}
 
-        <FoldButton hidden={foldSessions.hidden} open={foldSessions.open}
-                    onToggle={foldSessions.toggle} singular="autre session" plural="autres sessions" />
+        <FoldButton fold={foldSessions} singular="session restante" plural="sessions restantes" />
 
         <p className="dz-card-note" style={{ marginTop: 14 }}>
           « En ligne » = battement recu il y a moins de 2 min. « Deconnecter » revoque
@@ -312,8 +311,7 @@ export default function SupervisionPage() {
             </table>
           </div>
         )}
-        <FoldButton hidden={foldOffenders.hidden} open={foldOffenders.open}
-                    onToggle={foldOffenders.toggle} singular="autre adresse" plural="autres adresses" />
+        <FoldButton fold={foldOffenders} singular="adresse restante" plural="adresses restantes" />
       </section>
 
       {blocklist.length > 0 && (
@@ -345,8 +343,7 @@ export default function SupervisionPage() {
               </tbody>
             </table>
           </div>
-          <FoldButton hidden={foldBlocked.hidden} open={foldBlocked.open}
-                      onToggle={foldBlocked.toggle} singular="autre adresse" plural="autres adresses" />
+          <FoldButton fold={foldBlocked} singular="adresse restante" plural="adresses restantes" />
         </section>
       )}
 
@@ -412,8 +409,7 @@ export default function SupervisionPage() {
             </table>
           </div>
         )}
-        <FoldButton hidden={foldEvents.hidden} open={foldEvents.open}
-                    onToggle={foldEvents.toggle} singular="autre evenement" plural="autres evenements" />
+        <FoldButton fold={foldEvents} singular="evenement restant" plural="evenements restants" />
       </section>
     </div>
   )
@@ -439,33 +435,51 @@ const Skeleton = () => (
 )
 
 /**
- * Replie une liste au-dela de quelques lignes.
+ * Devoile une liste par paliers.
  *
  * Cinquante sessions et trente-cinq salles depliees d'emblee, c'est trois
  * ecrans de defilement avant d'atteindre les alertes — donc une page de
- * securite ou l'on ne voit plus ce qui compte. On montre les premieres
- * lignes, la fleche donne le reste.
+ * securite ou l'on ne voit plus ce qui compte. Mais tout ouvrir d'un coup
+ * ramene le meme mur : on avance donc par paliers, un clic a la fois.
  */
-function useFold<T>(rows: T[], visible: number) {
-  const [open, setOpen] = useState(false)
-  const hidden = Math.max(0, rows.length - visible)
+export function useFold<T>(rows: T[], step: number) {
+  const [count, setCount] = useState(step)
+  const hidden = Math.max(0, rows.length - count)
   return {
-    shown: open ? rows : rows.slice(0, visible),
+    shown: rows.slice(0, count),
     hidden,
-    open,
-    toggle: () => setOpen(o => !o),
+    /** Combien le prochain clic ajoutera reellement. */
+    next: Math.min(step, hidden),
+    expanded: count > step,
+    more: () => setCount(c => c + step),
+    reset: () => setCount(step),
   }
 }
 
-function FoldButton({ hidden, open, onToggle, singular, plural }: {
-  hidden: number; open: boolean; onToggle: () => void; singular: string; plural: string
+function FoldButton({ fold, singular, plural }: {
+  fold: ReturnType<typeof useFold<unknown>>
+  singular: string
+  plural: string
 }) {
-  if (hidden === 0) return null
+  if (fold.hidden === 0 && !fold.expanded) return null
+  const noun = fold.hidden > 1 ? plural : singular
   return (
-    <button className="gf-fold" onClick={onToggle} aria-expanded={open}>
-      <ChevronDown size={15} strokeWidth={2.4} data-open={open ? 'true' : 'false'} />
-      {open ? 'Réduire' : `Voir les ${hidden} ${hidden > 1 ? plural : singular}`}
-    </button>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      {fold.hidden > 0 && (
+        <button className="gf-fold" onClick={fold.more}>
+          <ChevronDown size={15} strokeWidth={2.4} />
+          Afficher {fold.next} de plus
+          {/* Le reste a parcourir : sans ce chiffre on clique sans savoir
+              s'il en reste trois ou trois cents. */}
+          <span className="gf-fold-rest">{fold.hidden} {noun}</span>
+        </button>
+      )}
+      {fold.expanded && (
+        <button className="gf-fold" onClick={fold.reset}>
+          <ChevronDown size={15} strokeWidth={2.4} data-open="true" /> Réduire
+        </button>
+      )}
+    </div>
   )
 }
 
