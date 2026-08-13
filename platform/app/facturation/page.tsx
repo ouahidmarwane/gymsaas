@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Receipt, Wallet, AlertTriangle, Clock, CheckCircle2, MessageCircle,
-  Plus, Settings2, ChevronDown, Undo2, Trash2,
+  Plus, Settings2, ChevronDown, Undo2, Trash2, RefreshCw, FileText,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -46,6 +46,10 @@ interface Invoice {
   paid_at: string | null
   method: string | null
   note: string | null
+  proof_status: 'pending' | 'accepted' | 'rejected' | null
+  proof_reference: string | null
+  proof_has_file: number | null
+  proof_at: string | null
 }
 
 interface Payload {
@@ -55,6 +59,7 @@ interface Payload {
   clubs: ClubBilling[]
   invoices: Invoice[]
   chart: Array<{ month: number; billed: number; paid: number }>
+  bankDetails: string | null
   today: string
 }
 
@@ -162,11 +167,19 @@ export default function FacturationPage() {
 
   useEffect(() => { load() }, [load])
 
-  async function act(key: string, run: () => Promise<unknown>, done?: string) {
+  /**
+   * L'action peut renvoyer son propre message : le renouvellement ne sait
+   * qu'apres coup quelle periode le serveur a retenue.
+   */
+  async function act(key: string, run: () => Promise<string | void>, done?: string) {
     setBusy(key); setError(null); setNotice(null)
-    try { await run(); await load(); if (done) setNotice(done) }
-    catch (e) { setError(e instanceof ApiError ? e.message : 'Action impossible') }
-    finally { setBusy(null) }
+    try {
+      const message = await run()
+      await load()
+      setNotice(message ?? done ?? null)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Action impossible')
+    } finally { setBusy(null) }
   }
 
   const today = data?.today ?? new Date().toISOString().slice(0, 10)
@@ -345,12 +358,7 @@ export default function FacturationPage() {
                         {/* Rien n'est du : le geste attendu n'est pas de
                             relancer, c'est d'emettre la periode suivante. */}
                         {state === 'renew' ? (
-                          <button className="gf-mini-btn" onClick={() => setInvoicing(club)}
-                                  disabled={club.price_cents === null}
-                                  style={{ background: 'rgba(56,189,248,0.14)',
-                                           borderColor: 'rgba(56,189,248,0.35)', color: '#38bdf8' }}>
-                            <Plus size={12} strokeWidth={2.6} /> Créer l’échéance
-                          </button>
+                          <RenewButton club={club} busy={busy} onRenew={act} />
                         ) : club.phone ? (
                           <a className="gf-mini-btn" data-tone="whatsapp"
                              href={waLink(club.phone, reminderText(club, state, today))}
@@ -422,12 +430,13 @@ export default function FacturationPage() {
                       {club.unpaid_cents > 0 ? dh(club.unpaid_cents) : '—'}
                     </td>
                     <td style={{ display: 'flex', gap: 6 }}>
+                      <RenewButton club={club} busy={busy} onRenew={act} />
                       <button className="gf-mini-btn" onClick={() => setEditing(club)}
                               title="Tarif, cycle, numéro">
                         <Settings2 size={12} strokeWidth={2.4} />
                       </button>
                       <button className="gf-mini-btn" onClick={() => setInvoicing(club)}
-                              disabled={club.price_cents === null} title="Nouvelle échéance">
+                              disabled={club.price_cents === null} title="Échéance sur mesure">
                         <Plus size={12} strokeWidth={2.6} />
                       </button>
                     </td>
@@ -485,7 +494,34 @@ export default function FacturationPage() {
                             </span>
                           )}
                         </td>
-                        <td style={{ display: 'flex', gap: 6 }}>
+                        <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {/* Un justificatif depose passe avant tout : c'est
+                              le club qui attend une reponse. */}
+                          {!inv.paid_at && inv.proof_status === 'pending' && (
+                            <>
+                              {inv.proof_has_file ? (
+                                <a className="gf-mini-btn" target="_blank" rel="noopener noreferrer"
+                                   href={`/api/admin/proofs/${inv.id}/file`}>
+                                  <FileText size={12} strokeWidth={2.4} /> Reçu
+                                </a>
+                              ) : null}
+                              <button className="gf-mini-btn" disabled={busy !== null}
+                                      style={{ background: 'rgba(22,163,74,0.15)',
+                                               borderColor: 'rgba(22,163,74,0.35)', color: '#4ade80' }}
+                                      onClick={() => act(`a-${inv.id}`,
+                                        () => api.post(`/api/admin/proofs/${inv.id}/accept`, {}),
+                                        `${inv.org_name} : virement validé.`)}>
+                                <CheckCircle2 size={12} strokeWidth={2.4} /> Valider le virement
+                              </button>
+                              <button className="gf-mini-btn" data-tone="danger" disabled={busy !== null}
+                                      onClick={() => act(`x-${inv.id}`,
+                                        () => api.post(`/api/admin/proofs/${inv.id}/reject`,
+                                          { reason: 'Justificatif non conforme' }),
+                                        'Justificatif refusé.')}>
+                                Refuser
+                              </button>
+                            </>
+                          )}
                           {inv.paid_at ? (
                             <button className="gf-mini-btn" disabled={busy !== null}
                                     onClick={() => act(`u-${inv.id}`,
@@ -524,6 +560,9 @@ export default function FacturationPage() {
         )}
       </section>
 
+      {/* Ce que les clubs liront sur leur page d'abonnement. */}
+      <BankDetails initial={data?.bankDetails ?? ''} onSaved={load} />
+
       {editing && (
         <BillingModal club={editing} onClose={() => setEditing(null)}
                       onSaved={() => { setEditing(null); load(); setNotice('Abonnement enregistré.') }} />
@@ -537,6 +576,85 @@ export default function FacturationPage() {
 }
 
 // Briques ----------------------------------------------------------------
+
+/**
+ * Renouveler en un clic.
+ *
+ * Le serveur choisit la periode : elle enchaine sur la couverture actuelle,
+ * ou repart d'aujourd'hui si cet enchainement se terminerait encore dans le
+ * passe. Le retour dit ce qui a ete pose, y compris les jours laisses de
+ * cote — un renouvellement qui ecrase silencieusement deux mois de retard
+ * serait une surprise desagreable a la lecture du releve.
+ */
+function RenewButton({ club, busy, onRenew }: {
+  club: ClubBilling
+  busy: string | null
+  onRenew: (key: string, run: () => Promise<string | void>) => Promise<void>
+}) {
+  return (
+    <button
+      className="gf-mini-btn"
+      style={{ background: 'rgba(56,189,248,0.14)', borderColor: 'rgba(56,189,248,0.35)', color: '#38bdf8' }}
+      disabled={busy !== null || club.price_cents === null}
+      title={club.price_cents === null ? 'Définissez d’abord le tarif' : 'Renouveler et encaisser'}
+      onClick={() => onRenew(`r-${club.id}`, async () => {
+        const res = await api.post<{ periodStart: string; periodEnd: string; gapDays: number }>(
+          `/api/admin/billing/${club.id}/renew`, { markPaid: true, method: 'manuel' },
+        )
+        return `${club.name} : couvert du ${day(res.periodStart)} au ${day(res.periodEnd)}.`
+          + (res.gapDays > 0 ? ` ${res.gapDays} jour(s) de retard non facturés.` : '')
+      })}
+    >
+      <RefreshCw size={12} strokeWidth={2.5} /> Renouveler
+    </button>
+  )
+}
+
+/**
+ * Coordonnees bancaires, telles que les clubs les liront.
+ *
+ * Champ libre plutot que RIB / IBAN / titulaire separes : chaque banque
+ * marocaine presente son releve differemment, et un formulaire rigide
+ * obligerait a tordre l'information au lieu de la recopier.
+ */
+function BankDetails({ initial, onSaved }: { initial: string; onSaved: () => void }) {
+  const [value, setValue] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [touched, setTouched] = useState(false)
+
+  // Suit la valeur du serveur tant que l'exploitant n'a rien tape.
+  useEffect(() => { if (!touched) setValue(initial) }, [initial, touched])
+
+  return (
+    <section className="dz-card">
+      <div className="dz-card-head">
+        <h2 className="dz-card-title">Coordonnées bancaires</h2>
+        <span className="dz-card-note" aria-live="polite">
+          {saved ? <span style={{ color: '#6ee7b7' }}>Enregistré</span> : 'Affichées aux clubs'}
+        </span>
+      </div>
+      <textarea
+        className="input-dark"
+        rows={5}
+        value={value}
+        maxLength={2000}
+        placeholder={'GymFlow SARL\nBanque Populaire\nRIB : 000 000 0000000000000000 00\nMotif : nom du club + période'}
+        style={{ width: '100%', marginTop: 12, fontFamily: 'inherit', resize: 'vertical' }}
+        onChange={e => { setValue(e.target.value); setTouched(true); setSaved(false) }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
+        <button className="gf-mini-btn" disabled={busy} onClick={async () => {
+          setBusy(true)
+          try {
+            await api.put('/api/admin/bank-details', { value })
+            setSaved(true); setTouched(false); onSaved()
+          } finally { setBusy(false) }
+        }}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button>
+      </div>
+    </section>
+  )
+}
 
 function Banner({ tone, children }: { tone: 'danger' | 'ok'; children: React.ReactNode }) {
   const danger = tone === 'danger'

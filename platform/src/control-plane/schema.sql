@@ -250,3 +250,35 @@ CREATE TABLE IF NOT EXISTS org_invoices (
 CREATE INDEX IF NOT EXISTS idx_invoices_org  ON org_invoices(org_id, period_start DESC);
 CREATE INDEX IF NOT EXISTS idx_invoices_due  ON org_invoices(due_date);
 CREATE INDEX IF NOT EXISTS idx_invoices_open ON org_invoices(paid_at) WHERE paid_at IS NULL;
+
+-- Preuve de virement rattachee a une echeance.
+--
+-- Table separee plutot que des colonnes sur org_invoices : le fichier de
+-- schema est rejoue tel quel, et SQLite n'a pas de ALTER TABLE ADD COLUMN
+-- IF NOT EXISTS. Elle porte aussi le cycle de revue, qui n'appartient pas a
+-- la facture elle-meme.
+CREATE TABLE IF NOT EXISTS org_invoice_proofs (
+  invoice_id    TEXT PRIMARY KEY REFERENCES org_invoices(id) ON DELETE CASCADE,
+  org_id        TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  file_key      TEXT,                     -- cle R2 du justificatif, jamais une URL
+  reference     TEXT,                     -- libelle du virement, saisi par le club
+  note          TEXT,
+  status        TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending','accepted','rejected')),
+  reject_reason TEXT,
+  submitted_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  submitted_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reviewed_at   TEXT,
+  reviewed_by   TEXT REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_proofs_pending ON org_invoice_proofs(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_proofs_org     ON org_invoice_proofs(org_id);
+
+-- Reglages de la plateforme : coordonnees bancaires affichees aux clubs,
+-- consignes de virement. Cle/valeur, comme pour un club.
+CREATE TABLE IF NOT EXISTS platform_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);

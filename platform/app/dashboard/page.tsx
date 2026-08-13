@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api, ApiError, type Me } from '@/lib/client'
 import EditablePage from '@/components/EditablePage'
 import PageState from '@/components/PageState'
+import SubscriptionNotice from '@/components/SubscriptionNotice'
 
 export default function DashboardPage() {
   const [me, setMe] = useState<Me | null>(null)
@@ -42,6 +43,9 @@ export default function DashboardPage() {
           })}
     >
       <PageState error={error} />
+
+      {/* Ne s'affiche que s'il y a quelque chose a regler. */}
+      {!inSupport && <SubscriptionNotice />}
 
       {/* Un club sans salle ni sport ne peut rien faire d'utile : on le dit
           avant d'afficher une grille de zeros. */}

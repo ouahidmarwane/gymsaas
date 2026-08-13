@@ -335,6 +335,78 @@ async function recomputeExpiry(env: Env, orgId: string): Promise<void> {
   ).bind(orgId, row?.last ?? null).run()
 }
 
+/**
+ * Etat d'abonnement d'un club, tel qu'il se voit lui-meme.
+ *
+ * Le meme calcul sert a la page du club, a son encart de tableau de bord et
+ * a la redirection quand l'abonnement a expire : une seule source, sinon les
+ * trois finissent par se contredire.
+ */
+async function subscriptionOf(env: Env, orgId: string) {
+  const billing = await env.CONTROL.prepare(
+    `SELECT b.price_cents, b.cycle_months, b.expires_at, b.phone, o.name AS org_name
+       FROM organizations o LEFT JOIN org_billing b ON b.org_id = o.id
+      WHERE o.id = ?`,
+  ).bind(orgId).first<{
+    price_cents: number | null; cycle_months: number | null
+    expires_at: string | null; phone: string | null; org_name: string
+  }>()
+
+  const invoices = await env.CONTROL.prepare(
+    `SELECT i.id, i.period_start, i.period_end, i.amount_cents, i.due_date, i.paid_at,
+            p.status AS proof_status, p.reference AS proof_reference,
+            p.submitted_at AS proof_at, p.reject_reason
+       FROM org_invoices i
+       LEFT JOIN org_invoice_proofs p ON p.invoice_id = i.id
+      WHERE i.org_id = ?
+      ORDER BY i.period_start DESC
+      LIMIT 24`,
+  ).bind(orgId).all()
+
+  const bank = await env.CONTROL.prepare(
+    "SELECT value FROM platform_settings WHERE key = 'bank_details'",
+  ).first<{ value: string }>()
+
+  const today = isoSeconds(new Date()).slice(0, 10)
+  const expiresAt = billing?.expires_at ?? null
+  const daysLeft = expiresAt
+    ? Math.round((Date.parse(`${expiresAt}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000)
+    : null
+
+  // Un club sans tarif defini n'est pas en faute : la plateforme ne lui a
+  // simplement rien facture. Il ne doit surtout pas etre traite en impaye.
+  const configured = billing?.price_cents != null
+  const open = invoices.results.filter(r => !(r as { paid_at: string | null }).paid_at)
+
+  return {
+    orgName: billing?.org_name ?? '',
+    configured,
+    priceCents: billing?.price_cents ?? null,
+    cycleMonths: billing?.cycle_months ?? null,
+    expiresAt,
+    daysLeft,
+    expired: configured && expiresAt !== null && daysLeft !== null && daysLeft < 0,
+    dueCents: open.reduce((s, r) => s + (r as { amount_cents: number }).amount_cents, 0),
+    invoices: invoices.results,
+    bankDetails: bank?.value ?? null,
+    today,
+  }
+}
+
+const MAX_PROOF_BYTES = 4 * 1024 * 1024
+
+const PROOF_TYPES: Record<string, string> = {
+  'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'application/pdf': 'pdf',
+}
+
+// Volontairement sans SVG, comme pour les logos : un SVG est un document
+// capable de porter du script, et celui-ci sera ouvert par un exploitant.
+function proofExtension(contentType: string): string {
+  const ext = PROOF_TYPES[contentType.split(';')[0]!.trim()]
+  if (!ext) throw new HttpError(400, 'Format accepte : PNG, JPEG, WebP ou PDF')
+  return ext
+}
+
 const MAX_GRADES = 40
 
 function parseGrades(v: unknown): Array<{ label: string; labelAr: string | null; color: string | null }> {
@@ -1394,6 +1466,72 @@ export const api = {
         return json({ ok: true, orphanedAccounts: orphans.results.length })
       }
 
+      // Abonnement, vu par le club lui-meme -------------------------------
+      //
+      // Un club voit SON abonnement, jamais celui d'un autre : l'identifiant
+      // vient de la session, aucun parametre ne peut le changer.
+
+      if (path === '/api/subscription' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        return json(await subscriptionOf(env, scopedOrgId(principal)))
+      }
+
+      /**
+       * Justificatif de virement.
+       *
+       * Le fichier est pousse tel quel dans le corps, comme le logo : une URL
+       * signee serait plus lourde pour quelques centaines de kilo-octets, et
+       * la cle est fabriquee ici, donc infalsifiable.
+       */
+      const proofRoute = path.match(/^\/api\/subscription\/invoices\/([^/]+)\/proof$/)
+      if (proofRoute && method === 'PUT') {
+        atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        const invoiceId = proofRoute[1]!
+
+        const invoice = await env.CONTROL.prepare(
+          'SELECT id FROM org_invoices WHERE id = ? AND org_id = ?',
+        ).bind(invoiceId, orgId).first()
+        if (!invoice) return fail(404, 'Echeance inconnue')
+
+        const contentType = request.headers.get('Content-Type') ?? ''
+        const reference = url.searchParams.get('reference')?.slice(0, 80) ?? null
+
+        let fileKey: string | null = null
+        if (contentType && !contentType.includes('application/json')) {
+          const ext = proofExtension(contentType)
+          // La taille annoncee est verifiee AVANT de lire : un corps de
+          // 100 Mo serait entierement charge en memoire avant d'etre refuse.
+          const declared = Number(request.headers.get('Content-Length') ?? '0')
+          if (!Number.isFinite(declared) || declared > MAX_PROOF_BYTES) {
+            throw new HttpError(413, 'Justificatif trop volumineux : 4 Mo maximum')
+          }
+          const bytes = await request.arrayBuffer()
+          if (bytes.byteLength === 0) throw new HttpError(400, 'Fichier vide')
+          if (bytes.byteLength > MAX_PROOF_BYTES) {
+            throw new HttpError(413, 'Justificatif trop volumineux : 4 Mo maximum')
+          }
+          fileKey = `billing-proofs/${orgId}/${invoiceId}-${Date.now()}.${ext}`
+          await env.MEDIA.put(fileKey, bytes, { httpMetadata: { contentType } })
+        }
+
+        // Un depot remplace le precedent : un club qui s'est trompe de fichier
+        // doit pouvoir corriger sans creer une seconde demande a arbitrer.
+        await env.CONTROL.prepare(
+          `INSERT INTO org_invoice_proofs (invoice_id, org_id, file_key, reference, submitted_by, status)
+           VALUES (?, ?, ?, ?, ?, 'pending')
+           ON CONFLICT(invoice_id) DO UPDATE SET
+             file_key = COALESCE(excluded.file_key, org_invoice_proofs.file_key),
+             reference = excluded.reference,
+             status = 'pending', reject_reason = NULL,
+             submitted_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+             submitted_by = excluded.submitted_by,
+             reviewed_at = NULL, reviewed_by = NULL`,
+        ).bind(invoiceId, orgId, fileKey, reference, principal.userId).run()
+
+        return json({ ok: true })
+      }
+
       // Facturation des clubs -------------------------------------------
       //
       // Ce que la plateforme facture a ses clients, a ne pas confondre avec
@@ -1432,10 +1570,13 @@ export const api = {
           ).all(),
 
           env.CONTROL.prepare(
-            `SELECT i.*, o.name AS org_name, o.slug AS org_slug, b.phone
+            `SELECT i.*, o.name AS org_name, o.slug AS org_slug, b.phone,
+                    p.status AS proof_status, p.reference AS proof_reference,
+                    p.file_key IS NOT NULL AS proof_has_file, p.submitted_at AS proof_at
                FROM org_invoices i
                JOIN organizations o ON o.id = i.org_id
                LEFT JOIN org_billing b ON b.org_id = i.org_id
+               LEFT JOIN org_invoice_proofs p ON p.invoice_id = i.id
               WHERE i.period_start BETWEEN ? AND ?
                 AND (? IS NULL OR CAST(strftime('%m', i.period_start) AS INTEGER) - 1 = ?)
               ORDER BY i.due_date DESC
@@ -1453,6 +1594,10 @@ export const api = {
               GROUP BY m`,
           ).bind(from, to).all<{ m: number; billed: number; paid: number }>(),
         ])
+
+        const bank = await env.CONTROL.prepare(
+          "SELECT value FROM platform_settings WHERE key = 'bank_details'",
+        ).first<{ value: string }>()
 
         const years = await env.CONTROL.prepare(
           `SELECT DISTINCT CAST(strftime('%Y', period_start) AS INTEGER) AS y
@@ -1475,6 +1620,7 @@ export const api = {
           }),
           invoices: invoices.results,
           chart,
+          bankDetails: bank?.value ?? null,
           today: isoSeconds(new Date()).slice(0, 10),
         })
       }
@@ -1546,6 +1692,139 @@ export const api = {
                dateOnly(body.dueDate, 'dueDate') ?? start,
                optional(body.note, 300), principal.userId).run()
         return json({ id }, { status: 201 })
+      }
+
+      /**
+       * Renouvellement en un geste.
+       *
+       * La periode enchaine sur la couverture precedente — sauf si cet
+       * enchainement se terminerait encore dans le passe. Un club couvert
+       * jusqu'au 26 juillet renouvele le 13 aout recevrait sinon une periode
+       * du 27 juillet au 27 aout : elle couvre bien aujourd'hui. Mais couvert
+       * jusqu'en mars, il recevrait une periode qui expire en avril, donc un
+       * renouvellement qui ne renouvelle rien. Dans ce cas on repart
+       * d'aujourd'hui plutot que de facturer en silence les cinq cycles
+       * manquants.
+       */
+      /**
+       * Arbitrage d'un justificatif.
+       *
+       * Accepter marque l'echeance payee et avance la couverture ; refuser
+       * laisse l'echeance ouverte avec un motif, pour que le club sache quoi
+       * corriger plutot que de redeposer le meme fichier.
+       */
+      const proofReview = path.match(/^\/api\/admin\/proofs\/([^/]+)\/(accept|reject)$/)
+      if (proofReview && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const invoiceId = proofReview[1]!
+        const accept = proofReview[2] === 'accept'
+
+        const proof = await env.CONTROL.prepare(
+          'SELECT org_id FROM org_invoice_proofs WHERE invoice_id = ?',
+        ).bind(invoiceId).first<{ org_id: string }>()
+        if (!proof) return fail(404, 'Justificatif inconnu')
+
+        const body = await readJson(request).catch(() => ({} as Record<string, unknown>))
+
+        await env.CONTROL.prepare(
+          `UPDATE org_invoice_proofs
+              SET status = ?, reject_reason = ?,
+                  reviewed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), reviewed_by = ?
+            WHERE invoice_id = ?`,
+        ).bind(accept ? 'accepted' : 'rejected',
+               accept ? null : optional(body.reason, 300), principal.userId, invoiceId).run()
+
+        if (accept) {
+          await env.CONTROL.prepare(
+            "UPDATE org_invoices SET paid_at = date('now'), method = 'virement' WHERE id = ?",
+          ).bind(invoiceId).run()
+          await recomputeExpiry(env, proof.org_id)
+        }
+
+        await env.CONTROL.prepare(
+          "INSERT INTO platform_audit (actor_id, action, detail, ip) VALUES (?, ?, ?, ?)",
+        ).bind(principal.userId, accept ? 'proof_accept' : 'proof_reject',
+               JSON.stringify({ invoiceId, orgId: proof.org_id }), ip).run()
+
+        return json({ ok: true })
+      }
+
+      // Justificatif servi par le Worker : la cle R2 ne sort jamais, et
+      // l'acces est refuse a qui n'est pas de la plateforme.
+      const proofFile = path.match(/^\/api\/admin\/proofs\/([^/]+)\/file$/)
+      if (proofFile && method === 'GET') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const row = await env.CONTROL.prepare(
+          'SELECT file_key FROM org_invoice_proofs WHERE invoice_id = ?',
+        ).bind(proofFile[1]!).first<{ file_key: string | null }>()
+        if (!row?.file_key) return fail(404, 'Aucun fichier')
+        const object = await env.MEDIA.get(row.file_key)
+        if (!object) return fail(404, 'Fichier introuvable')
+        return new Response(object.body, {
+          headers: {
+            'Content-Type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+            'Cache-Control': 'private, max-age=60',
+            // Un justificatif est un document, pas une page : servi en
+            // pieces jointes il ne peut pas s'executer dans notre origine.
+            'Content-Disposition': 'inline',
+            'X-Content-Type-Options': 'nosniff',
+          },
+        })
+      }
+
+      // Coordonnees bancaires montrees aux clubs sur leur page d'abonnement.
+      if (path === '/api/admin/bank-details' && method === 'PUT') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const body = await readJson(request)
+        const value = optional(body.value, 2000) ?? ''
+        await env.CONTROL.prepare(
+          `INSERT INTO platform_settings (key, value) VALUES ('bank_details', ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+        ).bind(value).run()
+        return json({ ok: true })
+      }
+
+      const billingRenew = path.match(/^\/api\/admin\/billing\/([^/]+)\/renew$/)
+      if (billingRenew && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const orgId = billingRenew[1]!
+        const billing = await env.CONTROL.prepare(
+          'SELECT price_cents, cycle_months, expires_at FROM org_billing WHERE org_id = ?',
+        ).bind(orgId).first<{ price_cents: number; cycle_months: number; expires_at: string | null }>()
+        if (!billing) return fail(400, 'Definissez d abord le tarif de ce club')
+
+        const today = isoSeconds(new Date()).slice(0, 10)
+        let start = nextDay(billing.expires_at) ?? today
+        let end = addMonths(start, billing.cycle_months)
+        let gapDays = 0
+        if (end <= today) {
+          gapDays = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000)
+          start = today
+          end = addMonths(start, billing.cycle_months)
+        }
+
+        const body = await readJson(request).catch(() => ({} as Record<string, unknown>))
+        const id = newId()
+        await env.CONTROL.prepare(
+          `INSERT INTO org_invoices (id, org_id, period_start, period_end, amount_cents,
+                                     due_date, note, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(id, orgId, start, end, billing.price_cents, start,
+               gapDays > 0 ? `Renouvellement, ${gapDays} j non factures` : null,
+               principal.userId).run()
+
+        // Encaisse dans la foulee quand on le demande : le cas courant est un
+        // club qui paie au moment ou on cree l'echeance.
+        if (body.markPaid === true) {
+          await env.CONTROL.prepare(
+            "UPDATE org_invoices SET paid_at = date('now'), method = ? WHERE id = ?",
+          ).bind(optional(body.method, 40), id).run()
+          await recomputeExpiry(env, orgId)
+        }
+
+        return json({ id, periodStart: start, periodEnd: end, gapDays,
+                      amountCents: billing.price_cents }, { status: 201 })
       }
 
       const invoicePaid = path.match(/^\/api\/admin\/invoices\/([^/]+)\/paid$/)
@@ -1792,8 +2071,53 @@ export const api = {
     for (const { id } of results) {
       await refreshOrgStats(env, id)
     }
+
+    await issueDueInvoices(env)
   },
 } satisfies ExportedHandler<Env>
+
+/**
+ * Emet l'echeance suivante des qu'un abonnement approche de sa fin.
+ *
+ * C'est la part automatisable du renouvellement : la facture se cree seule,
+ * sept jours avant l'echeance, et apparait aussitot dans « A traiter » avec
+ * son lien WhatsApp pret. L'ENVOI, lui, reste manuel — l'API WhatsApp
+ * Business exige un compte verifie, des modeles approuves et facture chaque
+ * message ; promettre un envoi automatique sans elle serait mentir.
+ *
+ * Le garde-fou est la clause NOT EXISTS : une echeance couvrant deja la
+ * suite empeche d'en creer une seconde. Sans elle, le cron toutes les cinq
+ * minutes facturerait le meme club deux cent quatre-vingt-huit fois par jour.
+ */
+async function issueDueInvoices(env: Env): Promise<void> {
+  const { results } = await env.CONTROL.prepare(
+    `SELECT b.org_id, b.price_cents, b.cycle_months, b.expires_at
+       FROM org_billing b
+       JOIN organizations o ON o.id = b.org_id
+      WHERE o.status = 'active'
+        AND b.price_cents > 0
+        AND b.expires_at IS NOT NULL
+        AND date(b.expires_at) <= date('now', '+7 days')
+        AND NOT EXISTS (
+              SELECT 1 FROM org_invoices i
+               WHERE i.org_id = b.org_id AND date(i.period_end) > date(b.expires_at)
+            )
+      LIMIT 50`,
+  ).all<{ org_id: string; price_cents: number; cycle_months: number; expires_at: string }>()
+
+  const today = isoSeconds(new Date()).slice(0, 10)
+
+  for (const row of results) {
+    let start = nextDay(row.expires_at) ?? today
+    let end = addMonths(start, row.cycle_months)
+    if (end <= today) { start = today; end = addMonths(start, row.cycle_months) }
+
+    await env.CONTROL.prepare(
+      `INSERT INTO org_invoices (id, org_id, period_start, period_end, amount_cents, due_date, note)
+       VALUES (?, ?, ?, ?, ?, ?, 'Emise automatiquement')`,
+    ).bind(newId(), row.org_id, start, end, row.price_cents, start).run()
+  }
+}
 
 /**
  * Recopie les chiffres d'un club dans le cache du plan de controle.

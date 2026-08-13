@@ -33,6 +33,7 @@ const CLUB_NAV: NavItem[] = [
   { href: '/championships',  label: 'Championnats',     icon: Trophy },
   { href: '/comptabilite',   label: 'Comptabilite',     icon: Wallet },
   { href: '/staff',          label: 'Equipe & droits',  icon: UserCog },
+  { href: '/abonnement',     label: 'Mon abonnement',   icon: Receipt },
   { href: '/setup',          label: 'Configuration',    icon: SlidersHorizontal },
 ]
 
@@ -117,6 +118,28 @@ export default function Shell({ children }: { children: ReactNode }) {
     if (clubRoute && me.isPlatformAdmin && !me.org && me.scope.mode !== 'support') {
       router.replace('/admin')
     }
+  }, [me, pathname, router])
+
+  /**
+   * Abonnement expire : le club se connecte, puis atterrit sur sa page
+   * d'abonnement.
+   *
+   * C'est une redirection, pas un verrou — l'API reste ouverte. Couper
+   * reellement l'acces sur une donnee de facturation ferait sortir un bon
+   * client au premier decalage de validation.
+   *
+   * Jamais en mode support : l'exploitant vient justement regarder ce qui se
+   * passe dans un club, y compris quand il n'a pas paye.
+   */
+  useEffect(() => {
+    if (!me || me.isPlatformAdmin || me.scope.mode === 'support') return
+    if (!me.org || pathname.startsWith('/abonnement') || pathname.startsWith('/account')) return
+
+    let alive = true
+    api.get<{ expired: boolean }>('/api/subscription')
+      .then(s => { if (alive && s.expired) router.replace('/abonnement') })
+      .catch(() => { /* la facturation ne doit jamais fermer l'application */ })
+    return () => { alive = false }
   }, [me, pathname, router])
 
   if (failed) {
