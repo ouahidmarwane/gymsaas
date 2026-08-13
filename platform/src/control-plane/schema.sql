@@ -182,3 +182,29 @@ CREATE TABLE IF NOT EXISTS platform_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_platform_audit_time ON platform_audit(created_at DESC);
+
+-- Emplacement d'un club, pour la carte de supervision.
+--
+-- Table separee plutot que deux colonnes sur organizations : le fichier de
+-- schema est rejoue tel quel sur une base existante, et SQLite n'a pas de
+-- ALTER TABLE ADD COLUMN IF NOT EXISTS. Une table de plus se cree sans
+-- risque, une colonne de plus casse le rejeu.
+CREATE TABLE IF NOT EXISTS org_locations (
+  org_id     TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  lat        REAL NOT NULL,
+  lng        REAL NOT NULL,
+  label      TEXT,                            -- adresse lisible, telle que saisie
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+-- Adresses bloquees a la connexion.
+--
+-- Le blocage se fait AVANT la verification du mot de passe et avant tout
+-- comptage : une adresse bloquee ne doit meme pas pouvoir mesurer le temps
+-- de reponse pour deviner si un compte existe.
+CREATE TABLE IF NOT EXISTS ip_blocklist (
+  ip         TEXT PRIMARY KEY,
+  reason     TEXT,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);

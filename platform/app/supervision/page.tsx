@@ -1,9 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ShieldAlert, LogOut, Check, Wifi, AlertTriangle } from 'lucide-react'
+import {
+  ShieldAlert, LogOut, Check, Activity, Lock, Ban, MapPin, Unlock,
+} from 'lucide-react'
 import { api, ApiError } from '@/lib/client'
+import ClubsMap, { type MapClub } from '@/components/ClubsMap'
 
 interface Session {
   user_id: string
@@ -11,7 +14,6 @@ interface Session {
   created_at: string
   last_seen_at: string
   ip: string | null
-  user_agent: string | null
   support_org_id: string | null
   user_name: string
   email: string
@@ -33,290 +35,423 @@ interface SecurityEvent {
   org_name: string | null
 }
 
-interface FailedAttempt {
-  identifier: string
-  ip: string | null
+/** Echecs regroupes par ADRESSE : c'est la maille d'une attaque, pas le compte. */
+interface Offender {
+  ip: string
   failures: number
+  accounts: number
   last_attempt: string
+  blocked: number
+}
+
+interface Blocked {
+  ip: string
+  reason: string | null
+  created_at: string
+  created_by_name: string | null
+}
+
+interface Payload {
+  sessions: Session[]
+  events: SecurityEvent[]
+  offenders: Offender[]
+  blocklist: Blocked[]
+  clubs: MapClub[]
+  mapsKey: string | null
 }
 
 const REFRESH_MS = 10_000
-const ONLINE_MS = 130_000   // deux battements de coeur, comme avant
+const ONLINE_MS = 130_000       // deux battements de coeur
+const BLOCK_SUGGESTED = 5       // au-dela, on propose le blocage d'emblee
+
+const ROLES: Record<string, string> = {
+  owner: 'Proprietaire', admin: 'Admin', staff: 'Staff',
+  receptionist: 'Reception', viewer: 'Lecture',
+}
 
 export default function SupervisionPage() {
   const router = useRouter()
-  const [sessions, setSessions] = useState<Session[] | null>(null)
-  const [events, setEvents] = useState<SecurityEvent[]>([])
-  const [attempts, setAttempts] = useState<FailedAttempt[]>([])
+  const [data, setData] = useState<Payload | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [busy, setBusy] = useState<string | null>(null)
+  const [meId, setMeId] = useState<string | null>(null)
 
-  async function load() {
+  // Sert a ne pas proposer « Deconnecter » sur son propre compte : le
+  // serveur le refuse, et un bouton qui echoue toujours est un piege.
+  useEffect(() => {
+    api.get<{ user: { id: string } }>('/api/me').then(m => setMeId(m.user.id)).catch(() => {})
+  }, [])
+
+  const load = useCallback(async () => {
     try {
-      const d = await api.get<{
-        sessions: Session[]; events: SecurityEvent[]; failedAttempts: FailedAttempt[]
-      }>('/api/admin/supervision')
-      setSessions(d.sessions); setEvents(d.events); setAttempts(d.failedAttempts)
-      setError(null); setNow(Date.now())
+      const d = await api.get<Payload>('/api/admin/supervision')
+      setData(d); setError(null); setNow(Date.now())
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) router.replace('/dashboard')
       else setError(e instanceof ApiError ? e.message : 'Chargement impossible')
     }
-  }
+  }, [router])
 
   useEffect(() => {
     load()
-    const timer = setInterval(load, REFRESH_MS)
-    // La duree affichee avance chaque seconde, sans recharger pour autant.
+    const poll = setInterval(load, REFRESH_MS)
+    // La duree affichee avance chaque seconde sans recharger pour autant.
     const tick = setInterval(() => setNow(Date.now()), 1000)
-    return () => { clearInterval(timer); clearInterval(tick) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    return () => { clearInterval(poll); clearInterval(tick) }
+  }, [load])
 
-  const openEvents = events.filter(e => !e.handled_at)
-  const platformSessions = sessions?.filter(s => s.is_platform_admin === 1) ?? []
-  const clubSessions = sessions?.filter(s => s.is_platform_admin !== 1) ?? []
+  async function act(key: string, run: () => Promise<unknown>, done?: string) {
+    setBusy(key); setError(null); setNotice(null)
+    try { await run(); await load(); if (done) setNotice(done) }
+    catch (e) { setError(e instanceof ApiError ? e.message : 'Action impossible') }
+    finally { setBusy(null) }
+  }
+
+  const sessions = data?.sessions ?? []
+  const events = data?.events ?? []
+  const offenders = data?.offenders ?? []
+  const blocklist = data?.blocklist ?? []
+  const clubs = useMemo(() => data?.clubs ?? [], [data])
+
+  const online = sessions.filter(s => now - Date.parse(s.last_seen_at) < ONLINE_MS).length
+  const openEvents = events.filter(e => !e.handled_at).length
 
   return (
     <div className="dashboard-shell">
       <div>
+        <p className="section-heading" style={{ marginBottom: 6 }}>Plateforme</p>
         <h1 className="dz-hello">Supervision</h1>
         <p className="dz-sub">
-          {sessions
-            ? `${sessions.length} session(s) active(s) · ${openEvents.length} alerte(s) a traiter`
+          {data
+            ? `${sessions.length} session(s) · ${online} en ligne · ${openEvents} alerte(s) a traiter`
             : 'Chargement…'}
         </p>
       </div>
 
       <div aria-live="polite">
-        {error && (
-          <p role="alert" style={{
-            padding: '0.7rem 1rem', borderRadius: 14,
-            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
-            color: '#fca5a5', fontSize: '0.85rem', fontWeight: 600,
-          }}>{error}</p>
-        )}
+        {error && <Banner tone="danger">{error}</Banner>}
+        {notice && !error && <Banner tone="ok">{notice}</Banner>}
       </div>
 
-      {/* Alertes d'abord : c'est ce qu'on vient voir. */}
+      {/* Carte : ou sont les salles, et laquelle bouge en ce moment. */}
       <section className="dz-card">
         <div className="dz-card-head">
           <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-            <ShieldAlert size={17} strokeWidth={2.1} style={{ color: openEvents.length ? '#f59e0b' : 'var(--muted)' }} />
+            <MapPin size={17} strokeWidth={2.1} style={{ color: 'var(--gold)' }} /> Salles abonnees
+          </h2>
+          <span className="dz-card-note">{clubs.length} club(s)</span>
+        </div>
+        <ClubsMap
+          clubs={clubs}
+          mapsKey={data?.mapsKey ?? null}
+          onEnter={club => router.push(`/admin?club=${encodeURIComponent(club.slug)}`)}
+          onLocate={async (club, at) => {
+            await api.put(`/api/admin/clubs/${club.id}/location`, at)
+            await load()
+          }}
+        />
+      </section>
+
+      {/* Comptes connectes */}
+      <section className="dz-card">
+        <div className="dz-card-head">
+          <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <Activity size={17} strokeWidth={2.1} style={{ color: 'var(--gold)' }} /> Comptes connectes
+          </h2>
+          <span className="dz-card-note" style={{ display: 'flex', alignItems: 'center' }}>
+            <span className={online ? 'gf-dot-online' : 'gf-dot-off'} />{online} en ligne
+          </span>
+        </div>
+
+        {!data && <Skeleton />}
+        {data && sessions.length === 0 && (
+          <p className="dz-card-note" style={{ marginTop: 16 }}>Personne de connecte.</p>
+        )}
+
+        {sessions.length > 0 && (
+          <div className="gf-table-wrap">
+            <table className="gf-table">
+              <thead>
+                <tr>
+                  <th>Utilisateur</th><th>Role</th><th>Club</th><th>Adresse</th>
+                  <th>Connexion</th><th>Depuis</th><th>Statut</th><th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map((s, i) => {
+                  const isOnline = now - Date.parse(s.last_seen_at) < ONLINE_MS
+                  const unknownIp = s.ip_known === 0 && s.ip
+                  return (
+                    <tr key={`${s.user_id}-${i}`}>
+                      <td>
+                        <div className="gf-table-name">{s.user_name}</div>
+                        <div className="gf-table-sub">{s.email}</div>
+                      </td>
+                      <td>{s.is_platform_admin === 1 ? 'Plateforme' : (ROLES[s.role ?? ''] ?? s.role ?? '—')}</td>
+                      <td>
+                        {s.org_name ?? '—'}
+                        {s.support_org_id && <div className="gf-table-sub" style={{ color: '#f87171' }}>en support</div>}
+                      </td>
+                      <td>
+                        <span style={{ fontVariantNumeric: 'tabular-nums' }}>{s.ip ?? '—'}</span>
+                        {unknownIp && <div className="gf-table-sub" style={{ color: '#f59e0b' }}>adresse inconnue</div>}
+                      </td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{clock(s.created_at)}</td>
+                      <td style={{ fontVariantNumeric: 'tabular-nums' }}>{elapsed(s.created_at, now)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <span className={isOnline ? 'gf-dot-online' : 'gf-dot-off'} />
+                        <span style={{ color: isOnline ? 'var(--positive)' : 'var(--muted)', fontWeight: 600 }}>
+                          {isOnline ? 'En ligne' : 'Inactif'}
+                        </span>
+                      </td>
+                      <td>
+                        {/* On ne se coupe pas son propre compte depuis ici :
+                            le serveur refuse, autant ne pas le proposer. */}
+                        {s.user_id === meId ? (
+                          <span className="gf-table-sub">Vous</span>
+                        ) : (
+                          <button className="gf-mini-btn" data-tone="danger"
+                                  disabled={busy !== null}
+                                  onClick={() => act(`u-${s.user_id}`,
+                                    () => api.del(`/api/admin/users/${s.user_id}/sessions`),
+                                    `${s.user_name} a ete deconnecte.`)}>
+                            <LogOut size={12} strokeWidth={2.4} /> Deconnecter
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <p className="dz-card-note" style={{ marginTop: 14 }}>
+          « En ligne » = battement recu il y a moins de 2 min. « Deconnecter » revoque
+          immediatement toutes les sessions du compte, sur tous ses appareils.
+        </p>
+      </section>
+
+      {/* Adresses en echec : la maille utile pour bloquer. */}
+      <section className="dz-card">
+        <div className="dz-card-head">
+          <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <Ban size={17} strokeWidth={2.1}
+                 style={{ color: offenders.some(o => !o.blocked) ? '#f59e0b' : 'var(--muted)' }} />
+            Echecs de connexion par adresse
+          </h2>
+          <span className="dz-card-note">24 dernieres heures</span>
+        </div>
+
+        {offenders.length === 0 ? (
+          <p className="dz-card-note" style={{ marginTop: 16 }}>
+            Aucune adresse au-dela de trois echecs.
+          </p>
+        ) : (
+          <div className="gf-table-wrap">
+            <table className="gf-table">
+              <thead>
+                <tr><th>Adresse</th><th>Echecs</th><th>Comptes vises</th><th>Dernier</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                {offenders.map(o => (
+                  <tr key={o.ip}>
+                    <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{o.ip}</td>
+                    <td>
+                      <span style={{
+                        fontWeight: 800,
+                        color: o.failures >= BLOCK_SUGGESTED ? '#f87171' : '#f59e0b',
+                      }}>{o.failures}</span>
+                    </td>
+                    <td>
+                      {o.accounts}
+                      {/* Plusieurs comptes depuis une seule adresse : ce n'est
+                          plus un mot de passe oublie, c'est un balayage. */}
+                      {o.accounts > 1 && (
+                        <div className="gf-table-sub" style={{ color: '#f59e0b' }}>balayage de comptes</div>
+                      )}
+                    </td>
+                    <td className="gf-table-sub">{relative(o.last_attempt, now)}</td>
+                    <td>
+                      {o.blocked ? (
+                        <span className="gf-table-sub" style={{ color: '#f87171', fontWeight: 700 }}>Bloquee</span>
+                      ) : (
+                        <button className="gf-mini-btn" data-tone="danger" disabled={busy !== null}
+                                onClick={() => act(`b-${o.ip}`,
+                                  () => api.post('/api/admin/blocklist', {
+                                    ip: o.ip,
+                                    reason: `${o.failures} echecs sur ${o.accounts} compte(s)`,
+                                  }),
+                                  `${o.ip} est bloquee et ses sessions sont coupees.`)}>
+                          <Ban size={12} strokeWidth={2.4} /> Bloquer
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {blocklist.length > 0 && (
+        <section className="dz-card">
+          <div className="dz-card-head">
+            <h2 className="dz-card-title">Adresses bloquees</h2>
+            <span className="dz-card-note">{blocklist.length}</span>
+          </div>
+          <div className="gf-table-wrap">
+            <table className="gf-table">
+              <thead><tr><th>Adresse</th><th>Motif</th><th>Par</th><th>Quand</th><th>Action</th></tr></thead>
+              <tbody>
+                {blocklist.map(b => (
+                  <tr key={b.ip}>
+                    <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{b.ip}</td>
+                    <td className="gf-table-sub">{b.reason ?? '—'}</td>
+                    <td className="gf-table-sub">{b.created_by_name ?? '—'}</td>
+                    <td className="gf-table-sub">{relative(b.created_at, now)}</td>
+                    <td>
+                      <button className="gf-mini-btn" disabled={busy !== null}
+                              onClick={() => act(`ub-${b.ip}`,
+                                () => api.del(`/api/admin/blocklist/${encodeURIComponent(b.ip)}`),
+                                `${b.ip} est de nouveau autorisee.`)}>
+                        <Unlock size={12} strokeWidth={2.4} /> Debloquer
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* Evenements de securite */}
+      <section className="dz-card">
+        <div className="dz-card-head">
+          <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <ShieldAlert size={17} strokeWidth={2.1}
+                         style={{ color: openEvents ? '#f59e0b' : 'var(--muted)' }} />
             Evenements de securite
           </h2>
           <span className="dz-card-note">7 derniers jours</span>
         </div>
 
-        {events.length === 0 && (
+        {events.length === 0 ? (
           <p className="dz-card-note" style={{ marginTop: 16 }}>
             Rien a signaler. Une connexion depuis une adresse jamais vue, ou une rafale
             d&apos;echecs de mot de passe, apparaitrait ici.
           </p>
-        )}
-
-        <ul style={{ listStyle: 'none', padding: 0, margin: events.length ? '16px 0 0' : 0,
-                     display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {events.map(ev => (
-            <li key={ev.id} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '0.75rem 1rem', borderRadius: 16,
-              background: ev.handled_at ? 'var(--overlay-soft)' : 'rgba(245,158,11,0.08)',
-              border: `1px solid ${ev.handled_at ? 'var(--hairline)' : 'rgba(245,158,11,0.25)'}`,
-              opacity: ev.handled_at ? 0.55 : 1,
-            }}>
-              <EventIcon type={ev.type} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>
-                  {eventTitle(ev)}
-                </div>
-                <div className="dz-card-note">
-                  {[ev.org_name ?? 'Plateforme', ev.ip, relative(ev.created_at, now)]
-                    .filter(Boolean).join(' · ')}
-                </div>
-              </div>
-              {!ev.handled_at && (
-                <button
-                  className="btn-ghost"
-                  style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}
-                  disabled={busy !== null}
-                  onClick={async () => {
-                    setBusy(`ev-${ev.id}`)
-                    try { await api.post(`/api/admin/events/${ev.id}/handled`); await load() }
-                    finally { setBusy(null) }
-                  }}
-                >
-                  <Check size={13} strokeWidth={2.4} /> Traite
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {/* Sessions plateforme : les votres. */}
-      <SessionList
-        title="Comptes plateforme connectes"
-        note="Vos propres sessions"
-        sessions={platformSessions}
-        now={now}
-        busy={busy}
-        loading={sessions === null}
-        onRevoke={async userId => {
-          setBusy(`u-${userId}`)
-          try { await api.del(`/api/admin/users/${userId}/sessions`); await load() }
-          catch (e) { setError(e instanceof ApiError ? e.message : 'Deconnexion impossible') }
-          finally { setBusy(null) }
-        }}
-      />
-
-      {/* Sessions des clubs, sur la meme page : c'est la comparaison qui
-          rend une connexion suspecte visible. */}
-      <SessionList
-        title="Comptes de clubs connectes"
-        note="Toutes salles confondues"
-        sessions={clubSessions}
-        now={now}
-        busy={busy}
-        loading={sessions === null}
-        showClub
-        onRevoke={async userId => {
-          setBusy(`u-${userId}`)
-          try { await api.del(`/api/admin/users/${userId}/sessions`); await load() }
-          catch (e) { setError(e instanceof ApiError ? e.message : 'Deconnexion impossible') }
-          finally { setBusy(null) }
-        }}
-      />
-
-      {attempts.length > 0 && (
-        <section className="dz-card">
-          <div className="dz-card-head">
-            <h2 className="dz-card-title">Echecs de connexion</h2>
-            <span className="dz-card-note">24 dernieres heures</span>
+        ) : (
+          <div className="gf-table-wrap">
+            <table className="gf-table">
+              <thead>
+                <tr><th>Type</th><th>Compte</th><th>Detail</th><th>Adresse</th><th>Quand</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                {events.map(ev => (
+                  <tr key={ev.id} style={{ opacity: ev.handled_at ? 0.5 : 1 }}>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <Lock size={13} strokeWidth={2.4}
+                            style={{ color: tone(ev.type), marginInlineEnd: 6, verticalAlign: '-2px' }} />
+                      <span style={{ color: tone(ev.type), fontWeight: 700 }}>{label(ev.type)}</span>
+                    </td>
+                    <td>
+                      <span className="gf-table-name">{ev.user_name ?? ev.detail ?? '—'}</span>
+                      {ev.org_name && <span className="gf-table-sub"> ({ev.org_name})</span>}
+                    </td>
+                    <td className="gf-table-sub">{describe(ev)}</td>
+                    <td style={{ fontVariantNumeric: 'tabular-nums' }}>{ev.ip ?? '—'}</td>
+                    <td className="gf-table-sub" style={{ whiteSpace: 'nowrap' }}>{stamp(ev.created_at)}</td>
+                    <td style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {ev.ip && !blocklist.some(b => b.ip === ev.ip) && (
+                        <button className="gf-mini-btn" data-tone="danger" disabled={busy !== null}
+                                onClick={() => act(`eb-${ev.id}`,
+                                  () => api.post('/api/admin/blocklist', {
+                                    ip: ev.ip, reason: label(ev.type),
+                                  }),
+                                  `${ev.ip} est bloquee.`)}>
+                          <Ban size={12} strokeWidth={2.4} /> Bloquer
+                        </button>
+                      )}
+                      {!ev.handled_at && (
+                        <button className="gf-mini-btn" disabled={busy !== null}
+                                onClick={() => act(`ev-${ev.id}`,
+                                  () => api.post(`/api/admin/events/${ev.id}/handled`))}>
+                          <Check size={12} strokeWidth={2.4} /> Ignorer
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <ul style={{ listStyle: 'none', padding: 0, margin: '16px 0 0',
-                       display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {attempts.map((a, i) => (
-              <li key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.82rem' }}>
-                <span className="badge text-red-300 bg-red-500/10 ring-red-500/30"
-                      style={{ fontSize: '0.62rem' }}>{a.failures}</span>
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {a.identifier}
-                </span>
-                <span className="dz-card-note">{a.ip ?? '—'}</span>
-                <span className="dz-card-note">{relative(a.last_attempt, now)}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+        )}
+      </section>
     </div>
   )
 }
 
-function SessionList({
-  title, note, sessions, now, busy, showClub, loading, onRevoke,
-}: {
-  title: string; note: string; sessions: Session[]; now: number
-  busy: string | null; showClub?: boolean; loading?: boolean
-  onRevoke: (userId: string) => void
-}) {
+// Presentation -----------------------------------------------------------
+
+function Banner({ tone: t, children }: { tone: 'danger' | 'ok'; children: React.ReactNode }) {
+  const danger = t === 'danger'
   return (
-    <section className="dz-card">
-      <div className="dz-card-head">
-        <h2 className="dz-card-title">{title}</h2>
-        <span className="dz-card-note">{note}{loading ? '' : ` · ${sessions.length}`}</span>
-      </div>
-
-      {/* Distinguer « pas encore charge » de « personne » : afficher
-          « Personne de connecte » pendant le chargement est un mensonge
-          que la page racontait a chaque ouverture. */}
-      {loading && (
-        <div className="members-skeleton-row"
-             style={{ height: 56, borderRadius: 16, border: 'none', marginTop: 16 }} />
-      )}
-      {!loading && sessions.length === 0 && (
-        <p className="dz-card-note" style={{ marginTop: 16 }}>Personne de connecte.</p>
-      )}
-
-      <ul style={{ listStyle: 'none', padding: 0, margin: sessions.length ? '16px 0 0' : 0,
-                   display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {sessions.map((s, i) => {
-          const online = now - Date.parse(s.last_seen_at) < ONLINE_MS
-          // Une adresse jamais vue pour ce compte : le signal principal.
-          const unknownIp = s.ip_known === 0 && s.ip
-          return (
-            <li key={`${s.user_id}-${i}`} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '0.75rem 1rem', borderRadius: 16,
-              background: unknownIp ? 'rgba(245,158,11,0.07)' : 'var(--overlay-soft)',
-              border: `1px solid ${unknownIp ? 'rgba(245,158,11,0.25)' : 'var(--hairline)'}`,
-            }}>
-              <span title={online ? 'En ligne' : 'Inactif'} aria-label={online ? 'En ligne' : 'Inactif'}
-                    style={{
-                      width: 8, height: 8, borderRadius: '50%', flex: 'none',
-                      background: online ? '#10b981' : 'var(--muted)',
-                      boxShadow: online ? '0 0 8px 1px rgba(16,185,129,0.5)' : 'none',
-                    }} />
-
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '0.875rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {s.user_name}
-                  </span>
-                  {s.support_org_id && (
-                    <span className="badge text-red-300 bg-red-500/10 ring-red-500/30"
-                          style={{ fontSize: '0.58rem' }}>support</span>
-                  )}
-                  {unknownIp && (
-                    <span className="badge text-amber-300 bg-amber-500/10 ring-amber-500/30"
-                          style={{ fontSize: '0.58rem' }}>adresse inconnue</span>
-                  )}
-                </div>
-                <div className="dz-card-note" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {[showClub ? (s.org_name ?? 'sans club') : null, s.role, s.ip ?? 'adresse inconnue',
-                    `vu ${relative(s.last_seen_at, now)}`].filter(Boolean).join(' · ')}
-                </div>
-              </div>
-
-              <button
-                className="btn-ghost"
-                style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem', flex: 'none' }}
-                disabled={busy !== null}
-                onClick={() => onRevoke(s.user_id)}
-                title={`Deconnecter ${s.user_name}`}
-              >
-                <LogOut size={13} strokeWidth={2.2} /> Deconnecter
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-    </section>
+    <p role={danger ? 'alert' : 'status'} style={{
+      padding: '0.7rem 1rem', borderRadius: 14, fontSize: '0.85rem', fontWeight: 600,
+      background: danger ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.12)',
+      border: `1px solid ${danger ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)'}`,
+      color: danger ? '#fca5a5' : '#6ee7b7',
+    }}>{children}</p>
   )
 }
 
-function EventIcon({ type }: { type: SecurityEvent['type'] }) {
-  const common = { size: 16, strokeWidth: 2.2, style: { flex: 'none' as const } }
-  if (type === 'failed_burst') return <AlertTriangle {...common} style={{ ...common.style, color: '#ef4444' }} />
-  if (type === 'new_ip') return <Wifi {...common} style={{ ...common.style, color: '#f59e0b' }} />
-  return <ShieldAlert {...common} style={{ ...common.style, color: '#9b72ff' }} />
+const Skeleton = () => (
+  <div className="members-skeleton-row"
+       style={{ height: 56, borderRadius: 16, border: 'none', marginTop: 16 }} />
+)
+
+const tone = (t: SecurityEvent['type']) =>
+  t === 'failed_burst' ? '#f87171' : t === 'new_ip' ? '#f59e0b' : '#a78bfa'
+
+const label = (t: SecurityEvent['type']) =>
+  t === 'failed_burst' ? 'Rafale d’echecs' : t === 'new_ip' ? 'Nouvelle connexion' : 'Ecriture en support'
+
+function describe(ev: SecurityEvent): string {
+  if (ev.type === 'new_ip') return 'Connexion depuis un nouvel appareil'
+  if (ev.type === 'failed_burst') return `Mots de passe repetes sur ${ev.detail ?? 'un compte'}`
+  return ev.detail ?? 'Modification effectuee en mode support'
 }
 
-function eventTitle(ev: SecurityEvent): string {
-  const who = ev.user_name ?? ev.email ?? ev.detail ?? 'Compte inconnu'
-  if (ev.type === 'new_ip') return `${who} s'est connecte depuis une adresse jamais vue`
-  if (ev.type === 'failed_burst') return `Rafale d'echecs de mot de passe sur ${ev.detail ?? who}`
-  return `${who} — modification en mode support`
+const clock = (iso: string) =>
+  new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+
+const stamp = (iso: string) => {
+  const d = new Date(iso)
+  return `${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} ${clock(iso)}`
+}
+
+/** Duree de session, en compteur qui avance. */
+function elapsed(iso: string, now: number): string {
+  const s = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} min`
+  const h = Math.floor(m / 60)
+  return h < 24 ? `${h} h ${m % 60}` : `${Math.floor(h / 24)} j`
 }
 
 function relative(iso: string, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000))
-  if (seconds < 60) return "a l'instant"
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `il y a ${minutes} min`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `il y a ${hours} h`
-  return `il y a ${Math.floor(hours / 24)} j`
+  const s = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000))
+  if (s < 60) return "a l'instant"
+  const m = Math.floor(s / 60)
+  if (m < 60) return `il y a ${m} min`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `il y a ${h} h`
+  return `il y a ${Math.floor(h / 24)} j`
 }

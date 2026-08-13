@@ -151,6 +151,20 @@ async function throttled(env: Env, identifier: string, ip: string | null): Promi
   return (row?.by_ip ?? 0) >= MAX_PER_IP || (row?.by_identifier ?? 0) >= MAX_PER_IDENTIFIER
 }
 
+/**
+ * Adresse bloquee par la plateforme.
+ *
+ * Verifie avant tout le reste : ni comptage, ni lecture du compte, ni
+ * verification du mot de passe. Une adresse bloquee ne doit pas pouvoir
+ * mesurer le temps de reponse pour deviner qu'un compte existe, ni remplir
+ * la table des tentatives.
+ */
+async function ipBlocked(env: Env, ip: string | null): Promise<boolean> {
+  if (!ip) return false
+  const row = await env.CONTROL.prepare('SELECT 1 FROM ip_blocklist WHERE ip = ?').bind(ip).first()
+  return row !== null
+}
+
 async function recordAttempt(env: Env, identifier: string, ip: string | null, ok: boolean) {
   await env.CONTROL.prepare(
     'INSERT INTO login_attempts (identifier, ip, succeeded) VALUES (?, ?, ?)',
@@ -1079,7 +1093,7 @@ export const api = {
 
         const cutoff = isoSeconds(new Date(Date.now() - 7 * 86_400_000))
 
-        const [sessions, events, attempts] = await Promise.all([
+        const [sessions, events, attempts, offenders, blocklist, clubs] = await Promise.all([
           env.CONTROL.prepare(
             `SELECT s.user_id, s.org_id, s.created_at, s.last_seen_at, s.expires_at,
                     s.ip, s.user_agent, s.support_org_id,
@@ -1117,14 +1131,143 @@ export const api = {
               ORDER BY last_attempt DESC
               LIMIT 50`,
           ).bind(isoSeconds(new Date(Date.now() - 86_400_000))).all(),
+
+          // Vue par ADRESSE, et non par compte : une attaque par dictionnaire
+          // essaie cinquante e-mails differents depuis une seule adresse.
+          // Groupee par compte, elle reste invisible — trois echecs par
+          // e-mail ne declenchent rien. C'est cette ligne-la qu'on bloque.
+          env.CONTROL.prepare(
+            `SELECT a.ip,
+                    COUNT(*)                    AS failures,
+                    COUNT(DISTINCT a.identifier) AS accounts,
+                    MAX(a.attempted_at)          AS last_attempt,
+                    (SELECT COUNT(*) FROM ip_blocklist b WHERE b.ip = a.ip) AS blocked
+               FROM login_attempts a
+              WHERE a.succeeded = 0 AND a.attempted_at > ? AND a.ip IS NOT NULL
+              GROUP BY a.ip
+             HAVING failures >= 3
+              ORDER BY failures DESC, last_attempt DESC
+              LIMIT 50`,
+          ).bind(isoSeconds(new Date(Date.now() - 86_400_000))).all(),
+
+          env.CONTROL.prepare(
+            `SELECT b.ip, b.reason, b.created_at, u.name AS created_by_name
+               FROM ip_blocklist b
+               LEFT JOIN users u ON u.id = b.created_by
+              ORDER BY b.created_at DESC
+              LIMIT 200`,
+          ).all(),
+
+          // Carte : un club par point, avec de quoi le peindre et savoir s'il
+          // se passe quelque chose. Les agregats sont calcules ici plutot que
+          // dans le navigateur — la carte doit rester fluide.
+          env.CONTROL.prepare(
+            `SELECT o.id, o.name, o.slug, o.theme, o.status, o.plan,
+                    l.lat, l.lng, l.label,
+                    (SELECT MAX(s.last_seen_at) FROM sessions s
+                      WHERE s.org_id = o.id AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                    ) AS last_seen_at,
+                    (SELECT COUNT(*) FROM sessions s
+                      WHERE s.org_id = o.id
+                        AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                        AND s.last_seen_at > ?
+                    ) AS online,
+                    (SELECT COUNT(*) FROM security_events e
+                      WHERE e.org_id = o.id AND e.handled_at IS NULL AND e.created_at > ?
+                    ) AS open_alerts,
+                    (SELECT COUNT(*) FROM sessions s
+                      WHERE s.support_org_id = o.id
+                        AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                    ) AS under_support
+               FROM organizations o
+               LEFT JOIN org_locations l ON l.org_id = o.id
+              ORDER BY o.name
+              LIMIT 500`,
+          ).bind(isoSeconds(new Date(Date.now() - 130_000)), cutoff).all(),
         ])
 
         return json({
           sessions: sessions.results,
           events: events.results,
           failedAttempts: attempts.results,
+          offenders: offenders.results,
+          blocklist: blocklist.results,
+          clubs: clubs.results.map(row => {
+            const c = row as Record<string, unknown>
+            return { ...c, theme: readTheme(c.theme as string | null) }
+          }),
+          // La cle de carte ne voyage que vers un exploitant, et jamais dans
+          // le bundle de toutes les pages : c'est une cle publique, mais
+          // inutile de la distribuer a chaque visiteur de l'ecran de login.
+          mapsKey: env.GOOGLE_MAPS_API_KEY ?? null,
           serverTime: isoSeconds(new Date()),
         })
+      }
+
+      // Emplacement d'un club, pose a la main par l'exploitant.
+      const locationRoute = path.match(/^\/api\/admin\/clubs\/([^/]+)\/location$/)
+      if (locationRoute && (method === 'PUT' || method === 'DELETE')) {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const orgId = locationRoute[1]!
+
+        if (method === 'DELETE') {
+          await env.CONTROL.prepare('DELETE FROM org_locations WHERE org_id = ?').bind(orgId).run()
+          return json({ ok: true })
+        }
+
+        const body = await readJson(request)
+        const lat = Number(body.lat)
+        const lng = Number(body.lng)
+        // Bornes du globe : une valeur hors plage placerait le point nulle
+        // part et ferait deriver le cadrage de toute la carte.
+        if (!Number.isFinite(lat) || lat < -90 || lat > 90) return fail(400, 'Latitude invalide')
+        if (!Number.isFinite(lng) || lng < -180 || lng > 180) return fail(400, 'Longitude invalide')
+
+        const known = await env.CONTROL.prepare('SELECT 1 FROM organizations WHERE id = ?')
+          .bind(orgId).first()
+        if (!known) return fail(404, 'Club inconnu')
+
+        await env.CONTROL.prepare(
+          `INSERT INTO org_locations (org_id, lat, lng, label) VALUES (?, ?, ?, ?)
+           ON CONFLICT(org_id) DO UPDATE SET lat = excluded.lat, lng = excluded.lng,
+             label = excluded.label, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+        ).bind(orgId, lat, lng, optional(body.label, 200)).run()
+        return json({ lat, lng })
+      }
+
+      // Liste noire d'adresses.
+      if (path === '/api/admin/blocklist' && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const body = await readJson(request)
+        const target = str(body.ip, 'ip', 45)
+
+        // Se bloquer soi-meme fermerait la porte de l'exterieur, sans moyen
+        // de revenir la rouvrir.
+        if (ip && target === ip) return fail(400, 'Vous bloqueriez votre propre adresse')
+
+        await env.CONTROL.prepare(
+          `INSERT INTO ip_blocklist (ip, reason, created_by) VALUES (?, ?, ?)
+           ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason`,
+        ).bind(target, optional(body.reason, 200), principal.userId).run()
+
+        // Bloquer sans couper les sessions en cours laisserait l'intrus
+        // connecte : le blocage ne vaut que pour la prochaine connexion.
+        await env.CONTROL.prepare('DELETE FROM sessions WHERE ip = ?').bind(target).run()
+        await env.CONTROL.prepare(
+          "INSERT INTO platform_audit (actor_id, action, detail, ip) VALUES (?, 'ip_block', ?, ?)",
+        ).bind(principal.userId, JSON.stringify({ ip: target }), ip).run()
+        return json({ ip: target }, { status: 201 })
+      }
+
+      const unblockRoute = path.match(/^\/api\/admin\/blocklist\/(.+)$/)
+      if (unblockRoute && method === 'DELETE') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const target = decodeURIComponent(unblockRoute[1]!)
+        await env.CONTROL.prepare('DELETE FROM ip_blocklist WHERE ip = ?').bind(target).run()
+        await env.CONTROL.prepare(
+          "INSERT INTO platform_audit (actor_id, action, detail, ip) VALUES (?, 'ip_unblock', ?, ?)",
+        ).bind(principal.userId, JSON.stringify({ ip: target }), ip).run()
+        return json({ ok: true })
       }
 
       // Coupe toutes les sessions d'un compte. Le geste a poser quand une
@@ -1332,6 +1475,10 @@ export const refreshAllStats = (env: Env) =>
 // Inscription ----------------------------------------------------------------
 
 async function signup(request: Request, env: Env, ip: string | null): Promise<Response> {
+  // Bloquer la connexion sans bloquer l'inscription laisserait l'attaquant
+  // se creer un compte neuf depuis la meme adresse.
+  if (await ipBlocked(env, ip)) return fail(403, 'Acces refuse depuis cette adresse')
+
   // Limite par IP avant toute lecture en base.
   //
   // La route est publique et renvoie 409 sur une adresse deja prise : c'est
@@ -1535,6 +1682,9 @@ const DUMMY_HASH =
   'pbkdf2$210000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
 async function login(request: Request, env: Env, ip: string | null): Promise<Response> {
+  // Avant meme de lire le corps : une adresse bloquee n'a rien a nous dire.
+  if (await ipBlocked(env, ip)) return fail(403, 'Acces refuse depuis cette adresse')
+
   const body = await readJson(request)
   const email = normEmail(str(body.email, 'email', 200))
   const password = str(body.password, 'password', 200)

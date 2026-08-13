@@ -48,6 +48,7 @@ function session() {
 const CLUBS = [
   {
     slug: 'noujoum-chaouia', name: 'Noujoum El Chaouia', owner: 'Marwane Ouahid',
+    at: { lat: 33.5650, lng: -7.6300, label: 'Sbata, Casablanca' },
     email: 'karate@demo.ma', accent: '#0e4f8f',
     branches: ['Salle Sbata', 'Salle Rachad'],
     disciplines: [
@@ -62,6 +63,7 @@ const CLUBS = [
   },
   {
     slug: 'judo-atlas', name: 'Judo Club Atlas', owner: 'Hicham Mansouri',
+    at: { lat: 31.6295, lng: -7.9811, label: 'Gueliz, Marrakech' },
     email: 'judo@demo.ma', accent: '#1f6b47',
     branches: ['Dojo Central'],
     disciplines: [
@@ -74,6 +76,7 @@ const CLUBS = [
   },
   {
     slug: 'ring-casablanca', name: 'Ring Casablanca', owner: 'Sofia Naciri',
+    at: { lat: 33.5883, lng: -7.6114, label: 'Maarif, Casablanca' },
     email: 'boxe@demo.ma', accent: '#a8232b',
     branches: ['Salle Maarif'],
     disciplines: [{ name: 'Boxe anglaise', grades: [] }],
@@ -98,12 +101,15 @@ console.log(`Cible : ${BASE}\n`)
 if (process.argv.includes('--reset')) {
   for (const table of [
     'platform_audit', 'security_events', 'known_ips', 'login_attempts',
+    'ip_blocklist', 'org_locations',
     'org_stats', 'sessions', 'memberships', 'organizations', 'users',
   ]) {
     control(`DELETE FROM ${table}`)
   }
   console.log('Plan de controle vide.\n')
 }
+
+const located = []
 
 for (const club of CLUBS) {
   const call = session()
@@ -174,6 +180,7 @@ for (const club of CLUBS) {
     }
   }
 
+  located.push({ orgId, at: club.at })
   console.log(`  ${club.name.padEnd(22)} ${club.email.padEnd(16)} ${club.members.length} membres  ${orgId}`)
 }
 
@@ -187,6 +194,23 @@ execFileSync(
   { stdio: 'ignore', cwd: ROOT },
 )
 console.log(`  ${'Exploitant (sans club)'.padEnd(22)} admin@demo.ma`)
+
+// create-operator lance wrangler, ce qui fait brievement tomber le serveur de
+// developpement : sans cette attente, l'appel suivant echoue en ECONNRESET et
+// le seed accuse le code.
+for (let i = 0; i < 60; i++) {
+  try { if ((await fetch(`${BASE}/api/health`)).ok) break } catch { /* pas encore la */ }
+  await new Promise(r => setTimeout(r, 500))
+}
+
+// Emplacements des salles, poses par l'exploitant : la route est reservee a
+// la plateforme, un proprietaire de club ne peut pas se situer lui-meme.
+const ops = session()
+await ops('POST', '/api/auth/login', { email: 'admin@demo.ma', password: PASSWORD })
+for (const { orgId, at } of located) {
+  if (at) await ops('PUT', `/api/admin/clubs/${orgId}/location`, at)
+}
+console.log(`  ${'Emplacements poses'.padEnd(22)} ${located.filter(l => l.at).length} salle(s) sur la carte`)
 
 // Remplit le cache d'agregats pour que la supervision affiche des chiffres
 // tout de suite, au lieu d'attendre le prochain passage du cron.

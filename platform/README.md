@@ -34,6 +34,32 @@ local fidele : `next dev` s'execute dans Node, ou `cloudflare:workers` ne se
 resout pas et ou les Durable Objects ne fonctionnent pas. `npm run dev:ui`
 reste disponible pour iterer vite sur l'interface, sans API ni base.
 
+### Carte de supervision (facultatif)
+
+L'ecran Supervision affiche les salles sur une carte Google. Sans cle, il
+affiche la meme information en liste : la carte est un confort, pas une
+dependance, et son absence ne doit pas fermer un ecran de securite.
+
+Pour l'activer, poser une cle **de navigateur** avec l'API « Maps JavaScript »
+activee :
+
+```bash
+echo 'GOOGLE_MAPS_API_KEY=AIza...' >> .dev.vars    # local
+wrangler secret put GOOGLE_MAPS_API_KEY            # production
+```
+
+Deux precautions cote Google Cloud, parce que la cle voyage jusqu'au
+navigateur et ne peut donc pas rester secrete :
+
+- la restreindre par **referent HTTP** au domaine de la plateforme ;
+- la restreindre a la seule API « Maps JavaScript », et poser un plafond de
+  facturation.
+
+Le serveur ne la transmet qu'a un compte exploitant, jamais dans le bundle
+des pages publiques. Les salles se placent depuis l'ecran Supervision, bouton
+« Situer » : un clic droit dans Google Maps donne le couple de coordonnees a
+coller.
+
 ## Tests
 
 ```bash
@@ -55,7 +81,14 @@ Ce qu'ils couvrent, dans les deux sens :
 - `support-mode` : entree en lecture seule, escalade explicite pour ecrire,
   sortie, expiration, revocation immediate du statut plateforme.
 - `layout` : la disposition envoyee par le client est reconstruite a partir du
-  registre des cartes ; rien d'arbitraire ne persiste.
+  registre des cartes ; rien d'arbitraire ne persiste, et seule la plateforme
+  peut l'ecrire.
+- `theme` : l'habillage d'un club ne fuit ni chez le voisin ni sur la
+  plateforme, dans les deux sens.
+- `contrast` : les cinq habillages sont verifies par calcul WCAG sur chaque
+  surface — pas a l'oeil.
+- `blocklist` : une adresse bloquee ne se connecte plus, ne s'inscrit plus, et
+  perd ses sessions ; on ne peut pas se bloquer soi-meme.
 
 ## Deploiement
 

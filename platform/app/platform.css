@@ -340,3 +340,171 @@
   }
   .gf-palette { animation: none !important; }
 }
+
+/* Carte des salles ------------------------------------------------------- */
+
+.gf-map-wrap { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+
+.gf-map {
+  height: clamp(280px, 42vh, 460px);
+  border-radius: 22px;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  background: var(--overlay-soft);
+}
+
+.gf-map-fallback {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; text-align: center;
+  min-height: 190px; padding: 2rem 1.5rem;
+  border-radius: 22px;
+  border: 1px dashed var(--float-border);
+  background: var(--overlay-soft);
+}
+
+/* Marqueur : un noeud du DOM, donc animable.
+   Le halo est un element separe — animer une ombre portee sur le point
+   lui-meme forcerait un repaint a chaque image. */
+.gf-pin {
+  position: absolute; top: 0; left: 0;
+  display: flex; align-items: center; gap: 7px;
+  padding: 0; border: 0; background: none;
+  cursor: pointer;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.gf-pin-dot {
+  position: relative; z-index: 1;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--pin);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.45), 0 0 12px 2px var(--pin);
+  transition: box-shadow 240ms var(--ease-out), transform 240ms var(--ease-out);
+}
+
+.gf-pin-halo {
+  position: absolute; left: 6.5px; top: 50%;
+  width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px;
+  border-radius: 50%;
+  background: var(--pin);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gf-pin-label {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: -0.01em;
+  color: #fff;
+  padding: 2px 8px; border-radius: 999px;
+  background: rgba(8,11,18,0.78);
+  border: 1px solid var(--pin);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  transition: border-color 240ms var(--ease-out);
+}
+
+.gf-pin:hover .gf-pin-dot { transform: scale(1.25); }
+.gf-pin:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; border-radius: 999px; }
+
+/* Etats. Le neon ne sert que lorsqu'il y a quelque chose a regarder :
+   allume en permanence, il ne dit plus rien. */
+.gf-pin[data-state='idle'] .gf-pin-dot { opacity: 0.75; box-shadow: 0 0 0 2px rgba(0,0,0,0.45); }
+
+.gf-pin[data-state='online'] .gf-pin-halo { animation: gf-pulse 2.6s var(--ease-out) infinite; }
+
+.gf-pin[data-state='alert'] { --pin: #f59e0b; }
+.gf-pin[data-state='alert'] .gf-pin-halo { animation: gf-pulse 1.5s var(--ease-out) infinite; }
+.gf-pin[data-state='alert'] .gf-pin-dot { box-shadow: 0 0 0 2px rgba(0,0,0,0.45), 0 0 18px 4px #f59e0b; }
+
+.gf-pin[data-state='support'] { --pin: #ef4444; }
+.gf-pin[data-state='support'] .gf-pin-halo { animation: gf-pulse 1s var(--ease-out) infinite; }
+.gf-pin[data-state='support'] .gf-pin-dot { box-shadow: 0 0 0 2px rgba(0,0,0,0.45), 0 0 22px 5px #ef4444; }
+
+@keyframes gf-pulse {
+  0%   { opacity: 0.55; transform: scale(1); }
+  70%  { opacity: 0;    transform: scale(4.5); }
+  100% { opacity: 0;    transform: scale(4.5); }
+}
+
+/* Liste sous la carte : le meme etat, lisible sans cle Google. */
+.gf-map-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+.gf-map-row {
+  width: 100%;
+  display: flex; align-items: center; gap: 11px;
+  padding: 0.6rem 0.85rem;
+  border-radius: 14px;
+  background: var(--overlay-soft);
+  border: 1px solid var(--hairline);
+  color: var(--text);
+  cursor: pointer;
+  text-align: start;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+              transform var(--transition-fast);
+}
+.gf-map-row:hover { background: var(--overlay); border-color: var(--pin); transform: translateX(2px); }
+
+.gf-map-row-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: var(--pin);
+  box-shadow: 0 0 8px 1px var(--pin);
+}
+.gf-map-row[data-state='idle'] .gf-map-row-dot { box-shadow: none; opacity: 0.5; }
+.gf-map-row[data-state='alert'] .gf-map-row-dot { background: #f59e0b; box-shadow: 0 0 10px 2px #f59e0b; }
+.gf-map-row[data-state='support'] .gf-map-row-dot { background: #ef4444; box-shadow: 0 0 12px 3px #ef4444; }
+
+.gf-map-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.gf-map-row-name { font-size: 0.85rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gf-map-row-note { font-size: 0.7rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gf-map-row-state { font-size: 0.7rem; font-weight: 700; color: var(--muted); flex: none; }
+.gf-map-row[data-state='alert'] .gf-map-row-state { color: #f59e0b; }
+.gf-map-row[data-state='support'] .gf-map-row-state { color: #f87171; }
+.gf-map-row[data-state='online'] .gf-map-row-state { color: var(--positive); }
+
+/* Tableaux de supervision ------------------------------------------------ */
+
+.gf-table-wrap { overflow-x: auto; margin-top: 14px; }
+.gf-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.gf-table th {
+  text-align: start; padding: 0.5rem 0.75rem;
+  font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); white-space: nowrap;
+}
+.gf-table thead tr { border-bottom: 1px solid var(--hairline); }
+.gf-table td { padding: 0.7rem 0.75rem; vertical-align: middle; }
+.gf-table tbody tr { border-top: 1px solid var(--hairline); }
+.gf-table tbody tr:first-child { border-top: 0; }
+.gf-table-name { font-weight: 700; }
+.gf-table-sub { font-size: 0.72rem; color: var(--muted); }
+
+.gf-dot-online {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--positive); box-shadow: 0 0 8px 1px var(--positive);
+  margin-inline-end: 6px;
+}
+.gf-dot-off {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); opacity: 0.6; margin-inline-end: 6px;
+}
+
+.gf-mini-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0.32rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700;
+  border: 1px solid var(--hairline);
+  background: var(--overlay-soft);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+              border-color var(--transition-fast);
+}
+.gf-mini-btn:hover { background: var(--overlay); color: var(--text); }
+.gf-mini-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.gf-mini-btn[data-tone='danger'] {
+  background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.3); color: #f87171;
+}
+.gf-mini-btn[data-tone='danger']:hover { background: rgba(239,68,68,0.2); color: #fca5a5; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gf-pin-halo { animation: none !important; }
+  .gf-map-row, .gf-pin-dot { transition: none !important; }
+}
