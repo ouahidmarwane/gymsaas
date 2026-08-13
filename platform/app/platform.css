@@ -541,3 +541,16 @@
 @media (prefers-reduced-motion: reduce) {
   .gf-fold svg { transition: none !important; }
 }
+
+/* Le lien WhatsApp reprend la couleur de la marque : c'est ce qui le rend
+   reconnaissable sans avoir a lire le libelle. */
+.gf-mini-btn[data-tone='whatsapp'] {
+  background: rgba(37,211,102,0.14);
+  border-color: rgba(37,211,102,0.35);
+  color: #25D366;
+  text-decoration: none;
+}
+.gf-mini-btn[data-tone='whatsapp']:hover {
+  background: rgba(37,211,102,0.24);
+  color: #4ade80;
+}

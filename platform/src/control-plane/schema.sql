@@ -208,3 +208,45 @@ CREATE TABLE IF NOT EXISTS ip_blocklist (
   created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
+
+-- Abonnement d'un club a la plateforme.
+--
+-- Distinct de organizations.plan, qui dit la formule : ici on tient l'argent.
+-- Le telephone est celui du responsable, au format international sans « + » —
+-- c'est ce qu'attend un lien wa.me.
+CREATE TABLE IF NOT EXISTS org_billing (
+  org_id       TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  price_cents  INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
+  cycle_months INTEGER NOT NULL DEFAULT 1 CHECK (cycle_months BETWEEN 1 AND 24),
+  phone        TEXT,
+  started_at   TEXT,
+  -- Fin de la periode couverte. Avancee a chaque echeance reglee : c'est
+  -- elle, et non un statut fige, qui dit si un club est a jour. Un statut se
+  -- desynchronise, une date se compare.
+  expires_at   TEXT,
+  notes        TEXT,
+  updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+-- Echeances. Une ligne par periode facturee.
+--
+-- Sans elles, « paye / pas paye » ne serait qu'un booleen sur le club, et un
+-- filtre par mois n'aurait rien a filtrer : on ne saurait pas ce qui etait du
+-- en mars, seulement ce qui est du aujourd'hui.
+CREATE TABLE IF NOT EXISTS org_invoices (
+  id           TEXT PRIMARY KEY,
+  org_id       TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  period_start TEXT NOT NULL,
+  period_end   TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0),
+  due_date     TEXT NOT NULL,
+  paid_at      TEXT,
+  method       TEXT,
+  note         TEXT,
+  created_by   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_org  ON org_invoices(org_id, period_start DESC);
+CREATE INDEX IF NOT EXISTS idx_invoices_due  ON org_invoices(due_date);
+CREATE INDEX IF NOT EXISTS idx_invoices_open ON org_invoices(paid_at) WHERE paid_at IS NULL;

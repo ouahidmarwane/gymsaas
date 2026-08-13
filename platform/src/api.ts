@@ -278,6 +278,63 @@ function dateOnly(v: unknown, field: string): string | null {
   return s
 }
 
+/**
+ * Numero WhatsApp : chiffres seuls, sans « + ».
+ *
+ * C'est le format qu'attend un lien wa.me. Un numero saisi « +212 6 61 00 00 01 »
+ * donnerait une URL invalide et un lien qui ne s'ouvre sur rien.
+ */
+function phoneDigits(v: unknown): string | null {
+  const raw = optional(v, 30)
+  if (raw === null) return null
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length < 8 || digits.length > 20) throw new HttpError(400, 'Numero invalide')
+  return digits
+}
+
+/** Lendemain d'une date ISO, pour enchainer une periode sur la precedente. */
+function nextDay(iso: string | null): string | null {
+  if (!iso) return null
+  const d = new Date(`${iso}T00:00:00Z`)
+  if (Number.isNaN(d.getTime())) return null
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Ajoute des mois a une date.
+ *
+ * Le 31 janvier plus un mois n'existe pas : Date le reporterait au 3 mars.
+ * On ramene au dernier jour du mois vise, ce qui est ce qu'attend une
+ * periode d'abonnement.
+ */
+function addMonths(iso: string, months: number): string {
+  const d = new Date(`${iso}T00:00:00Z`)
+  const day = d.getUTCDate()
+  d.setUTCDate(1)
+  d.setUTCMonth(d.getUTCMonth() + months)
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
+  d.setUTCDate(Math.min(day, lastDay))
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Recale la fin d'abonnement sur la derniere periode reellement reglee.
+ *
+ * Recalculee plutot qu'incrementee : annuler un paiement doit faire reculer
+ * la date, et un compteur qu'on avance seulement finit par mentir.
+ */
+async function recomputeExpiry(env: Env, orgId: string): Promise<void> {
+  const row = await env.CONTROL.prepare(
+    'SELECT MAX(period_end) AS last FROM org_invoices WHERE org_id = ? AND paid_at IS NOT NULL',
+  ).bind(orgId).first<{ last: string | null }>()
+  await env.CONTROL.prepare(
+    `INSERT INTO org_billing (org_id, expires_at) VALUES (?, ?)
+     ON CONFLICT(org_id) DO UPDATE SET expires_at = excluded.expires_at,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+  ).bind(orgId, row?.last ?? null).run()
+}
+
 const MAX_GRADES = 40
 
 function parseGrades(v: unknown): Array<{ label: string; labelAr: string | null; color: string | null }> {
@@ -1335,6 +1392,199 @@ export const api = {
         ).run()
 
         return json({ ok: true, orphanedAccounts: orphans.results.length })
+      }
+
+      // Facturation des clubs -------------------------------------------
+      //
+      // Ce que la plateforme facture a ses clients, a ne pas confondre avec
+      // la comptabilite d'un club, qui vit dans sa propre base.
+
+      if (path === '/api/admin/billing' && method === 'GET') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+
+        const year = intParam(url, 'year', new Date().getUTCFullYear())
+        const rawMonth = url.searchParams.get('month')
+        const month = rawMonth !== null && rawMonth !== '' && Number.isFinite(Number(rawMonth))
+          ? Math.min(Math.max(Math.trunc(Number(rawMonth)), 0), 11)
+          : null
+
+        // Les echeances retenues sont celles dont la periode COMMENCE dans la
+        // fenetre : une periode a cheval sur deux mois appartient au mois ou
+        // elle demarre, sinon elle serait comptee deux fois.
+        const from = `${year}-01-01`
+        const to = `${year}-12-31`
+
+        const [clubs, invoices, byMonth] = await Promise.all([
+          env.CONTROL.prepare(
+            `SELECT o.id, o.name, o.slug, o.theme, o.plan, o.status, o.created_at,
+                    b.price_cents, b.cycle_months, b.phone, b.started_at, b.expires_at, b.notes,
+                    (SELECT COUNT(*) FROM org_invoices i
+                      WHERE i.org_id = o.id AND i.paid_at IS NULL) AS unpaid_count,
+                    (SELECT COALESCE(SUM(i.amount_cents), 0) FROM org_invoices i
+                      WHERE i.org_id = o.id AND i.paid_at IS NULL) AS unpaid_cents,
+                    (SELECT MIN(i.due_date) FROM org_invoices i
+                      WHERE i.org_id = o.id AND i.paid_at IS NULL) AS next_due,
+                    (SELECT MAX(i.paid_at) FROM org_invoices i WHERE i.org_id = o.id) AS last_paid_at
+               FROM organizations o
+               LEFT JOIN org_billing b ON b.org_id = o.id
+              ORDER BY o.name
+              LIMIT 500`,
+          ).all(),
+
+          env.CONTROL.prepare(
+            `SELECT i.*, o.name AS org_name, o.slug AS org_slug, b.phone
+               FROM org_invoices i
+               JOIN organizations o ON o.id = i.org_id
+               LEFT JOIN org_billing b ON b.org_id = i.org_id
+              WHERE i.period_start BETWEEN ? AND ?
+                AND (? IS NULL OR CAST(strftime('%m', i.period_start) AS INTEGER) - 1 = ?)
+              ORDER BY i.due_date DESC
+              LIMIT 500`,
+          ).bind(from, to, month, month).all(),
+
+          // Encaisse contre facture, par mois : l'ecart entre les deux
+          // courbes est le retard de paiement, et c'est lui qu'on regarde.
+          env.CONTROL.prepare(
+            `SELECT CAST(strftime('%m', period_start) AS INTEGER) - 1 AS m,
+                    COALESCE(SUM(amount_cents), 0) AS billed,
+                    COALESCE(SUM(CASE WHEN paid_at IS NOT NULL THEN amount_cents ELSE 0 END), 0) AS paid
+               FROM org_invoices
+              WHERE period_start BETWEEN ? AND ?
+              GROUP BY m`,
+          ).bind(from, to).all<{ m: number; billed: number; paid: number }>(),
+        ])
+
+        const years = await env.CONTROL.prepare(
+          `SELECT DISTINCT CAST(strftime('%Y', period_start) AS INTEGER) AS y
+             FROM org_invoices ORDER BY y DESC`,
+        ).all<{ y: number }>()
+
+        const chart = Array.from({ length: 12 }, (_, m) => {
+          const row = byMonth.results.find(r => r.m === m)
+          return { month: m, billed: row?.billed ?? 0, paid: row?.paid ?? 0 }
+        })
+
+        return json({
+          year,
+          month,
+          years: [...new Set([new Date().getUTCFullYear(), ...years.results.map(r => r.y)])]
+            .filter(Number.isFinite).sort((a, b) => b - a),
+          clubs: clubs.results.map(row => {
+            const c = row as Record<string, unknown>
+            return { ...c, theme: readTheme(c.theme as string | null) }
+          }),
+          invoices: invoices.results,
+          chart,
+          today: isoSeconds(new Date()).slice(0, 10),
+        })
+      }
+
+      const billingRoute = path.match(/^\/api\/admin\/billing\/([^/]+)$/)
+      if (billingRoute && method === 'PUT') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const orgId = billingRoute[1]!
+        const known = await env.CONTROL.prepare('SELECT 1 FROM organizations WHERE id = ?')
+          .bind(orgId).first()
+        if (!known) return fail(404, 'Club inconnu')
+
+        const body = await readJson(request)
+        const price = Number(body.priceCents)
+        if (!Number.isFinite(price) || price < 0 || price > 100_000_000) {
+          return fail(400, 'Montant invalide')
+        }
+        const cycle = Number(body.cycleMonths)
+        if (!Number.isInteger(cycle) || cycle < 1 || cycle > 24) {
+          return fail(400, 'Le cycle doit aller de 1 a 24 mois')
+        }
+
+        await env.CONTROL.prepare(
+          `INSERT INTO org_billing (org_id, price_cents, cycle_months, phone, started_at, expires_at, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(org_id) DO UPDATE SET
+             price_cents = excluded.price_cents, cycle_months = excluded.cycle_months,
+             phone = excluded.phone, started_at = excluded.started_at,
+             expires_at = excluded.expires_at, notes = excluded.notes,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+        ).bind(
+          orgId, Math.round(price), cycle,
+          phoneDigits(body.phone), dateOnly(body.startedAt, 'startedAt'),
+          dateOnly(body.expiresAt, 'expiresAt'), optional(body.notes, 500),
+        ).run()
+        return json({ ok: true })
+      }
+
+      const invoiceCreate = path.match(/^\/api\/admin\/billing\/([^/]+)\/invoices$/)
+      if (invoiceCreate && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const orgId = invoiceCreate[1]!
+        const billing = await env.CONTROL.prepare(
+          'SELECT price_cents, cycle_months, expires_at FROM org_billing WHERE org_id = ?',
+        ).bind(orgId).first<{ price_cents: number; cycle_months: number; expires_at: string | null }>()
+        if (!billing) return fail(400, 'Definissez d abord le tarif de ce club')
+
+        const body = await readJson(request)
+        // La periode enchaine sur la precedente par defaut : c'est le cas
+        // courant, et retaper deux dates a chaque echeance invite a l'erreur.
+        const start = dateOnly(body.periodStart, 'periodStart')
+          ?? nextDay(billing.expires_at) ?? isoSeconds(new Date()).slice(0, 10)
+        const end = dateOnly(body.periodEnd, 'periodEnd') ?? addMonths(start, billing.cycle_months)
+        if (end <= start) return fail(400, 'La periode se termine avant de commencer')
+
+        const amount = body.amountCents === undefined
+          ? billing.price_cents
+          : Number(body.amountCents)
+        if (!Number.isFinite(amount) || amount < 0 || amount > 100_000_000) {
+          return fail(400, 'Montant invalide')
+        }
+
+        const id = newId()
+        await env.CONTROL.prepare(
+          `INSERT INTO org_invoices (id, org_id, period_start, period_end, amount_cents,
+                                     due_date, note, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(id, orgId, start, end, Math.round(amount),
+               dateOnly(body.dueDate, 'dueDate') ?? start,
+               optional(body.note, 300), principal.userId).run()
+        return json({ id }, { status: 201 })
+      }
+
+      const invoicePaid = path.match(/^\/api\/admin\/invoices\/([^/]+)\/paid$/)
+      if (invoicePaid && (method === 'POST' || method === 'DELETE')) {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const id = invoicePaid[1]!
+        const invoice = await env.CONTROL.prepare(
+          'SELECT org_id, period_end FROM org_invoices WHERE id = ?',
+        ).bind(id).first<{ org_id: string; period_end: string }>()
+        if (!invoice) return fail(404, 'Echeance inconnue')
+
+        if (method === 'DELETE') {
+          await env.CONTROL.prepare('UPDATE org_invoices SET paid_at = NULL, method = NULL WHERE id = ?')
+            .bind(id).run()
+          await recomputeExpiry(env, invoice.org_id)
+          return json({ ok: true })
+        }
+
+        const body = await readJson(request)
+        await env.CONTROL.prepare(
+          `UPDATE org_invoices SET paid_at = COALESCE(?, date('now')), method = ? WHERE id = ?`,
+        ).bind(dateOnly(body.paidAt, 'paidAt'), optional(body.method, 40), id).run()
+        await recomputeExpiry(env, invoice.org_id)
+        await env.CONTROL.prepare(
+          "INSERT INTO platform_audit (actor_id, action, detail, ip) VALUES (?, 'invoice_paid', ?, ?)",
+        ).bind(principal.userId, JSON.stringify({ id, orgId: invoice.org_id }), ip).run()
+        return json({ ok: true })
+      }
+
+      const invoiceDelete = path.match(/^\/api\/admin\/invoices\/([^/]+)$/)
+      if (invoiceDelete && method === 'DELETE') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const id = invoiceDelete[1]!
+        const invoice = await env.CONTROL.prepare('SELECT org_id FROM org_invoices WHERE id = ?')
+          .bind(id).first<{ org_id: string }>()
+        if (!invoice) return fail(404, 'Echeance inconnue')
+        await env.CONTROL.prepare('DELETE FROM org_invoices WHERE id = ?').bind(id).run()
+        await recomputeExpiry(env, invoice.org_id)
+        return json({ ok: true })
       }
 
       // Liste noire d'adresses.

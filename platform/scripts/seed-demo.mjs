@@ -101,7 +101,7 @@ console.log(`Cible : ${BASE}\n`)
 if (process.argv.includes('--reset')) {
   for (const table of [
     'platform_audit', 'security_events', 'known_ips', 'login_attempts',
-    'ip_blocklist', 'org_locations',
+    'ip_blocklist', 'org_locations', 'org_invoices', 'org_billing',
     'org_stats', 'sessions', 'memberships', 'organizations', 'users',
   ]) {
     control(`DELETE FROM ${table}`)
@@ -211,6 +211,46 @@ for (const { orgId, at } of located) {
   if (at) await ops('PUT', `/api/admin/clubs/${orgId}/location`, at)
 }
 console.log(`  ${'Emplacements poses'.padEnd(22)} ${located.filter(l => l.at).length} salle(s) sur la carte`)
+
+// Abonnements a la plateforme.
+//
+// Trois situations volontairement differentes : un club a jour, un dont
+// l'echeance approche, un deja expire. Un ecran de facturation ou tout est
+// regle ne montre rien de ce qu'il sait faire.
+const iso = d => d.toISOString().slice(0, 10)
+const shift = n => iso(new Date(today.getTime() + n * 86_400_000))
+
+// « Couvert jusqu'au » est la fin de la derniere periode REGLEE. Un club dont
+// l'echeance en cours reste ouverte est donc expire, pas « bientot » : pour
+// obtenir le cas « expire bientot », tout doit etre paye et la couverture
+// s'arreter dans quelques jours.
+const PLANS = [
+  { price: 40_000, cycle: 3, phone: '212661000001', endsIn: 70, leaveOpen: false },  // a jour
+  { price: 15_000, cycle: 1, phone: '212662000001', endsIn: 6, leaveOpen: false },   // expire bientot
+  { price: 15_000, cycle: 1, phone: '212663000001', endsIn: -18, leaveOpen: true },  // expire, impaye
+]
+
+for (const [i, { orgId }] of located.entries()) {
+  const plan = PLANS[i % PLANS.length]
+  await ops('PUT', `/api/admin/billing/${orgId}`, {
+    priceCents: plan.price, cycleMonths: plan.cycle, phone: plan.phone,
+    startedAt: shift(-plan.cycle * 30 * 3), expiresAt: null,
+  })
+
+  // Trois periodes consecutives, dont la derniere se termine a la date
+  // voulue : les deux premieres sont reglees, la derniere depend du cas.
+  for (let k = 2; k >= 0; k--) {
+    const end = shift(plan.endsIn - k * plan.cycle * 30)
+    const start = shift(plan.endsIn - (k + 1) * plan.cycle * 30 + 1)
+    const { id } = await ops('POST', `/api/admin/billing/${orgId}/invoices`, {
+      periodStart: start, periodEnd: end, amountCents: plan.price, dueDate: start,
+    })
+    if (k > 0 || !plan.leaveOpen) {
+      await ops('POST', `/api/admin/invoices/${id}/paid`, { paidAt: start })
+    }
+  }
+}
+console.log(`  ${'Abonnements'.padEnd(22)} ${located.length} club(s) : a jour, bientot, expire`)
 
 // Remplit le cache d'agregats pour que la supervision affiche des chiffres
 // tout de suite, au lieu d'attendre le prochain passage du cron.

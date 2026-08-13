@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   LayoutDashboard, Users, Award, Trophy, Wallet, UserCog, SlidersHorizontal,
-  ShieldAlert, Building2, Settings, LogOut, Menu, X,
+  ShieldAlert, Building2, Settings, LogOut, Menu, X, Receipt,
 } from 'lucide-react'
 import { api, ApiError, type Me, type Capabilities } from '@/lib/client'
 import { SKINS, DEFAULT_THEME } from '@/src/club/branding'
@@ -44,8 +44,9 @@ function allowed(items: NavItem[], capabilities: Capabilities | null): NavItem[]
 
 /** Ecrans de la plateforme. L'exploitant supervise, il ne gere aucun club. */
 const PLATFORM_NAV: NavItem[] = [
-  { href: '/admin',       label: 'Clubs',       icon: Building2 },
-  { href: '/supervision', label: 'Supervision', icon: ShieldAlert },
+  { href: '/admin',        label: 'Clubs',        icon: Building2 },
+  { href: '/facturation',  label: 'Facturation',  icon: Receipt },
+  { href: '/supervision',  label: 'Supervision',  icon: ShieldAlert },
 ]
 
 export default function Shell({ children }: { children: ReactNode }) {
