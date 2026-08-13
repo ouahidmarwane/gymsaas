@@ -2173,6 +2173,11 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   position: fixed; inset: 0; z-index: 200;
   background: rgba(0,0,0,0.65);
   display: flex; align-items: center; justify-content: center;
+  /* Sur un ecran bas, centrer une modale plus haute que la fenetre coupe le
+     haut ET le bas. Le padding lui laisse une marge, et le defilement de
+     l'overlay rattrape ce qui deborde encore. */
+  padding: 1rem;
+  overflow-y: auto;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   animation: fadeIn 0.18s ease forwards;
@@ -2185,6 +2190,12 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   border-radius: 22px;
   padding: 2rem;
   width: 380px;
+  /* Un formulaire plus haut que l'ecran laissait ses boutons hors de portee,
+     sans aucun moyen d'y acceder : la modale ne defilait pas. */
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: 0 40px 80px rgba(0,0,0,0.55), 0 0 0 1px var(--overlay-soft);
   animation: scaleIn 0.22s var(--ease-out) forwards;
 }

@@ -30,8 +30,31 @@ export default function CreateClubModal({
     if (!slugTouched) setSlug(slugify(value))
   }
 
+  /**
+   * Ce qui manque pour envoyer, en clair.
+   *
+   * Le bouton etait simplement desactive tant que la saisie n'etait pas
+   * complete. Un mot de passe trop court le rendait donc inerte sans rien
+   * dire, et la seule explication — « 10 caracteres minimum » — se trouvait
+   * dans une zone qu'on ne pouvait pas faire defiler. Un bouton mort et muet
+   * se lit comme une panne.
+   */
+  function whatIsMissing(): string | null {
+    if (!clubName.trim()) return 'Le nom du club est obligatoire.'
+    if (!slug.trim()) return 'L’identifiant est obligatoire.'
+    if (!ownerName.trim()) return 'Le nom du responsable est obligatoire.'
+    if (!ownerEmail.trim()) return 'L’e-mail du responsable est obligatoire.'
+    if (ownerPassword.length < 10) {
+      return `Le mot de passe doit faire au moins 10 caracteres (${ownerPassword.length} saisi${ownerPassword.length > 1 ? 's' : ''}).`
+    }
+    return null
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault()
+    const missing = whatIsMissing()
+    if (missing) { setError(missing); return }
+
     setBusy(true); setError(null)
     try {
       const res = await api.post<{ orgId: string }>('/api/admin/clubs', {
@@ -43,9 +66,6 @@ export default function CreateClubModal({
       setBusy(false)
     }
   }
-
-  const ready = clubName.trim() && slug.trim() && ownerName.trim()
-    && ownerEmail.trim() && ownerPassword.length >= 10
 
   return (
     <div className="compta-modal-overlay" onClick={onClose}
@@ -60,16 +80,6 @@ export default function CreateClubModal({
         <p className="dz-card-note" style={{ marginBottom: 18 }}>
           Le club demarre vide. Ses salles et ses sports se declarent ensuite.
         </p>
-
-        <div aria-live="polite">
-          {error && (
-            <p role="alert" style={{
-              padding: '0.6rem 0.85rem', marginBottom: 12, borderRadius: 12,
-              background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
-              color: '#fca5a5', fontSize: '0.82rem', fontWeight: 600,
-            }}>{error}</p>
-          )}
-        </div>
 
         <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Field label="Nom du club">
@@ -95,7 +105,15 @@ export default function CreateClubModal({
                    onChange={e => setOwnerEmail(e.target.value)} />
           </Field>
 
-          <Field label="Mot de passe provisoire" hint="10 caracteres minimum.">
+          <Field
+            label="Mot de passe provisoire"
+            hint={ownerPassword.length === 0
+              ? '10 caracteres minimum.'
+              : ownerPassword.length < 10
+                ? `Encore ${10 - ownerPassword.length} caractere${10 - ownerPassword.length > 1 ? 's' : ''}.`
+                : 'Longueur suffisante.'}
+            tone={ownerPassword.length > 0 && ownerPassword.length < 10 ? 'warn' : undefined}
+          >
             <input className="input-dark" type="text" value={ownerPassword} required maxLength={200}
                    onChange={e => setOwnerPassword(e.target.value)} />
           </Field>
@@ -109,13 +127,28 @@ export default function CreateClubModal({
             </select>
           </Field>
 
+          {/* L'erreur vit juste au-dessus des boutons, la ou se porte le
+              regard au moment du clic — pas en haut d'un formulaire qui a
+              defile. */}
+          <div aria-live="polite">
+            {error && (
+              <p role="alert" style={{
+                padding: '0.6rem 0.85rem', borderRadius: 12,
+                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+                color: '#fca5a5', fontSize: '0.82rem', fontWeight: 600,
+              }}>{error}</p>
+            )}
+          </div>
+
+          {/* Le bouton reste actif meme incomplet : c'est le clic qui dit ce
+              qui manque. Desactive, il ne disait rien. */}
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
             <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={onClose} disabled={busy}>
               Annuler
             </button>
             <button type="submit" className="btn-dark"
                     style={{ flex: 1, background: 'var(--gold)', borderColor: 'transparent' }}
-                    disabled={busy || !ready}>
+                    disabled={busy}>
               {busy ? 'Creation…' : 'Creer le club'}
             </button>
           </div>
@@ -125,12 +158,18 @@ export default function CreateClubModal({
   )
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, tone, children }: {
+  label: string; hint?: string; tone?: 'warn'; children: React.ReactNode
+}) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>{label}</span>
       {children}
-      {hint && <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>{hint}</span>}
+      {hint && (
+        <span style={{ fontSize: '0.72rem', color: tone === 'warn' ? '#fbbf24' : 'var(--muted)' }}>
+          {hint}
+        </span>
+      )}
     </label>
   )
 }
