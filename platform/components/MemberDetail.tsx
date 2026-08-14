@@ -1,6 +1,7 @@
 'use client'
 
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera, Phone,
 } from 'lucide-react'
@@ -285,6 +286,7 @@ function IdentityDoc({ member, canWrite, canDelete, onChanged }: {
   onChanged: () => void | Promise<void>
 }) {
   const [open, setOpen] = useState(false)
+  const [viewing, setViewing] = useState(false)
   const [docType, setDocType] = useState<'cin' | 'passeport'>(member.id_doc_type ?? 'cin')
   const [number, setNumber] = useState(member.id_doc_number ?? '')
   const [busy, setBusy] = useState(false)
@@ -359,12 +361,9 @@ function IdentityDoc({ member, canWrite, canDelete, onChanged }: {
 
       <div className="mdet-doc-actions">
         {has && (
-          // Le fichier passe par le Worker : la cle R2 ne sort jamais du
-          // serveur, et l'appartenance au club est reverifiee a chaque appel.
-          <a className="gf-mini-btn" href={`/api/members/${member.id}/document`}
-             target="_blank" rel="noopener noreferrer">
+          <button className="gf-mini-btn" onClick={() => setViewing(true)}>
             <Eye size={13} strokeWidth={2.1} /> Voir
-          </a>
+          </button>
         )}
         {canWrite && (
           <button className="gf-mini-btn" onClick={() => setOpen(o => !o)} disabled={busy}>
@@ -409,7 +408,78 @@ function IdentityDoc({ member, canWrite, canDelete, onChanged }: {
       <div aria-live="polite">
         {problem && <p role="alert" className="mdet-problem">{problem}</p>}
       </div>
+
+      {viewing && (
+        <DocViewer src={`/api/members/${member.id}/document`}
+                   title={`${DOC_LABEL[member.id_doc_type ?? 'cin']} — ${member.name}`}
+                   onClose={() => setViewing(false)} />
+      )}
     </div>
+  )
+}
+
+/**
+ * Visionneuse de piece, au centre de la page.
+ *
+ * Le fichier est recupere en memoire plutot que pointe par une balise :
+ * c'est ainsi qu'on connait son type reel avant d'afficher quoi que ce soit,
+ * et qu'on choisit entre une image et un PDF sans deviner d'apres une
+ * extension. L'adresse blob ne quitte pas l'onglet, et elle est liberee a la
+ * fermeture — sinon le scan resterait en memoire jusqu'au rechargement.
+ */
+function DocViewer({ src, title, onClose }: {
+  src: string; title: string; onClose: () => void
+}) {
+  const [blob, setBlob] = useState<{ url: string; type: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let url: string | null = null
+    let alive = true
+    fetch(src, { credentials: 'same-origin' })
+      .then(async res => {
+        if (!res.ok) throw new Error(res.status === 404 ? 'Fichier introuvable' : 'Lecture impossible')
+        const body = await res.blob()
+        if (!alive) return
+        url = URL.createObjectURL(body)
+        setBlob({ url, type: body.type })
+      })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Lecture impossible') })
+    return () => {
+      alive = false
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [src])
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', key)
+    return () => document.removeEventListener('keydown', key)
+  }, [onClose])
+
+  const isPdf = blob?.type.includes('pdf')
+
+  return createPortal(
+    <div className="docview-overlay" onClick={onClose} role="dialog" aria-modal="true"
+         aria-label={title}>
+      <div className="docview" onClick={e => e.stopPropagation()}>
+        <div className="docview-bar">
+          <span className="docview-title">{title}</span>
+          <button className="mdet-hero-btn" onClick={onClose} aria-label="Fermer">
+            <X size={15} strokeWidth={2.4} />
+          </button>
+        </div>
+
+        <div className="docview-stage">
+          {error && <p className="mdet-problem">{error}</p>}
+          {!error && !blob && <p className="mdet-void">Chargement…</p>}
+          {blob && (isPdf
+            ? <iframe className="docview-pdf" src={blob.url} title={title} />
+            : <img className="docview-img" src={blob.url} alt={title} />)}
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
 

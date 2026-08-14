@@ -5968,6 +5968,53 @@ html[data-theme='light'] .mdet-wash { opacity: 0.09; }
 }
 html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 
+/* Visionneuse de piece d'identite, au-dessus de la fiche.
+   Le flou porte sur ce qu'il y a derriere, y compris la fiche elle-meme :
+   le document devient la seule chose nette a l'ecran. */
+.docview-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  display: grid; place-items: center; padding: 1.5rem;
+  background: rgba(3, 6, 12, 0.72);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  animation: fadeIn 0.16s ease forwards;
+}
+.docview {
+  width: min(880px, 100%);
+  max-height: 90vh;
+  display: flex; flex-direction: column;
+  background: var(--float-bg);
+  border: 1px solid var(--overlay-strong);
+  border-radius: 20px; overflow: hidden;
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.6);
+  animation: mdetRise 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.docview-bar {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 0.85rem 0.9rem 0.85rem 1.2rem;
+  border-bottom: 1px solid var(--hairline);
+}
+.docview-title {
+  flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.docview-stage {
+  display: grid; place-items: center; padding: 1rem;
+  /* Un damier tres discret : un scan sur fond blanc, pose sur du blanc,
+     n'a plus de bords visibles. */
+  background:
+    repeating-conic-gradient(var(--overlay-soft) 0% 25%, transparent 0% 50%) 0 0 / 22px 22px;
+  overflow: auto;
+}
+.docview-img {
+  max-width: 100%; max-height: 74vh; object-fit: contain;
+  border-radius: 10px; display: block;
+}
+.docview-pdf { width: 100%; height: 74vh; border: 0; border-radius: 10px; background: #fff; }
+@media (prefers-reduced-motion: reduce) {
+  .docview, .docview-overlay { animation: none; }
+}
+
 /* Le halo qui derive et l'entree de la modale sont du decor : ils sont les
    premiers a disparaitre pour qui a demande moins de mouvement. */
 @media (prefers-reduced-motion: reduce) {
