@@ -5810,11 +5810,14 @@ html[data-theme='light'] .mdet-wash { opacity: 0.09; }
   position: absolute; inset: 0; pointer-events: none;
   background:
     linear-gradient(to bottom, rgba(0,0,0,0.42) 0, transparent 26%),
-    linear-gradient(to top, rgba(0,0,0,0.88) 0, rgba(0,0,0,0.45) 26%, transparent 58%);
+    linear-gradient(to top, rgba(0,0,0,0.88) 0, rgba(0,0,0,0.5) 34%, transparent 68%);
 }
 
 .mdet-hero-caption {
-  position: absolute; inset-inline: 1.5rem; bottom: 1.15rem; z-index: 2;
+  position: absolute; inset-inline: 1.5rem; z-index: 2;
+  /* Au-dessus des pastilles, pas derriere : elles remontent de 2.1rem sur la
+     photo et coupaient la fin du numero. */
+  bottom: 3.3rem;
   color: #fff;
 }
 .mdet-hero-phone {
