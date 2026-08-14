@@ -74,9 +74,13 @@ function Metric({
 }) {
   const color = tone === 'danger' ? '#fca5a5' : tone === 'warn' ? '#fcd34d' : 'var(--text)'
   const body = (
-    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
+    // « mini » : ces trois lignes tiennent dans une rangee de grille. Aux
+    // tailles de la page d'accueil elles debordaient, et le trop-plein etait
+    // simplement coupe par la carte.
+    <div className="dz-metric-mini"
+         style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%' }}>
       <span className="dz-metric-name">{label}</span>
-      <span className="dz-metric-value" style={{ margin: '4px 0 2px', color }}>
+      <span className="dz-metric-value" style={{ margin: '2px 0 1px', color }}>
         {typeof value === 'number' ? value.toLocaleString('fr-MA') : value}
       </span>
       {note && <span className="dz-card-note">{note}</span>}

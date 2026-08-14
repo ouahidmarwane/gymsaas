@@ -5,7 +5,10 @@ import { GripVertical, X, Plus, Check } from 'lucide-react'
 import type { CardPlacement, CardSpec } from '@/lib/client'
 import { COLUMNS, moveCard, resizeCard, rows } from '@/lib/grid'
 
-const ROW_H = 104
+// Hauteur d'une rangee. Une carte de chiffre en occupe une seule : elle
+// porte un libelle, un nombre et une note, rien de plus, et lui donner la
+// taille d'un graphique repoussait le tableau hors de l'ecran.
+const ROW_H = 96
 const GAP = 18
 
 interface Props {
@@ -249,7 +252,10 @@ export default function DashboardGrid({
           gridAutoRows: `${ROW_H}px`,
           gap: `${GAP}px`,
           ['--row-h' as string]: `${ROW_H}px`,
-          minHeight: rowCount * (ROW_H + GAP),
+          // n rangees, donc n-1 intervalles. La formule precedente en
+          // comptait un de plus : la grille reservait une bande vide de
+          // 18 px sous la derniere rangee, a chaque ecran.
+          minHeight: rowCount * ROW_H + (rowCount - 1) * GAP,
         }}
       >
         {/* Empreinte de destination : on voit ou la carte va atterrir. */}

@@ -132,7 +132,12 @@
   transition: all 200ms var(--ease-out);
 }
 
-.gf-body { flex: 1; min-height: 0; padding: 20px 22px; overflow: hidden; }
+.gf-body { flex: 1; min-height: 0; padding: 16px 20px; overflow: hidden; }
+
+/* Carte de chiffre : tenir dans une rangee, sans que rien ne soit rogne. */
+.dz-metric-mini .dz-metric-name { font-size: 0.75rem; }
+.dz-metric-mini .dz-metric-value { font-size: 1.55rem; line-height: 1.15; }
+.dz-metric-mini .dz-card-note { font-size: 0.75rem; }
 
 .gf-chrome {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;

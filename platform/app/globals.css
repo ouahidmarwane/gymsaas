@@ -803,12 +803,14 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 }
 
 .dashboard-shell {
-  max-width: 1420px;
+  /* Un tableau de membres a huit colonnes : chaque pixel gagne ici est une
+     colonne qui n'a plus besoin de defiler horizontalement. */
+  max-width: 1560px;
   margin: 0 auto;
   padding: 2rem 2rem 4rem;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 22px;
 }
 
 .dashboard-hero {

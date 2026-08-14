@@ -115,11 +115,14 @@ const DEFAULTS: Record<PageKey, CardPlacement[]> = {
   ],
   // Les autres ecrans demarrent sans bandeau : leur contenu principal est la
   // liste ou le tableau en dessous, pas les cartes.
+  // Trois cartes de quatre colonnes : le bandeau fait exactement la largeur
+  // du tableau en dessous. A trois colonnes chacune, il s'arretait au trois
+  // quarts et laissait un vide a droite que rien ne venait justifier.
   members: [
-    { id: 'members_total',     x: 0, y: 0, w: 3, h: 1, visible: true },
-    { id: 'subs_expiring',     x: 3, y: 0, w: 3, h: 1, visible: true },
-    { id: 'insurance_missing', x: 6, y: 0, w: 3, h: 1, visible: true },
-    { id: 'members_active',    x: 9, y: 0, w: 3, h: 1, visible: false },
+    { id: 'members_total',     x: 0, y: 0, w: 4, h: 1, visible: true },
+    { id: 'subs_expiring',     x: 4, y: 0, w: 4, h: 1, visible: true },
+    { id: 'insurance_missing', x: 8, y: 0, w: 4, h: 1, visible: true },
+    { id: 'members_active',    x: 0, y: 1, w: 4, h: 1, visible: false },
     { id: 'recent_members',    x: 0, y: 1, w: 6, h: 3, visible: false },
     { id: 'branch_split',      x: 6, y: 1, w: 6, h: 3, visible: false },
   ],
