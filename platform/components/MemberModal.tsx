@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
-import { X } from 'lucide-react'
-import { api, ApiError } from '@/lib/client'
-import type { MemberRow } from '@/lib/member-status'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { X, Camera, Trash2 } from 'lucide-react'
+import { api, upload, ApiError } from '@/lib/client'
+import { type MemberRow, photoUrl } from '@/lib/member-status'
 
 interface Branch { id: string; name: string }
 interface Discipline { id: string; name: string }
@@ -40,6 +40,53 @@ export default function MemberModal({
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
 
+  /**
+   * Photo.
+   *
+   * A la creation, le membre n'a pas encore d'identifiant : le fichier ne
+   * peut donc pas partir tout de suite. Il attend en memoire et suit
+   * immediatement l'enregistrement. A la modification il part seul, sans
+   * obliger a valider tout le formulaire pour un simple portrait.
+   */
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
+  const [photoGone, setPhotoGone] = useState(false)
+  const [savedId, setSavedId] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // L'URL d'objet est liberee : sans cela, chaque essai de photo garde son
+  // fichier en memoire jusqu'au rechargement de la page.
+  useEffect(() => {
+    if (!photoFile) { setPhotoPreview(null); return }
+    const url = URL.createObjectURL(photoFile)
+    setPhotoPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [photoFile])
+
+  const existing = member && !photoGone ? photoUrl(member) : null
+  const shown = photoPreview ?? existing
+
+  function pick(file: File) {
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setProblem('Photo : format accepté PNG, JPEG ou WebP.'); return
+    }
+    if (file.size > 4 * 1024 * 1024) { setProblem('Photo : 4 Mo maximum.'); return }
+    setProblem(null); setPhotoGone(false); setPhotoFile(file)
+  }
+
+  async function dropPhoto() {
+    setPhotoFile(null)
+    if (fileRef.current) fileRef.current.value = ''
+    if (!editing || !member.photo_key) { setPhotoGone(true); return }
+    setBusy(true)
+    try {
+      await api.del(`/api/members/${member.id}/photo`)
+      setPhotoGone(true)
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : 'Suppression impossible')
+    } finally { setBusy(false) }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!name.trim()) { setProblem('Le nom est obligatoire.'); return }
@@ -63,8 +110,29 @@ export default function MemberModal({
     }
 
     try {
-      if (editing) await api.patch(`/api/members/${member.id}`, payload)
-      else await api.post('/api/members', payload)
+      // `savedId` couvre le cas ou la fiche est passee mais pas la photo :
+      // sans lui, un second clic sur « Ajouter » creerait un doublon.
+      let id = member?.id ?? savedId
+      if (id) await api.patch(`/api/members/${id}`, payload)
+      else {
+        id = (await api.post<{ id: string }>('/api/members', payload)).id
+        setSavedId(id)
+      }
+
+      // La photo suit l'enregistrement, jamais l'inverse : un envoi qui
+      // echoue ne doit pas faire perdre la fiche deja saisie. C'est aussi
+      // pourquoi son echec est signale sans annuler ce qui est ecrit.
+      if (photoFile && id) {
+        try {
+          await upload('PUT', `/api/members/${id}/photo`, photoFile)
+        } catch (e) {
+          setProblem(e instanceof ApiError
+            ? `Membre enregistré, mais la photo n’est pas passée : ${e.message}`
+            : 'Membre enregistré, mais la photo n’est pas passée.')
+          setBusy(false)
+          return
+        }
+      }
       await onSaved()
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : 'Enregistrement impossible')
@@ -85,6 +153,36 @@ export default function MemberModal({
         </div>
 
         <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* La photo en premier : c'est ce qu'on regarde d'abord sur la
+              fiche, donc ce qu'on cherche d'abord ici. */}
+          <div className="mmod-photo">
+            <span className="mmod-photo-thumb">
+              {shown
+                ? <img src={shown} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : <Camera size={20} strokeWidth={1.8} style={{ color: 'var(--muted)' }} />}
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <button type="button" className="gf-mini-btn" disabled={busy}
+                        onClick={() => fileRef.current?.click()}>
+                  <Camera size={13} strokeWidth={2.1} /> {shown ? 'Changer' : 'Ajouter une photo'}
+                </button>
+                {shown && (
+                  <button type="button" className="gf-mini-btn" disabled={busy}
+                          style={{ color: '#f87171' }} onClick={dropPhoto}>
+                    <Trash2 size={13} strokeWidth={2.1} /> Retirer
+                  </button>
+                )}
+              </div>
+              <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                PNG, JPEG ou WebP · 4 Mo maximum
+                {!editing && photoFile && ' · envoyée après l’enregistrement'}
+              </span>
+            </div>
+            <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/webp"
+                   onChange={e => { const f = e.target.files?.[0]; if (f) pick(f) }} />
+          </div>
+
           <Field label="Nom complet">
             <input className="input-dark" value={name} required autoFocus maxLength={200}
                    onChange={e => { setName(e.target.value); setProblem(null) }} />

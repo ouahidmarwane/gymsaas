@@ -5683,6 +5683,41 @@ html[data-skin='chaleureux'] .sidebar-shell {
    la braise posee sur body. */
 html[data-skin='clair'] .app-main { background: transparent; }
 
+/* Bloc photo du formulaire membre. */
+.mmod-photo {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0.75rem; border-radius: 16px;
+  background: var(--overlay-soft); border: 1px solid var(--hairline);
+}
+.mmod-photo-thumb {
+  width: 64px; height: 64px; border-radius: 50%; flex: none; overflow: hidden;
+  display: grid; place-items: center;
+  background: var(--overlay); border: 1px solid var(--hairline);
+}
+
+/* ─── Menu de ligne (rendu dans <body>) ─────────────────────────
+   Position fixe : il est ancre au bouton par calcul, pas par le flux, pour
+   echapper au decoupage du conteneur defilant du tableau. */
+.row-menu {
+  position: fixed;
+  z-index: 400;
+  padding: 6px;
+  display: flex; flex-direction: column;
+  background: var(--float-bg);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--overlay);
+  border-radius: 16px;
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--overlay-soft);
+  animation: fadeUp 0.16s var(--ease-out) forwards;
+}
+html[data-theme='light'] .row-menu {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.16);
+}
+@media (prefers-reduced-motion: reduce) { .row-menu { animation: none; } }
+
 /* ─── Fiche membre ──────────────────────────────────────────────
    Tout est bati sur les jetons de surface : la fiche suit les cinq
    habillages sans une seule regle par theme. */

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Plus, MessageCircle, MoreHorizontal, Pencil, Trash2, TriangleAlert,
-  ChevronDown, ArrowUp, ArrowDown, Download, Target, Upload, CreditCard, IdCard,
+  Plus, MessageCircle, Pencil, Trash2, TriangleAlert,
+  ChevronDown, ArrowUp, ArrowDown, Download, Target, Upload, IdCard,
 } from 'lucide-react'
 import { useDiscipline } from '@/lib/discipline'
 import { api, ApiError, type Me } from '@/lib/client'
@@ -12,6 +12,7 @@ import PageState from '@/components/PageState'
 import SlidingTabs from '@/components/SlidingTabs'
 import MemberModal from '@/components/MemberModal'
 import MemberDetail from '@/components/MemberDetail'
+import RowMenu from '@/components/RowMenu'
 import MemberExportModal from '@/components/MemberExportModal'
 import MemberImportModal from '@/components/MemberImportModal'
 import { toCsv, download } from '@/lib/csv'
@@ -42,7 +43,6 @@ export default function MembersPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [menuFor, setMenuFor] = useState<string | null>(null)
   const [editing, setEditing] = useState<MemberRow | null>(null)
   const [adding, setAdding] = useState(false)
   // La fiche est retenue par son identifiant, pas par la ligne : apres un
@@ -69,15 +69,6 @@ export default function MembersPage() {
         setMembers([])
       })
   }, [reload])
-
-  // Ferme le menu ⋯ au clic ailleurs.
-  useEffect(() => {
-    const away = (e: MouseEvent) => {
-      if (!(e.target as Element | null)?.closest?.('[data-rowmenu]')) setMenuFor(null)
-    }
-    document.addEventListener('mousedown', away)
-    return () => document.removeEventListener('mousedown', away)
-  }, [])
 
   const canWrite = me
     ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin', 'staff'].includes(me.org?.role ?? ''))
@@ -359,40 +350,23 @@ export default function MembersPage() {
                             <MessageCircle size={15} strokeWidth={2.2} />
                           </a>
 
-                          <div style={{ position: 'relative' }} data-rowmenu>
-                            <button className="icon-btn" style={{ width: 30, height: 30 }}
-                                    title="Plus d’actions" aria-label="Plus d’actions"
-                                    onClick={() => setMenuFor(menuFor === m.id ? null : m.id)}>
-                              <MoreHorizontal size={15} strokeWidth={2.1} />
-                            </button>
-                            {menuFor === m.id && (
-                              <div className="notif-dropdown" style={{ right: 0, minWidth: 190, padding: 6 }}>
+                          <RowMenu>
+                            {close => (
+                              <>
                                 <button className="gf-palette-item" style={{ cursor: 'pointer' }}
-                                        onClick={() => { setMenuFor(null); setDetailId(m.id) }}>
+                                        onClick={() => { close(); setDetailId(m.id) }}>
                                   <IdCard size={13} strokeWidth={2.1} /> Voir la fiche
                                 </button>
                                 {canWrite && (
                                   <button className="gf-palette-item" style={{ cursor: 'pointer' }}
-                                          onClick={() => { setMenuFor(null); setEditing(m) }}>
+                                          onClick={() => { close(); setEditing(m) }}>
                                     <Pencil size={13} strokeWidth={2.1} /> Modifier
-                                  </button>
-                                )}
-                                {canWrite && (
-                                  <button className="gf-palette-item" style={{ cursor: 'pointer' }}
-                                          onClick={() => {
-                                            setMenuFor(null)
-                                            act(`pay-${m.id}`,
-                                              () => api.post('/api/payments', {
-                                                memberId: m.id, amountCents: 0, type: 'monthly',
-                                              }), '')
-                                          }} disabled>
-                                    <CreditCard size={13} strokeWidth={2.1} /> Encaisser
                                   </button>
                                 )}
                                 {canWrite && (
                                   <button className="gf-palette-item" style={{ cursor: 'pointer', color: '#f87171' }}
                                           onClick={() => {
-                                            setMenuFor(null)
+                                            close()
                                             if (!confirm(`Archiver ${m.name} ? Ses encaissements sont conservés.`)) return
                                             act(`del-${m.id}`,
                                               () => api.del(`/api/members/${m.id}`),
@@ -401,9 +375,9 @@ export default function MembersPage() {
                                     <Trash2 size={13} strokeWidth={2.1} /> Archiver
                                   </button>
                                 )}
-                              </div>
+                              </>
                             )}
-                          </div>
+                          </RowMenu>
                         </div>
                       </td>
                     </tr>
