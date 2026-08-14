@@ -41,6 +41,7 @@ interface Payment {
   notes: string | null
   /** Renseigne quand cette ligne annule une autre : montant negatif. */
   reverses_id: string | null
+  reversal_kind: 'erreur' | 'remboursement' | null
   reversal_reason: string | null
 }
 
@@ -233,6 +234,7 @@ export default function ComptabilitePage() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [reversing, setReversing] = useState<Payment | null>(null)
 
   const [editPrices, setEditPrices] = useState(false)
   const [draft, setDraft] = useState<Prices>({ monthlyCents: 0, insuranceCents: 0, registrationCents: 0 })
@@ -308,22 +310,20 @@ export default function ComptabilitePage() {
     [payments],
   )
 
-  /** Annule une ligne par ecriture inverse, apres confirmation du motif. */
-  async function reverse(payment: Payment) {
-    const reason = window.prompt(
-      `Annuler ${dh(payment.amount_cents)} de ${payment.member_name ?? 'ce membre'} ?\n`
-      + 'La ligne d’origine est conservée ; une écriture inverse est ajoutée.\n\nMotif :',
-    )
-    if (reason === null) return
-    if (!reason.trim()) { setError('Un motif est nécessaire pour annuler.'); return }
-
+  /** Écrit l'écriture inverse. La modale a déjà validé le motif et le cas. */
+  async function reverse(payment: Payment, input: ReversalInput) {
     setBusy(payment.id); setError(null); setNotice(null)
     try {
-      await api.post(`/api/payments/${payment.id}/reverse`, { reason: reason.trim() })
+      const res = await api.post<{ paidAt: string }>(`/api/payments/${payment.id}/reverse`, input)
       await load()
-      setNotice(`Annulation enregistrée : ${dh(-payment.amount_cents)}.`)
+      setReversing(null)
+      setNotice(input.kind === 'erreur'
+        ? `Correction enregistrée au ${new Date(res.paidAt).toLocaleDateString('fr-FR')} : ${dh(-payment.amount_cents)}.`
+        : `Remboursement enregistré au ${new Date(res.paidAt).toLocaleDateString('fr-FR')} : ${dh(-payment.amount_cents)}.`)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Annulation impossible')
+      // L'erreur remonte a la modale, qui reste ouverte : la refermer
+      // obligerait a tout resaisir pour lire ce qui n'allait pas.
+      throw e instanceof ApiError ? e : new Error('Annulation impossible')
     } finally { setBusy(null) }
   }
 
@@ -469,7 +469,7 @@ export default function ComptabilitePage() {
     if (!payments.length) return
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
     const rows = [
-      ['Date', 'Membre', 'Type', 'Moyen', 'Montant (DH)', 'Salle', 'Annulation', 'Note'].map(esc),
+      ['Date', 'Membre', 'Type', 'Moyen', 'Montant (DH)', 'Salle', 'Annulation', 'Motif', 'Note'].map(esc),
       ...payments.map(p => [
         esc(new Date(p.paid_at).toLocaleDateString('fr-FR')),
         esc(p.member_name ?? ''),
@@ -479,10 +479,11 @@ export default function ComptabilitePage() {
         // quelle dans un tableur, sans retraitement.
         esc((p.amount_cents / 100).toFixed(2)),
         esc(p.branch_name ?? ''),
-        esc(p.reverses_id ? (p.reversal_reason ?? 'annulation') : ''),
+        esc(p.reverses_id ? (p.reversal_kind === 'remboursement' ? 'Remboursement' : 'Correction') : ''),
+        esc(p.reverses_id ? (p.reversal_reason ?? '') : ''),
         esc(p.notes ?? ''),
       ]),
-      ['', '', '', esc('TOTAL'), esc((paymentsTotal / 100).toFixed(2)), '', '', ''],
+      ['', '', '', esc('TOTAL'), esc((paymentsTotal / 100).toFixed(2)), '', '', '', ''],
     ]
     const csv = rows.map(r => r.join(',')).join('\r\n')
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
@@ -643,7 +644,8 @@ export default function ComptabilitePage() {
                           {p.member_name ?? '—'}
                           {reversal && (
                             <div style={{ fontSize: '0.7rem', color: '#f87171', fontWeight: 600 }}>
-                              Annulation{p.reversal_reason ? ` — ${p.reversal_reason}` : ''}
+                              {p.reversal_kind === 'remboursement' ? 'Remboursement' : 'Correction'}
+                              {p.reversal_reason ? ` — ${p.reversal_reason}` : ''}
                             </div>
                           )}
                           {cancelled && (
@@ -669,8 +671,8 @@ export default function ComptabilitePage() {
                               rien sur une annulation ni sur une ligne deja annulee. */}
                           {canEditPrices && !reversal && !cancelled && (
                             <button className="gf-mini-btn" data-tone="danger" disabled={busy !== null}
-                                    title="Annuler par écriture inverse"
-                                    onClick={() => reverse(p)}>
+                                    title="Corriger une erreur ou enregistrer un remboursement"
+                                    onClick={() => setReversing(p)}>
                               <Undo2 size={12} strokeWidth={2.4} /> Annuler
                             </button>
                           )}
@@ -794,6 +796,11 @@ export default function ComptabilitePage() {
                      onClose={() => setExpanded(null)}>{branchPieChart(380, 90, 140)}</ExpandModal>
       )}
 
+      {reversing && (
+        <ReversalModal payment={reversing} onClose={() => setReversing(null)}
+                       onConfirm={input => reverse(reversing, input)} />
+      )}
+
       {editPrices && (
         <PriceModal
           draft={draft} setDraft={setDraft} error={priceError} saving={savingPrices}
@@ -801,6 +808,141 @@ export default function ComptabilitePage() {
         />
       )}
     </EditablePage>
+  )
+}
+
+interface ReversalInput { kind: 'erreur' | 'remboursement'; reason: string; refundedAt?: string }
+
+/**
+ * Annuler un encaissement : deux gestes, pas un.
+ *
+ * Le choix ne peut pas etre devine, et il change la date de l'ecriture donc
+ * le total d'un mois entier. Il est donc pose en premier, en toutes lettres,
+ * avant le motif — c'est la seule decision que l'utilisateur doit vraiment
+ * prendre ici.
+ */
+function ReversalModal({ payment, onClose, onConfirm }: {
+  payment: Payment
+  onClose: () => void
+  onConfirm: (input: ReversalInput) => Promise<void>
+}) {
+  const open = useOpenAnimation()
+  const today = new Date().toISOString().slice(0, 10)
+  const [kind, setKind] = useState<'erreur' | 'remboursement'>('erreur')
+  const [reason, setReason] = useState('')
+  const [refundedAt, setRefundedAt] = useState(today)
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  const originalDay = new Date(payment.paid_at).toLocaleDateString('fr-FR')
+  // Validee ici plutot qu'au retour du serveur : un aller-retour pour
+  // apprendre qu'un champ est vide est un aller-retour de trop.
+  const ready = reason.trim().length >= 3
+    && (kind === 'erreur' || refundedAt >= payment.paid_at.slice(0, 10))
+
+  return (
+    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true"
+         aria-label="Annuler un encaissement">
+      <div className={`t-modal ${open} compta-modal`} style={{ width: 460 }}
+           onClick={e => e.stopPropagation()}>
+        <h3 className="compta-modal-title">
+          Annuler {dh(payment.amount_cents)} — {payment.member_name ?? 'membre supprimé'}
+        </h3>
+        <p className="dz-card-note" style={{ marginTop: -12, marginBottom: 18 }}>
+          Encaissé le {originalDay}. La ligne d’origine est conservée ; une écriture
+          inverse est ajoutée.
+        </p>
+
+        <fieldset style={{ border: 0, margin: 0, padding: 0, display: 'flex',
+                           flexDirection: 'column', gap: 8 }}>
+          <legend className="compta-modal-field" style={{ marginBottom: 8 }}>
+            <span>De quoi s’agit-il ?</span>
+          </legend>
+
+          <Choice
+            checked={kind === 'erreur'} onChoose={() => setKind('erreur')}
+            title="Erreur de saisie"
+            body={`Doublon, mauvais montant, mauvais membre. L’écriture est datée du ${originalDay} :
+                   cette ligne n’aurait jamais dû exister, le total de ce mois-là l’oublie.`}
+          />
+          <Choice
+            checked={kind === 'remboursement'} onChoose={() => setKind('remboursement')}
+            title="Remboursement"
+            body="Le membre a réellement payé, et récupère son argent aujourd’hui. L’écriture est
+                  datée du jour de la sortie : l’encaissement d’origine reste dans son mois, et le
+                  décaissement apparaît dans le sien."
+          />
+        </fieldset>
+
+        <div className="compta-modal-fields" style={{ marginTop: 18 }}>
+          {kind === 'remboursement' && (
+            <label className="compta-modal-field">
+              <span>Date du remboursement</span>
+              <input className="compta-modal-input" type="date" value={refundedAt}
+                     min={payment.paid_at.slice(0, 10)} max={today}
+                     onChange={e => { setRefundedAt(e.target.value); setProblem(null) }} />
+            </label>
+          )}
+          <label className="compta-modal-field">
+            <span>Motif</span>
+            <input className="compta-modal-input" value={reason} maxLength={300} autoFocus
+                   placeholder={kind === 'erreur' ? 'Ex. doublon de saisie' : 'Ex. abonnement interrompu'}
+                   onChange={e => { setReason(e.target.value); setProblem(null) }} />
+          </label>
+        </div>
+
+        <div aria-live="polite">
+          {(problem || (reason.length > 0 && reason.trim().length < 3)) && (
+            <p role="alert" style={{
+              borderRadius: 12, background: 'rgba(239,68,68,0.12)',
+              border: '1px solid rgba(239,68,68,0.25)', padding: '0.7rem 1rem',
+              color: '#fca5a5', fontSize: '0.85rem', marginBottom: 12,
+            }}>{problem ?? 'Le motif doit faire au moins trois caractères.'}</p>
+          )}
+        </div>
+
+        <div className="compta-modal-actions">
+          <button className="compta-modal-cancel" onClick={onClose} disabled={busy}>Annuler</button>
+          <button className="compta-modal-save" disabled={busy || !ready}
+                  style={{ background: '#dc2626' }}
+                  onClick={async () => {
+                    setBusy(true); setProblem(null)
+                    try {
+                      await onConfirm({
+                        kind, reason: reason.trim(),
+                        ...(kind === 'remboursement' ? { refundedAt } : {}),
+                      })
+                    } catch (e) {
+                      setProblem(e instanceof Error ? e.message : 'Annulation impossible')
+                    } finally { setBusy(false) }
+                  }}>
+            {busy ? '…' : kind === 'erreur' ? 'Corriger' : 'Enregistrer le remboursement'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Choice({ checked, onChoose, title, body }: {
+  checked: boolean; onChoose: () => void; title: string; body: string
+}) {
+  return (
+    <label style={{
+      display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer',
+      padding: '0.75rem 0.9rem', borderRadius: 14,
+      background: checked ? 'var(--overlay)' : 'var(--overlay-soft)',
+      border: `1px solid ${checked ? 'var(--gold)' : 'var(--hairline)'}`,
+    }}>
+      <input type="radio" name="reversal-kind" checked={checked} onChange={onChoose}
+             style={{ marginTop: 3, accentColor: 'var(--gold)', flex: 'none' }} />
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'block', fontSize: '0.88rem', fontWeight: 700 }}>{title}</span>
+        <span style={{ display: 'block', fontSize: '0.76rem', color: 'var(--muted)', marginTop: 2 }}>
+          {body}
+        </span>
+      </span>
+    </label>
   )
 }
 

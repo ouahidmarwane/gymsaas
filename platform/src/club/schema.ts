@@ -293,4 +293,24 @@ MIGRATIONS.push({
   ],
 })
 
+MIGRATIONS.push({
+  version: 4,
+  name: 'distinguer-erreur-et-remboursement',
+  statements: [
+    // Deux gestes que rien ne distinguait, et qui ne se datent pas pareil.
+    //
+    //   'erreur'        — la ligne n'aurait jamais du exister. On la date au
+    //                     jour de l'originale : mai doit l'oublier.
+    //   'remboursement' — l'argent est bien entre en mai et bien ressorti en
+    //                     aout. Backdater effacerait une recette reelle de mai
+    //                     et cacherait une sortie reelle d'aout : le releve de
+    //                     caisse mentirait deux fois.
+    //
+    // Les annulations posees avant cette migration sont des corrections
+    // d'erreur : c'etait le seul geste disponible.
+    `ALTER TABLE payments ADD COLUMN reversal_kind TEXT`,
+    `UPDATE payments SET reversal_kind = 'erreur' WHERE reverses_id IS NOT NULL`,
+  ],
+})
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

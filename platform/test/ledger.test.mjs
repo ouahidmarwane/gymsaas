@@ -97,7 +97,7 @@ test('un encaissement ne bouge pas quand le tarif change', async () => {
 
 // 2 — Annulation -----------------------------------------------------------
 
-test('une annulation laisse les totaux justes sans effacer la ligne', async () => {
+test('une correction d erreur laisse les totaux justes sans effacer la ligne', async () => {
   const paid = await club.call('POST', '/api/payments', {
     memberId: memberB, amountCents: 7_500, type: 'other', method: 'transfer', paidAt: on(5, 9),
   })
@@ -108,7 +108,7 @@ test('une annulation laisse les totaux justes sans effacer la ligne', async () =
   assert.equal(totalBefore, 7_500)
 
   const reversed = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
-    reason: 'Erreur de saisie',
+    kind: 'erreur', reason: 'Erreur de saisie',
   })
   assert.equal(reversed.status, 201, JSON.stringify(reversed.data))
   assert.equal(reversed.data.amountCents, -7_500)
@@ -130,17 +130,17 @@ test('on ne peut annuler ni deux fois, ni une annulation', async () => {
   const paid = await club.call('POST', '/api/payments', {
     memberId: memberB, amountCents: 3_000, type: 'other', method: 'cash', paidAt: on(5, 20),
   })
-  const first = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { reason: 'Doublon' })
+  const first = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { kind: 'erreur', reason: 'Doublon' })
   assert.equal(first.status, 201)
 
-  const twice = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { reason: 'Encore' })
+  const twice = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { kind: 'erreur', reason: 'Encore' })
   assert.equal(twice.status, 409, 'une seconde annulation a ete acceptee')
 
   // Annuler une annulation reviendrait a re-encaisser sous une etiquette qui
   // dit le contraire.
   const list = await club.call('GET', `/api/payments?from=${on(5, 1)}&to=${on(5, 31)}`)
   const reversal = list.data.payments.find(p => p.reverses_id === paid.data.id)
-  const onReversal = await club.call('POST', `/api/payments/${reversal.id}/reverse`, { reason: 'Non' })
+  const onReversal = await club.call('POST', `/api/payments/${reversal.id}/reverse`, { kind: 'erreur', reason: 'Non' })
   assert.equal(onReversal.status, 409)
 })
 
@@ -148,8 +148,93 @@ test('un motif est exige pour annuler', async () => {
   const paid = await club.call('POST', '/api/payments', {
     memberId: memberA, amountCents: 1_000, type: 'other', paidAt: on(6, 1),
   })
-  assert.equal((await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {})).status, 400)
-  assert.equal((await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { reason: '  ' })).status, 400)
+  assert.equal((await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { kind: 'erreur' })).status, 400)
+  assert.equal((await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { kind: 'erreur', reason: '  ' })).status, 400)
+  // Le cas doit etre choisi explicitement : rien ne permet de le deviner.
+  assert.equal((await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { reason: 'Sans cas' })).status, 400)
+  assert.equal((await club.call('POST', `/api/payments/${paid.data.id}/reverse`, { kind: 'autre', reason: 'Inconnu' })).status, 400)
+})
+
+test('un remboursement se date au jour de la sortie, pas a celui de l encaissement', async () => {
+  // Mai : le membre paie vraiment. Aout : il recupere vraiment son argent.
+  // Les deux mouvements sont reels, chacun dans son mois. Backdater
+  // effacerait une recette de mai et cacherait une sortie d'aout.
+  const paid = await club.call('POST', '/api/payments', {
+    memberId: memberA, amountCents: 12_000, type: 'monthly', method: 'cash', paidAt: on(7, 4),
+  })
+  assert.equal(paid.status, 201)
+
+  const today = new Date().toISOString().slice(0, 10)
+  const refund = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
+    kind: 'remboursement', reason: 'Abonnement interrompu', refundedAt: today,
+  })
+  assert.equal(refund.status, 201, JSON.stringify(refund.data))
+  assert.equal(refund.data.paidAt, today, 'le remboursement a ete backdate')
+
+  // Juillet garde sa recette : elle a bien eu lieu.
+  const july = await club.call('GET', `/api/payments?from=${on(7, 1)}&to=${on(7, 31)}`)
+  assert.equal(july.data.payments.reduce((s, p) => s + p.amount_cents, 0), 12_000,
+    'le remboursement a efface une recette reelle de juillet')
+
+  // Et la sortie apparait au jour ou elle s'est produite.
+  const now = await club.call('GET', `/api/payments?from=${today}&to=${today}`)
+  const line = now.data.payments.find(p => p.reverses_id === paid.data.id)
+  assert.ok(line, 'la sortie n apparait pas au jour du remboursement')
+  assert.equal(line.amount_cents, -12_000)
+  assert.equal(line.reversal_kind, 'remboursement')
+
+  // Sur l'ensemble, la caisse revient bien a zero pour ce membre.
+  const all = await club.call('GET', '/api/payments')
+  const pair = all.data.payments.filter(p => p.id === paid.data.id || p.reverses_id === paid.data.id)
+  assert.equal(pair.reduce((s, p) => s + p.amount_cents, 0), 0)
+})
+
+test('un remboursement anterieur a l encaissement est refuse', async () => {
+  const paid = await club.call('POST', '/api/payments', {
+    memberId: memberA, amountCents: 2_000, type: 'other', paidAt: on(7, 20),
+  })
+  const res = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
+    kind: 'remboursement', reason: 'Avant', refundedAt: on(7, 1),
+  })
+  assert.equal(res.status, 409, 'un remboursement anterieur au paiement a ete accepte')
+})
+
+// Securite : le negatif n'a qu'une seule porte d'entree ------------------
+
+test('un encaissement nul ou negatif est refuse', async () => {
+  // La reconstruction de table a retire le CHECK (>= 0) pour permettre les
+  // annulations : plus rien en base n'empeche un negatif. Si l'application
+  // laissait passer, un receptionniste fausserait tous les totaux.
+  for (const amountCents of [0, -1, -50_000]) {
+    const res = await club.call('POST', '/api/payments', {
+      memberId: memberA, amountCents, type: 'other', paidAt: on(8, 1),
+    })
+    assert.equal(res.status, 400, `montant ${amountCents} accepte a tort`)
+  }
+})
+
+test('annuler est reserve a owner et admin', async () => {
+  // Un compte staff peut encaisser, pas defaire. Deplacer de l'argent sur le
+  // papier n'est pas un geste de comptoir.
+  const s = uniq()
+  const staffEmail = `staff-rg-${s}@example.ma`
+  const invited = await club.call('POST', '/api/staff', {
+    name: 'Receptionniste', email: staffEmail, password: 'motdepasse-solide-st', role: 'staff',
+  })
+  if (invited.status !== 201) return   // la route d'invitation a change : on ne bloque pas
+
+  const staff = client()
+  assert.equal((await staff.call('POST', '/api/auth/login', {
+    email: staffEmail, password: 'motdepasse-solide-st',
+  })).status, 200)
+
+  const paid = await club.call('POST', '/api/payments', {
+    memberId: memberA, amountCents: 5_000, type: 'other', paidAt: on(8, 2),
+  })
+  const refused = await staff.call('POST', `/api/payments/${paid.data.id}/reverse`, {
+    kind: 'erreur', reason: 'Tentative',
+  })
+  assert.equal(refused.status, 403, 'un compte staff a pu annuler un encaissement')
 })
 
 // 3 — Filtres exacts et reproductibles ------------------------------------

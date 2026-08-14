@@ -497,6 +497,17 @@ export class ClubDatabase extends DurableObject<Env> {
     actorId?: string
     actorName?: string
   }): { id: string } {
+    // L'invariant vit ici, pas seulement dans la route.
+    //
+    // La reconstruction de table en v3 a retire le CHECK (amount_cents >= 0)
+    // pour permettre les annulations en negatif : l'application est donc
+    // desormais seule a garantir qu'un encaissement ordinaire est positif.
+    // Le placer dans le Durable Object plutot que dans le routeur, c'est le
+    // rendre vrai pour tout appelant present et futur.
+    if (!Number.isFinite(input.amountCents) || input.amountCents <= 0) {
+      throw new Error('Un encaissement doit etre strictement positif')
+    }
+
     const id = crypto.randomUUID()
     const member = this.sql
       .exec<{ branch_id: string | null; discipline_id: string | null; name: string }>(
@@ -540,10 +551,19 @@ export class ClubDatabase extends DurableObject<Env> {
    */
   reversePayment(input: {
     paymentId: string
+    /**
+     * 'erreur' : la ligne n'aurait jamais du exister — datee au jour de
+     * l'originale, la periode passee l'oublie.
+     * 'remboursement' : l'argent est reellement ressorti — date au jour de la
+     * sortie, sinon le releve de caisse cache un mouvement reel.
+     */
+    kind: 'erreur' | 'remboursement'
     reason: string
+    /** Jour du remboursement. Ignore pour une correction d'erreur. */
+    refundedAt?: string | null
     actorId?: string
     actorName?: string
-  }): { id: string; amountCents: number } {
+  }): { id: string; amountCents: number; paidAt: string } {
     const original = this.sql.exec<{
       id: string; member_id: string; amount_cents: number; type: string
       method: string | null; branch_id: string | null; discipline_id: string | null
@@ -571,32 +591,46 @@ export class ClubDatabase extends DurableObject<Env> {
       .exec<{ name: string }>('SELECT name FROM members WHERE id = ?', original.member_id)
       .toArray()[0]
 
+    // C'est ici que tout se joue.
+    //
+    // Une CORRECTION reprend la date de l'originale : la ligne n'aurait
+    // jamais du exister, donc la periode passee doit l'oublier, sinon son
+    // total reste faux pour toujours.
+    //
+    // Un REMBOURSEMENT se date au jour ou l'argent est sorti. L'encaissement
+    // de mai a bien eu lieu, la sortie d'aout aussi : backdater effacerait
+    // une recette reelle et cacherait un decaissement reel — le releve de
+    // caisse mentirait sur les deux mois.
+    const today = new Date().toISOString().slice(0, 10)
+    const paidAt = input.kind === 'erreur'
+      ? original.paid_at
+      : (input.refundedAt ?? today)
+
+    // Un remboursement anterieur a l'encaissement n'a pas de sens physique.
+    if (input.kind === 'remboursement' && paidAt < original.paid_at) {
+      throw new Error('Un remboursement ne peut pas preceder l encaissement')
+    }
+
     this.ctx.storage.transactionSync(() => {
-      // L'annulation reprend la DATE de l'originale, pas celle du jour.
-      //
-      // Autrement, annuler en aout un encaissement de mai laisserait le total
-      // de mai a son montant d'origine : le releve d'une periode ne serait
-      // plus juste, ce qui est precisement ce qu'une annulation doit
-      // garantir. Le moment reel de la correction reste lisible dans
-      // created_at et dans le journal.
       this.sql.exec(
         `INSERT INTO payments (id, member_id, amount_cents, type, method,
-                               reverses_id, reversal_reason,
+                               reverses_id, reversal_kind, reversal_reason,
                                paid_at, branch_id, discipline_id, recorded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id, original.member_id, -original.amount_cents, original.type, original.method,
-        original.id, input.reason, original.paid_at,
+        original.id, input.kind, input.reason, paidAt,
         original.branch_id, original.discipline_id, input.actorId ?? null,
       )
       this.sql.exec(
         `INSERT INTO audit_logs (action, entity, entity_id, entity_name, detail, actor_id, actor_name)
-         VALUES ('payment_reverse', 'payment', ?, ?, ?, ?, ?)`,
+         VALUES (?, 'payment', ?, ?, ?, ?, ?)`,
+        input.kind === 'erreur' ? 'payment_reverse' : 'payment_refund',
         original.id, member?.name ?? null, input.reason,
         input.actorId ?? null, input.actorName ?? null,
       )
     })
 
-    return { id, amountCents: -original.amount_cents }
+    return { id, amountCents: -original.amount_cents, paidAt }
   }
 
   /** Ventilation par moyen de paiement sur une periode. */

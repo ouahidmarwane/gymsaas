@@ -687,10 +687,15 @@ export const api = {
         // (400), pas un refus metier (409). Les melanger rendait « motif
         // absent » indiscernable de « deja annule ».
         const reason = str(body.reason, 'reason', 300)
+        const kind = str(body.kind, 'kind', 20)
+        if (kind !== 'erreur' && kind !== 'remboursement') {
+          throw new HttpError(400, 'kind attendu : erreur ou remboursement')
+        }
+        const refundedAt = dateOnly(body.refundedAt, 'refundedAt')
         try {
           const result = await clubOf(env, principal).reversePayment({
             paymentId: reverseRoute[1]!,
-            reason,
+            kind, reason, refundedAt,
             actorId: principal.userId, actorName: principal.name,
           })
           return json(result, { status: 201 })
@@ -705,8 +710,10 @@ export const api = {
         atLeast(principal, 'staff', true)
         const body = await readJson(request)
         const amount = Number(body.amountCents)
-        if (!Number.isFinite(amount) || amount < 0 || amount > 100_000_000) {
-          throw new HttpError(400, 'Montant invalide')
+        // Strictement positif : un encaissement de zero est du bruit dans le
+        // releve, et un negatif ne peut venir que de la route d'annulation.
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 100_000_000) {
+          throw new HttpError(400, 'Montant invalide : un encaissement doit etre positif')
         }
         const type = str(body.type, 'type', 20)
         if (!['monthly', 'insurance', 'registration', 'other'].includes(type)) {
