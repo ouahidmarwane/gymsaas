@@ -11,6 +11,9 @@ import EditablePage from '@/components/EditablePage'
 import PageState from '@/components/PageState'
 import SlidingTabs from '@/components/SlidingTabs'
 import MemberModal from '@/components/MemberModal'
+import MemberExportModal from '@/components/MemberExportModal'
+import MemberImportModal from '@/components/MemberImportModal'
+import { toCsv, download } from '@/lib/csv'
 import {
   type MemberRow, subStatus, insStatus, isDormant, daysUntil,
   SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
@@ -41,6 +44,8 @@ export default function MembersPage() {
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const [editing, setEditing] = useState<MemberRow | null>(null)
   const [adding, setAdding] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   const reload = useCallback(async () => {
     const [m, b, d] = await Promise.all([
@@ -143,27 +148,26 @@ export default function MembersPage() {
     finally { setBusy(null) }
   }
 
-  /** Export avec BOM : sans lui, Excel massacre les accents. */
+  /**
+   * Export de la vue affichee.
+   *
+   * Le BOM et le desamorcage des formules vivent dans `toCsv` : une cellule
+   * qui commence par « = » s'execute a l'ouverture dans un tableur, et un
+   * fichier exporte finit toujours par etre ouvert quelque part.
+   */
   function exportCsv() {
     if (filtered.length === 0) return
-    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const rows = [
+    const rows: unknown[][] = [
       ['Nom', 'Téléphone', 'E-mail', 'Salle', 'Discipline', 'Grade',
-       'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance'].map(esc),
+       'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance'],
       ...filtered.map(m => [
-        esc(m.name), esc(m.phone), esc(m.email ?? ''), esc(m.branch_name ?? ''),
-        esc(m.discipline_name ?? ''), esc(m.grade_label ?? ''),
-        esc(day(m.join_date)), esc(SUB_LABEL[subStatus(m)]), esc(day(m.sub_expiry)),
-        esc(INS_LABEL[insStatus(m)]), esc(m.is_insured ? day(m.ins_expiry) : ''),
+        m.name, m.phone, m.email ?? '', m.branch_name ?? '',
+        m.discipline_name ?? '', m.grade_label ?? '',
+        day(m.join_date), SUB_LABEL[subStatus(m)], day(m.sub_expiry),
+        INS_LABEL[insStatus(m)], m.is_insured ? day(m.ins_expiry) : '',
       ]),
     ]
-    const csv = rows.map(r => r.join(',')).join('\r\n')
-    const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `membres-${quick}-${new Date().toISOString().slice(0, 10)}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    download(toCsv(rows), `membres-${quick}-${new Date().toISOString().slice(0, 10)}.csv`)
   }
 
   return (
@@ -178,12 +182,13 @@ export default function MembersPage() {
                   title="Exporter la vue affichée">
             <Download size={15} strokeWidth={2.2} /> Exporter CSV
           </button>
-          <button className="btn-ghost" onClick={() => setQuick('expired')}
-                  title="Ne garder que les abonnements expirés">
+          <button className="btn-ghost" onClick={() => setExporting(true)}
+                  disabled={all.length === 0}
+                  title="Choisir précisément qui exporter">
             <Target size={15} strokeWidth={2.2} /> Export filtré
           </button>
           {canWrite && (
-            <button className="btn-ghost" disabled title="Import CSV — à venir">
+            <button className="btn-ghost" onClick={() => setImporting(true)}>
               <Upload size={15} strokeWidth={2.2} /> Importer CSV
             </button>
           )}
@@ -385,6 +390,23 @@ export default function MembersPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {exporting && (
+        <MemberExportModal members={all} branches={branches} disciplines={disciplines}
+                           onClose={() => setExporting(false)} />
+      )}
+
+      {importing && (
+        <MemberImportModal
+          branches={branches} disciplines={disciplines}
+          onClose={() => setImporting(false)}
+          onDone={async created => {
+            setImporting(false)
+            await reload()
+            setNotice(`${created} membre${created > 1 ? 's' : ''} importé${created > 1 ? 's' : ''}.`)
+          }}
+        />
       )}
 
       {(adding || editing) && (

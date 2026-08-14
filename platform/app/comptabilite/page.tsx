@@ -14,6 +14,7 @@ import PageState from '@/components/PageState'
 import EditablePage from '@/components/EditablePage'
 import SlidingTabs from '@/components/SlidingTabs'
 import PopNumber from '@/components/PopNumber'
+import { toCsv, download } from '@/lib/csv'
 
 // Donnees ----------------------------------------------------------------
 
@@ -464,39 +465,38 @@ export default function ComptabilitePage() {
     </>
   )
 
-  /** Export avec BOM : sans lui, Excel massacre les accents. */
+  /**
+   * Export des encaissements.
+   *
+   * Le BOM et le desamorcage des formules vivent dans `toCsv` : une note de
+   * paiement commencant par « = » s'executerait a l'ouverture du fichier.
+   */
   function exportCsv() {
     if (!payments.length) return
-    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const rows = [
-      ['Date', 'Membre', 'Type', 'Moyen', 'Montant (DH)', 'Salle', 'Annulation', 'Motif', 'Note'].map(esc),
+    const rows: unknown[][] = [
+      ['Date', 'Membre', 'Type', 'Moyen', 'Montant (DH)', 'Salle', 'Annulation', 'Motif', 'Note'],
       ...payments.map(p => [
-        esc(new Date(p.paid_at).toLocaleDateString('fr-FR')),
-        esc(p.member_name ?? ''),
-        esc(TYPE_LABEL[p.type] ?? p.type),
-        esc(METHOD_LABEL[p.method ?? 'inconnu'] ?? p.method),
+        new Date(p.paid_at).toLocaleDateString('fr-FR'),
+        p.member_name ?? '',
+        TYPE_LABEL[p.type] ?? p.type,
+        METHOD_LABEL[p.method ?? 'inconnu'] ?? p.method,
         // Les annulations sortent en negatif : la colonne se somme telle
         // quelle dans un tableur, sans retraitement.
-        esc((p.amount_cents / 100).toFixed(2)),
-        esc(p.branch_name ?? ''),
-        esc(p.reverses_id ? (p.reversal_kind === 'remboursement' ? 'Remboursement' : 'Correction') : ''),
-        esc(p.reverses_id ? (p.reversal_reason ?? '') : ''),
-        esc(p.notes ?? ''),
+        (p.amount_cents / 100).toFixed(2),
+        p.branch_name ?? '',
+        p.reverses_id ? (p.reversal_kind === 'remboursement' ? 'Remboursement' : 'Correction') : '',
+        p.reverses_id ? (p.reversal_reason ?? '') : '',
+        p.notes ?? '',
       ]),
-      ['', '', '', esc('TOTAL'), esc((paymentsTotal / 100).toFixed(2)), '', '', '', ''],
+      ['', '', '', 'TOTAL', (paymentsTotal / 100).toFixed(2), '', '', '', ''],
     ]
-    const csv = rows.map(r => r.join(',')).join('\r\n')
-    const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
-    const a = document.createElement('a')
     // Le nom du fichier porte la periode : trois exports dans le meme dossier
     // doivent rester distinguables sans les ouvrir.
     const span = from && to ? `${from}_${to}`
       : year === 'all' ? 'tout'
       : month === 'all' ? String(year)
       : `${year}-${String(month + 1).padStart(2, '0')}`
-    a.download = `comptabilite-${branch === 'all' ? 'global' : branch}-${span}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    download(toCsv(rows), `comptabilite-${branch === 'all' ? 'global' : branch}-${span}.csv`)
   }
 
   async function savePrices() {

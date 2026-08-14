@@ -395,6 +395,15 @@ async function subscriptionOf(env: Env, orgId: string) {
 
 const MAX_PROOF_BYTES = 4 * 1024 * 1024
 
+/**
+ * Plafond d'un import.
+ *
+ * Un Durable Object est mono-thread : chaque insertion bloque le club. Cinq
+ * cents lignes passent en une poignee de secondes, vingt mille rendraient la
+ * salle inutilisable pendant la reprise de son fichier.
+ */
+const MAX_IMPORT_ROWS = 500
+
 const PROOF_TYPES: Record<string, string> = {
   'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'application/pdf': 'pdf',
 }
@@ -1212,6 +1221,66 @@ export const api = {
           actorId: principal.userId, actorName: principal.name,
         })
         return json({ ok: true })
+      }
+
+      /**
+       * Import en lot.
+       *
+       * Le fichier n'arrive JAMAIS ici. Le navigateur l'analyse, l'utilisateur
+       * relit ce qu'il a compris, et seules des lignes structurees sont
+       * envoyees. Consequence : aucun analyseur de format cote serveur, donc
+       * aucune surface d'attaque liee au format — et surtout, chaque ligne
+       * traverse exactement les memes validations qu'une creation a la main.
+       * Un import ne peut donc pas ecrire ce qu'un formulaire refuserait.
+       */
+      if (path === '/api/members/import' && method === 'POST') {
+        atLeast(principal, 'admin', true)
+        const body = await readJson(request)
+        const rows = body.rows
+        if (!Array.isArray(rows)) return fail(400, 'rows doit etre une liste')
+        // Plafond : un Durable Object est mono-thread, et vingt mille
+        // insertions dans une seule requete bloqueraient le club entier.
+        if (rows.length === 0) return fail(400, 'Aucune ligne a importer')
+        if (rows.length > MAX_IMPORT_ROWS) {
+          return fail(413, `${MAX_IMPORT_ROWS} lignes maximum par import`)
+        }
+
+        const club = clubOf(env, principal)
+        const created: string[] = []
+        const rejected: Array<{ line: number; reason: string }> = []
+
+        for (const [index, raw] of rows.entries()) {
+          const line = index + 1
+          try {
+            if (!raw || typeof raw !== 'object') throw new HttpError(400, 'Ligne illisible')
+            const row = raw as Record<string, unknown>
+            const { id } = await club.addMember({
+              name: str(row.name, 'name', 200),
+              phone: str(row.phone, 'phone', 30),
+              email: typeof row.email === 'string' && row.email.trim()
+                ? normEmail(row.email) : null,
+              branchId: optional(row.branchId, 60),
+              disciplineId: optional(row.disciplineId, 60),
+              joinDate: dateOnly(row.joinDate, 'joinDate'),
+              subExpiry: dateOnly(row.subExpiry, 'subExpiry'),
+              insExpiry: dateOnly(row.insExpiry, 'insExpiry'),
+              isInsured: row.isInsured === true,
+              actorId: principal.userId, actorName: principal.name,
+            })
+            created.push(id)
+          } catch (e) {
+            // Une ligne fautive n'annule pas les autres : sur deux cents
+            // membres, tout rejeter pour un telephone manquant obligerait a
+            // recommencer a zero. On dit precisement laquelle et pourquoi.
+            rejected.push({
+              line,
+              reason: e instanceof HttpError ? e.message
+                : e instanceof Error ? e.message : 'Ligne refusee',
+            })
+          }
+        }
+
+        return json({ created: created.length, rejected }, { status: 201 })
       }
 
       const renewRoute = path.match(/^\/api\/members\/([^/]+)\/renew$/)
