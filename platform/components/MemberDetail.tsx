@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera, Phone,
+  X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera, Phone, Maximize2,
 } from 'lucide-react'
 import { api, upload, ApiError } from '@/lib/client'
 import {
@@ -192,6 +192,7 @@ function PhotoHero({ member, photo, initial, color, canWrite, onChanged, head, t
 }) {
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
+  const [zoom, setZoom] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   async function send(file: File) {
@@ -228,7 +229,12 @@ function PhotoHero({ member, photo, initial, color, canWrite, onChanged, head, t
   return (
     <div className={`mdet-hero${photo ? '' : ' empty'}`}>
       {photo
-        ? <img className="mdet-hero-img" src={photo} alt={`Photo de ${member.name}`} />
+        // Le portrait est rogne pour tenir le bandeau : le clic ouvre
+        // l'original entier, comme sur un telephone.
+        ? <button className="mdet-hero-open" onClick={() => setZoom(true)}
+                  title="Voir la photo en grand" aria-label="Voir la photo en grand">
+            <img className="mdet-hero-img" src={photo} alt={`Photo de ${member.name}`} />
+          </button>
         : <span className="mdet-hero-initial" aria-hidden="true"
                 style={{ color, background: `radial-gradient(circle at 50% 35%, ${color}33, transparent 72%)` }}>
             {initial}
@@ -245,28 +251,43 @@ function PhotoHero({ member, photo, initial, color, canWrite, onChanged, head, t
         <div className="mdet-hero-phone">Mobile <b>{member.phone}</b></div>
       </div>
 
-      {canWrite && (
-        <div className="mdet-hero-tools">
+      <div className="mdet-hero-tools">
+        {/* Voir : disponible meme sans droit d'ecriture. Regarder une photo
+            n'est pas la modifier. */}
+        {photo && (
+          <button className="mdet-hero-btn" onClick={() => setZoom(true)}
+                  title="Voir la photo" aria-label="Voir la photo">
+            <Maximize2 size={15} strokeWidth={2.2} />
+          </button>
+        )}
+        {canWrite && (
           <button className="mdet-hero-btn" disabled={busy}
                   onClick={() => fileRef.current?.click()}
                   title={photo ? 'Remplacer la photo' : 'Ajouter une photo'}
                   aria-label={photo ? 'Remplacer la photo' : 'Ajouter une photo'}>
             <Camera size={15} strokeWidth={2.2} />
           </button>
-          {photo && (
-            <button className="mdet-hero-btn" disabled={busy} onClick={remove}
-                    title="Retirer la photo" aria-label="Retirer la photo">
-              <Trash2 size={15} strokeWidth={2.2} />
-            </button>
-          )}
+        )}
+        {canWrite && photo && (
+          <button className="mdet-hero-btn" disabled={busy} onClick={remove}
+                  title="Retirer la photo" aria-label="Retirer la photo">
+            <Trash2 size={15} strokeWidth={2.2} />
+          </button>
+        )}
+        {canWrite && (
           <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/webp"
                  onChange={e => { const f = e.target.files?.[0]; if (f) send(f) }} />
-        </div>
-      )}
+        )}
+      </div>
 
       <div aria-live="polite">
         {problem && <p role="alert" className="mdet-problem mdet-hero-problem">{problem}</p>}
       </div>
+
+      {zoom && photo && (
+        <DocViewer src={photo} title={`Photo de ${member.name}`}
+                   onClose={() => setZoom(false)} />
+      )}
     </div>
   )
 }

@@ -5799,6 +5799,12 @@ html[data-theme='light'] .mdet-wash { opacity: 0.09; }
   isolation: isolate;
 }
 .mdet-hero.empty { height: 240px; }
+/* Le portrait entier est un bouton : c'est la ou l'on clique d'instinct
+   pour l'agrandir, et la loupe du coin reste pour qui ne l'essaie pas. */
+.mdet-hero-open {
+  display: block; width: 100%; height: 100%; padding: 0; border: 0;
+  background: none; cursor: zoom-in;
+}
 .mdet-hero-img {
   width: 100%; height: 100%; object-fit: cover; object-position: center 28%;
   display: block;
