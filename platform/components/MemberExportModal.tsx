@@ -49,7 +49,7 @@ export default function MemberExportModal({
   const [discipline, setDiscipline] = useState('all')
   const [year, setYear] = useState('all')
   const [dormant, setDormant] = useState(false)
-  const [noPassport, setNoPassport] = useState(false)
+  const [noIdDoc, setNoIdDoc] = useState(false)
 
   const years = useMemo(() => {
     const set = new Set(members.map(m => m.join_date?.slice(0, 4)).filter(Boolean) as string[])
@@ -63,27 +63,33 @@ export default function MemberExportModal({
     if (discipline !== 'all' && m.discipline_id !== discipline) return false
     if (year !== 'all' && m.join_date?.slice(0, 4) !== year) return false
     if (dormant && !isDormant(m)) return false
-    if (noPassport && m.sport_passport_key) return false
+    if (noIdDoc && m.id_doc_key) return false
     return true
-  }), [members, sub, ins, branch, discipline, year, dormant, noPassport])
+  }), [members, sub, ins, branch, discipline, year, dormant, noIdDoc])
 
   const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('fr-FR') : '')
 
   function run() {
     const rows: unknown[][] = [
       ['Nom', 'Téléphone', 'E-mail', 'Salle', 'Discipline', 'Grade',
-       'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance'],
+       'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance',
+       'Pièce d’identité', 'N° pièce'],
       ...selected.map(m => [
         m.name, m.phone, m.email ?? '', m.branch_name ?? '', m.discipline_name ?? '',
         m.grade_label ?? '', day(m.join_date),
         SUB_LABEL[subStatus(m)], day(m.sub_expiry),
         INS_LABEL[insStatus(m)], m.is_insured ? day(m.ins_expiry) : '',
+        // Le type, jamais le fichier : un export CSV part par courriel, et
+        // un scan de carte nationale n'a rien a y faire.
+        m.id_doc_type === 'cin' ? 'Carte nationale'
+          : m.id_doc_type === 'passeport' ? 'Passeport' : '',
+        m.id_doc_number ?? '',
       ]),
     ]
     // Le nom du fichier porte les criteres : trois exports dans le meme
     // dossier doivent rester distinguables sans les ouvrir.
     const tag = [sub !== 'all' && `abo-${sub}`, ins !== 'all' && `ass-${ins}`,
-                 year !== 'all' && year, dormant && 'inactifs', noPassport && 'sans-passeport']
+                 year !== 'all' && year, dormant && 'inactifs', noIdDoc && 'sans-piece-identite']
       .filter(Boolean).join('_') || 'tous'
     download(toCsv(rows), `membres-${tag}-${new Date().toISOString().slice(0, 10)}.csv`)
     onClose()
@@ -145,7 +151,7 @@ export default function MemberExportModal({
 
         <Group label="Et aussi">
           <Pill on={dormant} onClick={() => setDormant(v => !v)}>Inactifs +3 mois</Pill>
-          <Pill on={noPassport} onClick={() => setNoPassport(v => !v)}>Sans passeport sportif</Pill>
+          <Pill on={noIdDoc} onClick={() => setNoIdDoc(v => !v)}>Sans pièce d’identité</Pill>
         </Group>
 
         <div style={{

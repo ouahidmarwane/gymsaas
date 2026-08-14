@@ -397,6 +397,96 @@ export class ClubDatabase extends DurableObject<Env> {
     })
   }
 
+  /** Une fiche seule, pour les gestes qui doivent verifier qu'elle existe. */
+  getMember(id: string) {
+    return this.sql
+      .exec(
+        `SELECT m.*, b.name AS branch_name,
+                d.name AS discipline_name, d.has_grading,
+                g.label AS grade_label, g.color AS grade_color
+           FROM members m
+           LEFT JOIN branches     b ON b.id = m.branch_id
+           LEFT JOIN disciplines  d ON d.id = m.discipline_id
+           LEFT JOIN grade_levels g ON g.id = m.grade_id
+          WHERE m.id = ?`,
+        id,
+      )
+      .toArray()[0] ?? null
+  }
+
+  /**
+   * Pose ou remplace la piece d'identite d'un membre.
+   *
+   * Renvoie l'ancienne cle : c'est le routeur qui parle a R2, et sans cette
+   * valeur le fichier remplace resterait dans le bucket pour toujours —
+   * une piece d'identite oubliee, que plus rien ne designe et que personne
+   * ne pense a effacer.
+   *
+   * `fileKey` absent laisse le fichier en place : on peut corriger un
+   * numero mal saisi sans redemander le scan.
+   */
+  setMemberDocument(input: {
+    memberId: string
+    docType: 'cin' | 'passeport'
+    docNumber?: string | null
+    fileKey?: string | null
+    actorId?: string
+    actorName?: string
+  }): { previousKey: string | null } {
+    const row = this.sql
+      .exec<{ id_doc_key: string | null; name: string }>(
+        'SELECT id_doc_key, name FROM members WHERE id = ?', input.memberId,
+      ).toArray()[0]
+    if (!row) throw new Error('Membre inconnu')
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE members SET
+           id_doc_type   = ?,
+           id_doc_number = ?,
+           id_doc_key    = COALESCE(?, id_doc_key),
+           id_doc_at     = ${NOW}
+         WHERE id = ?`,
+        input.docType, input.docNumber ?? null, input.fileKey ?? null, input.memberId,
+      )
+      // Une piece d'identite est une donnee personnelle : qui l'a deposee et
+      // quand doit rester lisible sans avoir a fouiller les journaux R2.
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, actor_id, actor_name)
+         VALUES ('member_document_set', 'member', ?, ?, ?, ?)`,
+        input.memberId, row.name, input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+
+    // L'ancienne cle n'est rendue que si elle est effectivement remplacee.
+    return { previousKey: input.fileKey ? row.id_doc_key : null }
+  }
+
+  /** Retire la piece et rend sa cle, pour que le routeur efface le fichier. */
+  clearMemberDocument(memberId: string, actor: { id?: string; name?: string }):
+  { previousKey: string | null } {
+    const row = this.sql
+      .exec<{ id_doc_key: string | null; name: string }>(
+        'SELECT id_doc_key, name FROM members WHERE id = ?', memberId,
+      ).toArray()[0]
+    if (!row) throw new Error('Membre inconnu')
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE members SET id_doc_type = NULL, id_doc_number = NULL,
+                            id_doc_key = NULL, id_doc_at = NULL
+          WHERE id = ?`, memberId,
+      )
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, actor_id, actor_name)
+         VALUES ('member_document_clear', 'member', ?, ?, ?, ?)`,
+        memberId, row.name, actor.id ?? null, actor.name ?? null,
+      )
+    })
+
+    return { previousKey: row.id_doc_key }
+  }
+
   archiveMember(id: string, actor: { id?: string; name?: string }): void {
     // Archive plutot que supprime : les paiements deja encaisses doivent
     // rester rattaches a quelqu'un.

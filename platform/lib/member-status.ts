@@ -17,6 +17,16 @@ export interface MemberRow {
   ins_expiry: string | null
   photo_key: string | null
   sport_passport_key: string | null
+  /**
+   * Piece d'identite : carte nationale ou passeport, jamais les deux.
+   * Un Marocain a l'une, un etranger l'autre ; deux emplacements auraient
+   * laisse la moitie des fiches a moitie remplies.
+   */
+  id_doc_type: 'cin' | 'passeport' | null
+  id_doc_number: string | null
+  /** Cle R2 : sa presence dit « fournie », sa valeur ne sert qu'au serveur. */
+  id_doc_key: string | null
+  id_doc_at: string | null
   branch_id: string | null
   branch_name: string | null
   discipline_id: string | null

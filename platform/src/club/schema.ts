@@ -313,4 +313,27 @@ MIGRATIONS.push({
   ],
 })
 
+MIGRATIONS.push({
+  version: 5,
+  name: 'piece-identite-du-membre',
+  statements: [
+    // Une seule piece d'identite par membre, et deux types possibles : la
+    // carte nationale ou le passeport. Un Marocain a l'une, un etranger
+    // l'autre ; personne n'a besoin des deux, et deux emplacements auraient
+    // laisse la moitie des fiches a moitie remplies sans qu'on sache si
+    // c'est un oubli ou si l'autre document n'existe pas.
+    //
+    // Le CHECK ne bloque rien sur les lignes deja la : en SQLite une
+    // contrainte n'echoue que si elle vaut FAUX, et « NULL IN (...) » vaut
+    // NULL. Les membres existants restent donc valides, sans piece.
+    `ALTER TABLE members ADD COLUMN id_doc_type TEXT
+       CHECK (id_doc_type IN ('cin','passeport'))`,
+    `ALTER TABLE members ADD COLUMN id_doc_number TEXT`,
+    // La cle R2, jamais l'URL : le fichier est servi par le Worker, qui
+    // verifie a chaque appel que le demandeur appartient bien au club.
+    `ALTER TABLE members ADD COLUMN id_doc_key TEXT`,
+    `ALTER TABLE members ADD COLUMN id_doc_at TEXT`,
+  ],
+})
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

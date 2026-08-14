@@ -49,6 +49,35 @@ export const api = {
   del:  <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
 }
 
+/**
+ * Envoi d'un fichier brut.
+ *
+ * Le corps porte le fichier tel quel, pas un multipart : le serveur fabrique
+ * lui-meme la cle de stockage, et un enrobage multipart lui imposerait un
+ * analyseur de format supplementaire pour n'apporter aucun renseignement
+ * qu'on ne sache deja.
+ */
+export async function upload<T>(method: 'PUT' | 'POST', path: string, file: File): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(path, {
+      method,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+  } catch {
+    throw new ApiError(0, 'Connexion indisponible. Verifiez votre reseau.')
+  }
+  const payload: unknown = await res.json().catch(() => null)
+  if (!res.ok) {
+    throw new ApiError(res.status,
+      typeof payload === 'object' && payload !== null && 'error' in payload
+        ? String((payload as { error: unknown }).error) : 'Envoi impossible')
+  }
+  return payload as T
+}
+
 // Types partages avec l'API ---------------------------------------------
 
 import type { SkinKey } from '@/src/club/branding'

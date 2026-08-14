@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, MessageCircle, MoreHorizontal, Pencil, Trash2, TriangleAlert,
-  ChevronDown, ArrowUp, ArrowDown, Download, Target, Upload, CreditCard,
+  ChevronDown, ArrowUp, ArrowDown, Download, Target, Upload, CreditCard, IdCard,
 } from 'lucide-react'
 import { useDiscipline } from '@/lib/discipline'
 import { api, ApiError, type Me } from '@/lib/client'
@@ -11,6 +11,7 @@ import EditablePage from '@/components/EditablePage'
 import PageState from '@/components/PageState'
 import SlidingTabs from '@/components/SlidingTabs'
 import MemberModal from '@/components/MemberModal'
+import MemberDetail from '@/components/MemberDetail'
 import MemberExportModal from '@/components/MemberExportModal'
 import MemberImportModal from '@/components/MemberImportModal'
 import { toCsv, download } from '@/lib/csv'
@@ -44,6 +45,10 @@ export default function MembersPage() {
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const [editing, setEditing] = useState<MemberRow | null>(null)
   const [adding, setAdding] = useState(false)
+  // La fiche est retenue par son identifiant, pas par la ligne : apres un
+  // rechargement, une copie figee afficherait encore l'ancienne piece
+  // d'identite juste apres l'avoir remplacee.
+  const [detailId, setDetailId] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
 
@@ -78,8 +83,15 @@ export default function MembersPage() {
     ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin', 'staff'].includes(me.org?.role ?? ''))
     : false
 
+  // Retirer une piece d'identite est definitif : reserve aux responsables,
+  // pas au comptoir.
+  const canManageDocs = me
+    ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin'].includes(me.org?.role ?? ''))
+    : false
+
   const clubName = me?.branding?.name ?? 'votre club'
   const all = useMemo(() => members ?? [], [members])
+  const detail = useMemo(() => all.find(m => m.id === detailId) ?? null, [all, detailId])
 
   // La colonne ceinture n'a de sens que si la discipline retenue est gradee.
   // Un club de boxe ne doit pas voir une colonne vide sur toute sa liste.
@@ -272,9 +284,16 @@ export default function MembersPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
                           <Avatar name={m.name} />
                           <div style={{ minWidth: 0 }}>
-                            <div className="members-name-btn" style={{
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }}>{m.name}</div>
+                            {/* Le nom ouvre la fiche : c'est l'endroit ou l'on
+                                clique d'instinct quand quelqu'un est au
+                                comptoir, et le menu ⋯ demandait un detour. */}
+                            <button className="members-name-btn" title="Voir la fiche"
+                                    onClick={() => setDetailId(m.id)}
+                                    style={{
+                                      display: 'block', maxWidth: '100%', textAlign: 'start',
+                                      overflow: 'hidden', textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap', cursor: 'pointer',
+                                    }}>{m.name}</button>
                             <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: 2 }}>
                               {day(m.join_date)}
                             </div>
@@ -348,6 +367,10 @@ export default function MembersPage() {
                             </button>
                             {menuFor === m.id && (
                               <div className="notif-dropdown" style={{ right: 0, minWidth: 190, padding: 6 }}>
+                                <button className="gf-palette-item" style={{ cursor: 'pointer' }}
+                                        onClick={() => { setMenuFor(null); setDetailId(m.id) }}>
+                                  <IdCard size={13} strokeWidth={2.1} /> Voir la fiche
+                                </button>
                                 {canWrite && (
                                   <button className="gf-palette-item" style={{ cursor: 'pointer' }}
                                           onClick={() => { setMenuFor(null); setEditing(m) }}>
@@ -390,6 +413,19 @@ export default function MembersPage() {
             </table>
           </div>
         </div>
+      )}
+
+      {detail && (
+        <MemberDetail
+          member={detail}
+          canWrite={canWrite}
+          canDelete={canManageDocs}
+          clubName={clubName}
+          showBelt={showBelt}
+          onClose={() => setDetailId(null)}
+          onEdit={() => { setDetailId(null); setEditing(detail) }}
+          onChanged={reload}
+        />
       )}
 
       {exporting && (
@@ -508,8 +544,8 @@ function AlertsBanner({ members }: { members: MemberRow[] }) {
       list: members.filter(m => insStatus(m) === 'expiring') },
     { key: 'uninsured', label: 'Non assuré', tone: '#a78bfa',
       list: members.filter(m => insStatus(m) === 'uninsured') },
-    { key: 'passport', label: 'Passeport sportif manquant', tone: '#a78bfa',
-      list: members.filter(m => !m.sport_passport_key) },
+    { key: 'id_doc', label: 'Pièce d’identité manquante', tone: '#a78bfa',
+      list: members.filter(m => !m.id_doc_key) },
   ].filter(g => g.list.length > 0), [members])
 
   if (groups.length === 0) return null

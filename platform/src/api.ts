@@ -1283,6 +1283,91 @@ export const api = {
         return json({ created: created.length, rejected }, { status: 201 })
       }
 
+      /**
+       * Piece d'identite d'un membre : carte nationale ou passeport.
+       *
+       * Le fichier arrive brut dans le corps, comme le logo et le
+       * justificatif de virement. La cle R2 est fabriquee ici, donc
+       * infalsifiable, et elle ne sort jamais : la lecture passe par le GET
+       * ci-dessous, qui reverifie a chaque appel a quel club appartient le
+       * demandeur.
+       */
+      const memberDoc = path.match(/^\/api\/members\/([^/]+)\/document$/)
+      if (memberDoc && method === 'PUT') {
+        atLeast(principal, 'staff', true)
+        const memberId = memberDoc[1]!
+        const club = clubOf(env, principal)
+        const member = await club.getMember(memberId)
+        if (!member) return fail(404, 'Membre inconnu')
+
+        const docType = url.searchParams.get('type')
+        if (docType !== 'cin' && docType !== 'passeport') {
+          return fail(400, 'Type de piece : cin ou passeport')
+        }
+        const docNumber = url.searchParams.get('number')?.trim().slice(0, 40) || null
+
+        const contentType = request.headers.get('Content-Type') ?? ''
+        let fileKey: string | null = null
+        if (contentType && !contentType.includes('application/json')) {
+          const ext = proofExtension(contentType)
+          // Verifie AVANT de lire : un corps de 100 Mo serait entierement
+          // charge en memoire avant d'etre refuse.
+          const declared = Number(request.headers.get('Content-Length') ?? '0')
+          if (!Number.isFinite(declared) || declared > MAX_PROOF_BYTES) {
+            throw new HttpError(413, 'Fichier trop volumineux : 4 Mo maximum')
+          }
+          const bytes = await request.arrayBuffer()
+          if (bytes.byteLength === 0) throw new HttpError(400, 'Fichier vide')
+          if (bytes.byteLength > MAX_PROOF_BYTES) {
+            throw new HttpError(413, 'Fichier trop volumineux : 4 Mo maximum')
+          }
+          fileKey = `member-docs/${scopedOrgId(principal)}/${memberId}-${Date.now()}.${ext}`
+          await env.MEDIA.put(fileKey, bytes, { httpMetadata: { contentType } })
+        } else if (!member.id_doc_key) {
+          return fail(400, 'Joignez le scan de la piece')
+        }
+
+        const { previousKey } = await club.setMemberDocument({
+          memberId, docType, docNumber, fileKey,
+          actorId: principal.userId, actorName: principal.name,
+        })
+        // Le remplacement n'est efface qu'une fois la nouvelle cle ecrite :
+        // dans l'autre ordre, une panne entre les deux laisserait la fiche
+        // pointant vers un fichier qui n'existe plus.
+        if (previousKey) await env.MEDIA.delete(previousKey)
+
+        return json({ ok: true })
+      }
+
+      if (memberDoc && method === 'GET') {
+        // Lecture reservee au personnel : un scan de carte nationale est une
+        // donnee personnelle, et le role « viewer » existe pour consulter des
+        // chiffres, pas des pieces d'identite.
+        atLeast(principal, 'staff')
+        const member = await clubOf(env, principal).getMember(memberDoc[1]!)
+        if (!member?.id_doc_key) return fail(404, 'Aucune piece enregistree')
+        const object = await env.MEDIA.get(String(member.id_doc_key))
+        if (!object) return fail(404, 'Fichier introuvable')
+        return new Response(object.body, {
+          headers: {
+            'Content-Type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+            // Privee et courte : une piece d'identite n'a rien a faire dans
+            // le cache d'un intermediaire.
+            'Cache-Control': 'private, max-age=60, no-store',
+            'Content-Disposition': 'inline',
+            'X-Content-Type-Options': 'nosniff',
+          },
+        })
+      }
+
+      if (memberDoc && method === 'DELETE') {
+        atLeast(principal, 'admin', true)
+        const { previousKey } = await clubOf(env, principal)
+          .clearMemberDocument(memberDoc[1]!, { id: principal.userId, name: principal.name })
+        if (previousKey) await env.MEDIA.delete(previousKey)
+        return json({ ok: true })
+      }
+
       const renewRoute = path.match(/^\/api\/members\/([^/]+)\/renew$/)
       if (renewRoute && method === 'POST') {
         atLeast(principal, 'staff', true)
@@ -1697,17 +1782,21 @@ export const api = {
         //    club recree sous le meme nom en heriterait les donnees.
         await env.CLUB.get(env.CLUB.idFromName(orgId)).destroyAll()
 
-        // 2. Les fichiers. On balaie le prefixe plutot que de se fier a la
-        //    seule cle enregistree : les logos precedents restent en place a
-        //    chaque remplacement.
-        let cursor: string | undefined
-        do {
-          const page = await env.MEDIA.list({ prefix: `org-logos/${orgId}/`, cursor })
-          if (page.objects.length > 0) {
-            await env.MEDIA.delete(page.objects.map(o => o.key))
-          }
-          cursor = page.truncated ? page.cursor : undefined
-        } while (cursor)
+        // 2. Les fichiers. On balaie les prefixes plutot que de se fier aux
+        //    seules cles enregistrees : les logos precedents restent en place
+        //    a chaque remplacement. Les pieces d'identite des membres sont du
+        //    lot — supprimer un club en laissant derriere soi des scans de
+        //    cartes nationales serait le pire oubli possible.
+        for (const prefix of [`org-logos/${orgId}/`, `member-docs/${orgId}/`]) {
+          let cursor: string | undefined
+          do {
+            const page = await env.MEDIA.list({ prefix, cursor })
+            if (page.objects.length > 0) {
+              await env.MEDIA.delete(page.objects.map(o => o.key))
+            }
+            cursor = page.truncated ? page.cursor : undefined
+          } while (cursor)
+        }
 
         // 3. Le plan de controle. Les dependances sont supprimees a la main :
         //    les cascades dependent d'un PRAGMA par connexion, ce qui est une
