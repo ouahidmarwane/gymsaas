@@ -606,9 +606,19 @@ export class ClubDatabase extends DurableObject<Env> {
       ? original.paid_at
       : (input.refundedAt ?? today)
 
-    // Un remboursement anterieur a l'encaissement n'a pas de sens physique.
-    if (input.kind === 'remboursement' && paidAt < original.paid_at) {
-      throw new Error('Un remboursement ne peut pas preceder l encaissement')
+    // Deux bornes, pas une.
+    //
+    // Avant l'encaissement : aucun sens physique. Apres aujourd'hui : un
+    // doigt qui tape 2027 poserait un decaissement dans un mois futur, qui
+    // fausserait ce mois-la en silence jusqu'a ce qu'on y arrive. La modale
+    // borne deja le champ, mais un appel direct ne passe pas par elle.
+    if (input.kind === 'remboursement') {
+      if (paidAt < original.paid_at) {
+        throw new Error('Un remboursement ne peut pas preceder l encaissement')
+      }
+      if (paidAt > today) {
+        throw new Error('Un remboursement ne peut pas etre date dans le futur')
+      }
     }
 
     this.ctx.storage.transactionSync(() => {

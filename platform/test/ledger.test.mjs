@@ -189,14 +189,64 @@ test('un remboursement se date au jour de la sortie, pas a celui de l encaisseme
   assert.equal(pair.reduce((s, p) => s + p.amount_cents, 0), 0)
 })
 
-test('un remboursement anterieur a l encaissement est refuse', async () => {
+test('la date de remboursement est bornee des deux cotes', async () => {
   const paid = await club.call('POST', '/api/payments', {
     memberId: memberA, amountCents: 2_000, type: 'other', paidAt: on(7, 20),
   })
-  const res = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
+
+  // Avant l'encaissement : aucun sens physique.
+  const before = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
     kind: 'remboursement', reason: 'Avant', refundedAt: on(7, 1),
   })
-  assert.equal(res.status, 409, 'un remboursement anterieur au paiement a ete accepte')
+  assert.equal(before.status, 409, 'un remboursement anterieur au paiement a ete accepte')
+
+  // Apres aujourd'hui : poserait un decaissement dans un mois futur, qui
+  // fausserait ce mois-la sans que personne ne le voie avant d'y arriver.
+  const future = new Date(Date.now() + 400 * 86_400_000).toISOString().slice(0, 10)
+  const after = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
+    kind: 'remboursement', reason: 'Futur', refundedAt: future,
+  })
+  assert.equal(after.status, 409, 'un remboursement date dans le futur a ete accepte')
+
+  // La ligne reste annulable normalement : les refus n'ont rien consomme.
+  const ok = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
+    kind: 'remboursement', reason: 'Correct',
+  })
+  assert.equal(ok.status, 201, JSON.stringify(ok.data))
+})
+
+test('on ne peut pas sortir plus que ce qui est entre', async () => {
+  // Deux facons de sous-compter la recette : annuler deux fois, ou annuler
+  // d'un montant superieur. La seconde est impossible par construction — la
+  // route ne prend aucun montant, le Durable Object ecrit toujours l'oppose
+  // exact de l'originale. Ce test fige cette propriete.
+  const paid = await club.call('POST', '/api/payments', {
+    memberId: memberB, amountCents: 8_000, type: 'other', method: 'cash', paidAt: on(6, 12),
+  })
+
+  // Un montant fourni par l'appelant doit rester sans effet.
+  const reversed = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
+    kind: 'erreur', reason: 'Test', amountCents: 500_000,
+  })
+  assert.equal(reversed.status, 201)
+  assert.equal(reversed.data.amountCents, -8_000, 'un montant libre a ete pris en compte')
+
+  // Et la paire se neutralise exactement.
+  const list = await club.call('GET', `/api/payments?from=${on(6, 1)}&to=${on(6, 30)}`)
+  const pair = list.data.payments.filter(p => p.id === paid.data.id || p.reverses_id === paid.data.id)
+  assert.equal(pair.length, 2)
+  assert.equal(pair.reduce((s, p) => s + p.amount_cents, 0), 0)
+
+  // Une seconde annulation ne peut pas creuser davantage.
+  const again = await club.call('POST', `/api/payments/${paid.data.id}/reverse`, {
+    kind: 'erreur', reason: 'Encore',
+  })
+  assert.equal(again.status, 409)
+  const after = await club.call('GET', `/api/payments?from=${on(6, 1)}&to=${on(6, 30)}`)
+  assert.equal(
+    after.data.payments.filter(p => p.reverses_id === paid.data.id).length, 1,
+    'une seconde ecriture inverse a ete posee',
+  )
 })
 
 // Securite : le negatif n'a qu'une seule porte d'entree ------------------
