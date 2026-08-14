@@ -1,7 +1,9 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import { X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera } from 'lucide-react'
+import { useRef, useState, type ReactNode } from 'react'
+import {
+  X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera, Phone,
+} from 'lucide-react'
 import { api, upload, ApiError } from '@/lib/client'
 import {
   type MemberRow, subStatus, insStatus, daysUntil, photoUrl,
@@ -68,28 +70,40 @@ export default function MemberDetail({
         </button>
 
         {/*
-          Le portrait tient le haut de la fiche a lui seul.
-          La meme image se prolonge dessous, floutee et tres pale, puis
-          s'efface : le bandeau ne se termine pas sur une arete franche, il
-          se dissout dans le contenu. Deux couches, parce qu'aucune propriete
-          CSS ne fait varier un flou le long d'un element.
+          Le portrait tient tout le haut, bord a bord, et le nom se pose
+          dessus — la fiche contact d'un telephone, pas une vignette dans un
+          cadre. Le voile sombre en bas rend le texte lisible quelle que soit
+          la photo : sans lui, un portrait en plein soleil avale le nom.
         */}
         <PhotoHero member={member} photo={photo} initial={(head?.[0] ?? '?').toUpperCase()}
-                   color={color} canWrite={canWrite} onChanged={onChanged} />
+                   color={color} canWrite={canWrite} onChanged={onChanged}
+                   head={head ?? ''} tail={tail} />
+
+        {/* Les gestes du quotidien, en pastilles, a cheval sur la photo. */}
+        <div className="mdet-quick">
+          <QuickAction href={`tel:${member.phone.replace(/[^\d+]/g, '')}`}
+                       label="Appeler" tone="#3b82f6">
+            <Phone size={17} strokeWidth={2.2} />
+          </QuickAction>
+          <QuickAction href={waLink(member.phone, wa.message)} external
+                       label="WhatsApp" tone="#25D366">
+            <MessageCircle size={17} strokeWidth={2.2} />
+          </QuickAction>
+          {canWrite && (
+            <QuickAction onClick={onEdit} label="Modifier" tone="var(--gold)">
+              <Pencil size={17} strokeWidth={2.2} />
+            </QuickAction>
+          )}
+        </div>
 
         <div className="mdet-body">
-        <header className="mdet-identity">
-          <h2 className="mdet-name">{head}</h2>
-          {tail && <div className="mdet-surname">{tail}</div>}
-
-          {/* Memes pastilles que le tableau : leur contraste est deja verifie
-              sur les cinq habillages, et deux jeux de couleurs pour un meme
-              statut finiraient par diverger. */}
-          <div className="mdet-badges">
-            <span className={`badge ${SUB_TONE[sub]}`}>{SUB_LABEL[sub]}</span>
-            <span className={`badge ${INS_TONE[ins]}`}>{INS_LABEL[ins]}</span>
-          </div>
-        </header>
+        {/* Memes pastilles que le tableau : leur contraste est deja verifie
+            sur les cinq habillages, et deux jeux de couleurs pour un meme
+            statut finiraient par diverger. */}
+        <div className="mdet-badges">
+          <span className={`badge ${SUB_TONE[sub]}`}>{SUB_LABEL[sub]}</span>
+          <span className={`badge ${INS_TONE[ins]}`}>{INS_LABEL[ins]}</span>
+        </div>
 
         <h3 className="mdet-section">Informations</h3>
         <div className="mdet-rows">
@@ -102,7 +116,8 @@ export default function MemberDetail({
               </span>
             </Row>
           )}
-          <Row label="Téléphone"><span className="mdet-num">{member.phone}</span></Row>
+          {/* Le telephone est deja en gros sous le nom : le repeter ici
+              n'ajoute rien et allonge la liste. */}
           <Row label="Email">{member.email || <span className="mdet-void">—</span>}</Row>
           {member.branch_name && <Row label="Salle">{member.branch_name}</Row>}
           {member.discipline_name && <Row label="Discipline">{member.discipline_name}</Row>}
@@ -130,24 +145,31 @@ export default function MemberDetail({
         <h3 className="mdet-section">Documents</h3>
         <IdentityDoc member={member} canWrite={canWrite} canDelete={canDelete}
                      onChanged={onChanged} />
-
-        <div className="mdet-actions">
-          <a className="btn-ghost" href={waLink(member.phone, wa.message)}
-             target="_blank" rel="noopener noreferrer" style={{ flex: 1, justifyContent: 'center' }}>
-            <MessageCircle size={15} strokeWidth={2.2} /> WhatsApp
-          </a>
-          {canWrite && (
-            <button className="btn-dark" onClick={onEdit}
-                    style={{ flex: 1, justifyContent: 'center',
-                             background: 'var(--gold)', borderColor: 'transparent' }}>
-              <Pencil size={15} strokeWidth={2.2} /> Modifier
-            </button>
-          )}
-        </div>
         </div>
       </div>
     </div>
   )
+}
+
+/** Pastille ronde du bandeau : un lien ou un bouton, jamais les deux. */
+function QuickAction({ children, label, tone, href, external, onClick }: {
+  children: ReactNode
+  label: string
+  tone: string
+  href?: string
+  external?: boolean
+  onClick?: () => void
+}) {
+  const inner = (
+    <>
+      <span className="mdet-quick-dot" style={{ background: tone }}>{children}</span>
+      <span className="mdet-quick-label">{label}</span>
+    </>
+  )
+  return href
+    ? <a className="mdet-quick-item" href={href} title={label}
+         {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>{inner}</a>
+    : <button className="mdet-quick-item" onClick={onClick} title={label}>{inner}</button>
 }
 
 /**
@@ -157,13 +179,15 @@ export default function MemberDetail({
  * silhouette, qu'on ait pris le portrait ou pas. Un cadre vide en attendant
  * aurait donne l'impression d'un chargement qui n'arrive jamais.
  */
-function PhotoHero({ member, photo, initial, color, canWrite, onChanged }: {
+function PhotoHero({ member, photo, initial, color, canWrite, onChanged, head, tail }: {
   member: MemberRow
   photo: string | null
   initial: string
   color: string
   canWrite: boolean
   onChanged: () => void | Promise<void>
+  head: string
+  tail: string
 }) {
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
@@ -205,25 +229,33 @@ function PhotoHero({ member, photo, initial, color, canWrite, onChanged }: {
       {photo
         ? <img className="mdet-hero-img" src={photo} alt={`Photo de ${member.name}`} />
         : <span className="mdet-hero-initial" aria-hidden="true"
-                style={{ color, background: `radial-gradient(circle at 50% 40%, ${color}33, transparent 70%)` }}>
+                style={{ color, background: `radial-gradient(circle at 50% 35%, ${color}33, transparent 72%)` }}>
             {initial}
           </span>}
 
-      {/* Le fondu vers le fond de la modale : sans lui, le portrait se
-          terminerait sur une arete franche au milieu de la fiche. */}
-      <div className="mdet-hero-fade" aria-hidden="true" />
+      {/* Voile sombre en bas. Il n'est pas decoratif : sans lui, un nom
+          blanc pose sur un portrait en plein soleil devient illisible, et
+          on ne choisit pas la photo que le club televerse. */}
+      <div className="mdet-hero-scrim" aria-hidden="true" />
+
+      <div className="mdet-hero-caption">
+        <h2 className="mdet-name">{head}</h2>
+        {tail && <div className="mdet-surname">{tail}</div>}
+        <div className="mdet-hero-phone">Mobile <b>{member.phone}</b></div>
+      </div>
 
       {canWrite && (
         <div className="mdet-hero-tools">
           <button className="mdet-hero-btn" disabled={busy}
                   onClick={() => fileRef.current?.click()}
-                  title={photo ? 'Remplacer la photo' : 'Ajouter une photo'}>
-            <Camera size={14} strokeWidth={2.2} /> {photo ? 'Changer' : 'Photo'}
+                  title={photo ? 'Remplacer la photo' : 'Ajouter une photo'}
+                  aria-label={photo ? 'Remplacer la photo' : 'Ajouter une photo'}>
+            <Camera size={15} strokeWidth={2.2} />
           </button>
           {photo && (
             <button className="mdet-hero-btn" disabled={busy} onClick={remove}
                     title="Retirer la photo" aria-label="Retirer la photo">
-              <Trash2 size={14} strokeWidth={2.2} />
+              <Trash2 size={15} strokeWidth={2.2} />
             </button>
           )}
           <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/webp"
