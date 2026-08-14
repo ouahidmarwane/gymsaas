@@ -261,7 +261,9 @@ export class ClubDatabase extends DurableObject<Env> {
     const offset = clamp(opts.offset, 0, 1_000_000, 0)
 
     const select = `
-      SELECT m.*, b.name AS branch_name, d.name AS discipline_name, g.label AS grade_label
+      SELECT m.*, b.name AS branch_name,
+             d.name AS discipline_name, d.has_grading,
+             g.label AS grade_label, g.color AS grade_color
         FROM members m
         LEFT JOIN branches     b ON b.id = m.branch_id
         LEFT JOIN disciplines  d ON d.id = m.discipline_id
@@ -448,6 +450,60 @@ export class ClubDatabase extends DurableObject<Env> {
     })
 
     return { subExpiry }
+  }
+
+  /**
+   * Prolonge l'assurance d'un membre.
+   *
+   * Le point de depart est la date d'echeance quand elle court encore, et
+   * aujourd'hui quand elle est passee : prolonger depuis une date perimee
+   * ferait cadeau des mois de retard.
+   */
+  renewInsurance(input: {
+    memberId: string
+    months: number
+    charge: boolean
+    actorId?: string
+    actorName?: string
+  }): { insExpiry: string } {
+    const member = this.sql.exec<{
+      ins_expiry: string | null; name: string
+      branch_id: string | null; discipline_id: string | null
+    }>(
+      'SELECT ins_expiry, name, branch_id, discipline_id FROM members WHERE id = ?',
+      input.memberId,
+    ).one()
+
+    const today = new Date().toISOString().slice(0, 10)
+    const start = member.ins_expiry && member.ins_expiry > today ? member.ins_expiry : today
+    const next = new Date(`${start}T00:00:00Z`)
+    next.setUTCMonth(next.getUTCMonth() + input.months)
+    const insExpiry = next.toISOString().slice(0, 10)
+
+    const price = this.getPrices().insuranceCents
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        'UPDATE members SET is_insured = 1, ins_expiry = ? WHERE id = ?',
+        insExpiry, input.memberId,
+      )
+      if (input.charge && price > 0) {
+        this.sql.exec(
+          `INSERT INTO payments (id, member_id, amount_cents, type, tariff_cents,
+                                 branch_id, discipline_id, recorded_by)
+           VALUES (?, ?, ?, 'insurance', ?, ?, ?, ?)`,
+          crypto.randomUUID(), input.memberId, price, price,
+          member.branch_id, member.discipline_id, input.actorId ?? null,
+        )
+      }
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, detail, actor_id, actor_name)
+         VALUES ('insurance_renew', 'member', ?, ?, ?, ?, ?)`,
+        input.memberId, member.name, insExpiry, input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+
+    return { insExpiry }
   }
 
   // Paiements --------------------------------------------------------------

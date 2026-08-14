@@ -40,6 +40,9 @@ export const api = {
   get:  <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
   put:  <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
+  // PATCH pour une modification partielle : le formulaire membre n'envoie
+  // que ce qu'il connait, et COALESCE cote base garde le reste.
+  patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   // Un DELETE peut porter un corps : la suppression d'un club exige que le
   // slug y soit repete, faute de quoi un appel direct contournerait la
   // confirmation de l'interface.

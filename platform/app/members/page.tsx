@@ -1,292 +1,576 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Plus, MessageCircle, MoreHorizontal, Pencil, Trash2, TriangleAlert,
+  ChevronDown, ArrowUp, ArrowDown, Download, Target, Upload, CreditCard,
+} from 'lucide-react'
 import { useDiscipline } from '@/lib/discipline'
 import { api, ApiError, type Me } from '@/lib/client'
 import EditablePage from '@/components/EditablePage'
 import PageState from '@/components/PageState'
-
-interface Member {
-  id: string
-  name: string
-  phone: string
-  email: string | null
-  join_date: string
-  sub_expiry: string | null
-  is_insured: number
-  branch_name: string | null
-  discipline_name: string | null
-  grade_label: string | null
-}
+import SlidingTabs from '@/components/SlidingTabs'
+import MemberModal from '@/components/MemberModal'
+import {
+  type MemberRow, subStatus, insStatus, isDormant, daysUntil,
+  SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
+} from '@/lib/member-status'
 
 interface Branch { id: string; name: string }
-interface Discipline { id: string; name: string }
+interface Discipline { id: string; name: string; has_grading: number }
 
-const AVATAR_COLORS = ['#2f6bff', '#4d8cff', '#9b72ff', '#7ea5ff', '#8b5cf6', '#16a34a']
+const AVATAR_COLORS = ['#818cf8', '#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa']
+const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('fr-FR') : '—')
 
 export default function MembersPage() {
-  // Discipline retenue dans la barre du haut. La liste se recharge quand
-  // elle change : filtrer cote serveur evite de rapatrier deux cents membres
-  // pour n'en montrer trente.
   const { active } = useDiscipline()
   const [me, setMe] = useState<Me | null>(null)
-  const [members, setMembers] = useState<Member[] | null>(null)
+  const [members, setMembers] = useState<MemberRow[] | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
   const [disciplines, setDisciplines] = useState<Discipline[]>([])
+
+  const [branch, setBranch] = useState('all')
   const [search, setSearch] = useState('')
+  const [quick, setQuick] = useState('all')
+  const [sortBy, setSortBy] = useState<'name' | 'sub_expiry' | null>(null)
+  const [sortDir, setSortDir] = useState<1 | -1>(1)
+
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [menuFor, setMenuFor] = useState<string | null>(null)
+  const [editing, setEditing] = useState<MemberRow | null>(null)
   const [adding, setAdding] = useState(false)
 
-  async function reload() {
+  const reload = useCallback(async () => {
     const [m, b, d] = await Promise.all([
-      api.get<{ members: Member[] }>(`/api/members?limit=200&disciplineId=${active}`),
+      api.get<{ members: MemberRow[] }>(`/api/members?limit=500&disciplineId=${active}`),
       api.get<{ branches: Branch[] }>('/api/branches'),
       api.get<{ disciplines: Discipline[] }>('/api/disciplines'),
     ])
     setMembers(m.members); setBranches(b.branches); setDisciplines(d.disciplines)
-  }
+  }, [active])
 
   useEffect(() => {
     Promise.all([api.get<Me>('/api/me'), reload()])
       .then(([meData]) => setMe(meData))
-      .catch(e => setError(e instanceof ApiError ? e.message : 'Chargement impossible'))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+      .catch(e => {
+        setError(e instanceof ApiError ? e.message : 'Chargement impossible')
+        setMembers([])
+      })
+  }, [reload])
+
+  // Ferme le menu ⋯ au clic ailleurs.
+  useEffect(() => {
+    const away = (e: MouseEvent) => {
+      if (!(e.target as Element | null)?.closest?.('[data-rowmenu]')) setMenuFor(null)
+    }
+    document.addEventListener('mousedown', away)
+    return () => document.removeEventListener('mousedown', away)
+  }, [])
 
   const canWrite = me
     ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin', 'staff'].includes(me.org?.role ?? ''))
     : false
 
-  const shown = useMemo(() => {
-    if (!members) return null
+  const clubName = me?.branding?.name ?? 'votre club'
+  const all = useMemo(() => members ?? [], [members])
+
+  // La colonne ceinture n'a de sens que si la discipline retenue est gradee.
+  // Un club de boxe ne doit pas voir une colonne vide sur toute sa liste.
+  const showBelt = active === 'all'
+    ? disciplines.some(d => d.has_grading === 1)
+    : disciplines.find(d => d.id === active)?.has_grading === 1
+
+  const inBranch = useMemo(
+    () => (branch === 'all' ? all : all.filter(m => m.branch_id === branch)),
+    [all, branch],
+  )
+
+  const counts = useMemo(() => ({
+    all: inBranch.length,
+    active: inBranch.filter(m => subStatus(m) === 'active').length,
+    expiring: inBranch.filter(m => subStatus(m) === 'expiring').length,
+    expired: inBranch.filter(m => subStatus(m) === 'expired').length,
+    uninsured: inBranch.filter(m => insStatus(m) === 'uninsured').length,
+    ins_expiring: inBranch.filter(m => insStatus(m) === 'expiring').length,
+    dormant: inBranch.filter(isDormant).length,
+  }), [inBranch])
+
+  const filterItems = useMemo(() => [
+    { key: 'all', label: <>Tous les résultats <b>{counts.all}</b></> },
+    { key: 'active', label: <>Actif <b>{counts.active}</b></> },
+    { key: 'expiring', label: <>Expire bientôt <b>{counts.expiring}</b></> },
+    { key: 'expired', label: <>Expiré <b>{counts.expired}</b></> },
+    { key: 'uninsured', label: <>Non assuré <b>{counts.uninsured}</b></> },
+    { key: 'ins_expiring', label: <>Assurance expire <b>{counts.ins_expiring}</b></> },
+    { key: 'dormant', label: <>Inactifs +3&nbsp;mois <b>{counts.dormant}</b></> },
+  ], [counts])
+
+  const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return members
-    return members.filter(m =>
-      m.name.toLowerCase().includes(q) || m.phone.includes(q))
-  }, [members, search])
+    const list = inBranch.filter(m => {
+      const matchQ = !q || m.name.toLowerCase().includes(q)
+        || m.phone.includes(q) || (m.email ?? '').toLowerCase().includes(q)
+      const matchF =
+        quick === 'all' ? true
+          : quick === 'uninsured' ? insStatus(m) === 'uninsured'
+          : quick === 'ins_expiring' ? insStatus(m) === 'expiring'
+          : quick === 'dormant' ? isDormant(m)
+          : subStatus(m) === quick
+      return matchQ && matchF
+    })
+    if (sortBy) {
+      list.sort((a, b) => {
+        const va = (sortBy === 'name' ? a.name : a.sub_expiry ?? '') || ''
+        const vb = (sortBy === 'name' ? b.name : b.sub_expiry ?? '') || ''
+        return va.localeCompare(vb, 'fr') * sortDir
+      })
+    }
+    return list
+  }, [inBranch, search, quick, sortBy, sortDir])
+
+  function toggleSort(key: 'name' | 'sub_expiry') {
+    if (sortBy !== key) { setSortBy(key); setSortDir(1); return }
+    if (sortDir === 1) setSortDir(-1)
+    else { setSortBy(null); setSortDir(1) }
+  }
+
+  async function act(key: string, run: () => Promise<unknown>, done: string) {
+    setBusy(key); setError(null); setNotice(null)
+    try { await run(); await reload(); setNotice(done) }
+    catch (e) { setError(e instanceof ApiError ? e.message : 'Action impossible') }
+    finally { setBusy(null) }
+  }
+
+  /** Export avec BOM : sans lui, Excel massacre les accents. */
+  function exportCsv() {
+    if (filtered.length === 0) return
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const rows = [
+      ['Nom', 'Téléphone', 'E-mail', 'Salle', 'Discipline', 'Grade',
+       'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance'].map(esc),
+      ...filtered.map(m => [
+        esc(m.name), esc(m.phone), esc(m.email ?? ''), esc(m.branch_name ?? ''),
+        esc(m.discipline_name ?? ''), esc(m.grade_label ?? ''),
+        esc(day(m.join_date)), esc(SUB_LABEL[subStatus(m)]), esc(day(m.sub_expiry)),
+        esc(INS_LABEL[insStatus(m)]), esc(m.is_insured ? day(m.ins_expiry) : ''),
+      ]),
+    ]
+    const csv = rows.map(r => r.join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `membres-${quick}-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <EditablePage
       page="members"
       me={me}
       title="Membres"
-      subtitle={members ? `${members.length} membre${members.length > 1 ? 's' : ''}` : 'Chargement…'}
-      actions={canWrite ? (
-        <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
-                onClick={() => setAdding(true)}>
-          <Plus size={15} strokeWidth={2.4} /> Ajouter
-        </button>
-      ) : undefined}
+      subtitle={members ? `${all.length} inscrit${all.length > 1 ? 's' : ''}` : 'Chargement…'}
+      actions={
+        <>
+          <button className="btn-ghost" onClick={exportCsv} disabled={filtered.length === 0}
+                  title="Exporter la vue affichée">
+            <Download size={15} strokeWidth={2.2} /> Exporter CSV
+          </button>
+          <button className="btn-ghost" onClick={() => setQuick('expired')}
+                  title="Ne garder que les abonnements expirés">
+            <Target size={15} strokeWidth={2.2} /> Export filtré
+          </button>
+          {canWrite && (
+            <button className="btn-ghost" disabled title="Import CSV — à venir">
+              <Upload size={15} strokeWidth={2.2} /> Importer CSV
+            </button>
+          )}
+          {canWrite && (
+            <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
+                    onClick={() => { setEditing(null); setAdding(true) }}>
+              <Plus size={16} strokeWidth={2.4} /> Ajouter un membre
+            </button>
+          )}
+        </>
+      }
     >
+      <PageState error={error} onRetry={reload} />
 
-      <PageState error={error} onRetry={() => { setError(null); reload().catch(() => {}) }} />
-
-      <div style={{ position: 'relative', maxWidth: 380 }}>
-        <Search size={15} strokeWidth={2.2} style={{
-          position: 'absolute', insetInlineStart: 16, top: '50%', transform: 'translateY(-50%)',
-          color: 'var(--muted)', pointerEvents: 'none',
-        }} />
-        <input
-          className="members-search-input"
-          style={{ paddingInlineStart: 40, width: '100%' }}
-          placeholder="Rechercher un nom ou un telephone"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          aria-label="Rechercher un membre"
-        />
+      <div aria-live="polite">
+        {notice && !error && (
+          <p role="status" style={{
+            padding: '0.7rem 1rem', borderRadius: 14,
+            background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)',
+            color: '#6ee7b7', fontSize: '0.85rem', fontWeight: 600,
+          }}>{notice}</p>
+        )}
       </div>
 
-      {!shown && (
-        <div className="card" style={{ overflow: 'hidden', borderRadius: 22 }}>
-          {[0, 1, 2, 3, 4].map(i => (
-            <div key={i} className="members-skeleton-row" style={{ animationDelay: `${i * 80}ms` }} />
-          ))}
-        </div>
+      <AlertsBanner members={inBranch} />
+
+      {/* Filtres : salle, recherche, statut. */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        {branches.length > 1 && (
+          <SlidingTabs
+            items={[{ key: 'all', label: 'Toutes' }, ...branches.map(b => ({ key: b.id, label: b.name }))]}
+            value={branch}
+            onChange={setBranch}
+          />
+        )}
+        <input className="members-search-input" placeholder="Nom, téléphone, e-mail…"
+               value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      <SlidingTabs items={filterItems} value={quick} onChange={setQuick} />
+
+      {!members && (
+        <div className="members-skeleton-row" style={{ height: 220, border: 'none', borderRadius: 22 }} />
       )}
 
-      {shown && shown.length === 0 && (
-        <div className="card" style={{ borderRadius: 22 }}>
+      {members && filtered.length === 0 && (
+        <section className="dz-card">
           <div className="members-empty">
-            <span className="members-empty-icon">👥</span>
-            <span className="members-empty-text">
-              {search ? 'Aucun membre ne correspond a cette recherche.' : 'Aucun membre pour l’instant.'}
-            </span>
+            <div className="members-empty-icon">👥</div>
+            <div className="members-empty-text">
+              {all.length === 0
+                ? 'Aucun membre pour l’instant.'
+                : 'Aucun membre ne correspond à ce filtre.'}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {members && filtered.length > 0 && (
+        <div className="dz-card members-page-table" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead className="members-page-table-head">
+                <tr>
+                  <Th label="Membre" sort="name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                  <Th label="Contact" />
+                  {showBelt && <Th label="Ceinture" />}
+                  <Th label="Abonnement" sort="sub_expiry" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+                  <Th label="Assurance" />
+                  <Th label="" />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(m => {
+                  const sub = subStatus(m)
+                  const ins = insStatus(m)
+                  const wa = whatsappFor(m, clubName)
+                  return (
+                    <tr key={m.id} className="members-row">
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                          <Avatar name={m.name} />
+                          <div style={{ minWidth: 0 }}>
+                            <div className="members-name-btn" style={{
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>{m.name}</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: 2 }}>
+                              {day(m.join_date)}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        <div style={{ fontSize: '0.85rem', fontVariantNumeric: 'tabular-nums' }}>{m.phone}</div>
+                        {m.email && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>{m.email}</div>
+                        )}
+                      </td>
+
+                      {showBelt && (
+                        <td style={{ padding: '0.85rem 1rem' }}>
+                          {m.grade_label ? <BeltBadge label={m.grade_label} color={m.grade_color} />
+                            : <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>—</span>}
+                        </td>
+                      )}
+
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        <span className={`badge ${SUB_TONE[sub]}`}>{SUB_LABEL[sub]}</span>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: 4 }}>
+                          {m.sub_expiry ? `Exp. ${day(m.sub_expiry)}` : '—'}
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        <span className={`badge ${INS_TONE[ins]}`}>{INS_LABEL[ins]}</span>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: 4 }}>
+                          {m.is_insured && m.ins_expiry ? `Exp. ${day(m.ins_expiry)}` : 'Non souscrite'}
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '0.85rem 1rem', position: 'relative' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          {canWrite && (sub === 'expired' || sub === 'expiring') && (
+                            <button className="gf-mini-btn" disabled={busy !== null}
+                                    style={{ background: 'var(--gold)', borderColor: 'transparent', color: '#fff' }}
+                                    onClick={() => act(`sub-${m.id}`,
+                                      () => api.post(`/api/members/${m.id}/renew`, {}),
+                                      `Abonnement de ${m.name} renouvelé.`)}>
+                              Renouveler abo
+                            </button>
+                          )}
+                          {canWrite && (ins === 'uninsured' || ins === 'expired' || ins === 'expiring') && (
+                            <button className="gf-mini-btn" disabled={busy !== null}
+                                    onClick={() => act(`ins-${m.id}`,
+                                      () => api.post(`/api/members/${m.id}/insurance`, { months: 12 }),
+                                      `Assurance de ${m.name} renouvelée.`)}>
+                              Assurance
+                            </button>
+                          )}
+
+                          <a href={waLink(m.phone, wa.message)} target="_blank" rel="noopener noreferrer"
+                             title={wa.label} aria-label={wa.label}
+                             style={{
+                               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                               width: 30, height: 30, borderRadius: '50%', flex: 'none',
+                               background: '#25D366', color: '#fff',
+                             }}>
+                            <MessageCircle size={15} strokeWidth={2.2} />
+                          </a>
+
+                          <div style={{ position: 'relative' }} data-rowmenu>
+                            <button className="icon-btn" style={{ width: 30, height: 30 }}
+                                    title="Plus d’actions" aria-label="Plus d’actions"
+                                    onClick={() => setMenuFor(menuFor === m.id ? null : m.id)}>
+                              <MoreHorizontal size={15} strokeWidth={2.1} />
+                            </button>
+                            {menuFor === m.id && (
+                              <div className="notif-dropdown" style={{ right: 0, minWidth: 190, padding: 6 }}>
+                                {canWrite && (
+                                  <button className="gf-palette-item" style={{ cursor: 'pointer' }}
+                                          onClick={() => { setMenuFor(null); setEditing(m) }}>
+                                    <Pencil size={13} strokeWidth={2.1} /> Modifier
+                                  </button>
+                                )}
+                                {canWrite && (
+                                  <button className="gf-palette-item" style={{ cursor: 'pointer' }}
+                                          onClick={() => {
+                                            setMenuFor(null)
+                                            act(`pay-${m.id}`,
+                                              () => api.post('/api/payments', {
+                                                memberId: m.id, amountCents: 0, type: 'monthly',
+                                              }), '')
+                                          }} disabled>
+                                    <CreditCard size={13} strokeWidth={2.1} /> Encaisser
+                                  </button>
+                                )}
+                                {canWrite && (
+                                  <button className="gf-palette-item" style={{ cursor: 'pointer', color: '#f87171' }}
+                                          onClick={() => {
+                                            setMenuFor(null)
+                                            if (!confirm(`Archiver ${m.name} ? Ses encaissements sont conservés.`)) return
+                                            act(`del-${m.id}`,
+                                              () => api.del(`/api/members/${m.id}`),
+                                              `${m.name} a été archivé.`)
+                                          }}>
+                                    <Trash2 size={13} strokeWidth={2.1} /> Archiver
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
 
-      {shown && shown.length > 0 && (
-        <div className="card overflow-hidden members-page-table members-table-wrap" style={{ borderRadius: 22 }}>
-          <table className="w-full">
-            <thead className="members-page-table-head">
-              <tr>
-                <th className="members-th px-4 py-3.5 text-left text-xs font-bold uppercase"
-                    style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>Membre</th>
-                <th className="members-th px-4 py-3.5 text-left text-xs font-bold uppercase mobile-hide"
-                    style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>Contact</th>
-                <th className="members-th px-4 py-3.5 text-left text-xs font-bold uppercase mobile-hide"
-                    style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>Grade</th>
-                <th className="members-th px-4 py-3.5 text-left text-xs font-bold uppercase"
-                    style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>Abonnement</th>
-                <th className="members-th px-4 py-3.5 text-left text-xs font-bold uppercase mobile-hide"
-                    style={{ color: 'var(--muted)', letterSpacing: '0.12em' }}>Salle</th>
-              </tr>
-            </thead>
-            <tbody key={search}>
-              {shown.map((m, i) => (
-                <tr key={m.id} className="members-row" style={{ animationDelay: `${i * 45}ms` }}>
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-3">
-                      <span className="members-avatar-wrap">
-                        <span style={{
-                          width: 36, height: 36, borderRadius: '50%', display: 'grid', placeItems: 'center',
-                          background: AVATAR_COLORS[m.name.charCodeAt(0) % AVATAR_COLORS.length],
-                          color: '#fff', fontWeight: 700, fontSize: '0.8rem', flexShrink: 0,
-                        }}>{initials(m.name)}</span>
-                      </span>
-                      <span style={{ minWidth: 0 }}>
-                        <span className="members-name-btn" style={{ display: 'block' }}>{m.name}</span>
-                        <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                          Inscrit le {new Date(m.join_date).toLocaleDateString('fr-FR')}
-                        </span>
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5 mobile-hide">
-                    <div style={{ fontSize: '0.85rem' }}>{m.phone}</div>
-                    {m.email && <div className="text-xs" style={{ color: 'var(--muted)' }}>{m.email}</div>}
-                  </td>
-                  <td className="px-4 py-3.5 mobile-hide">
-                    {m.grade_label
-                      ? <span className="grade-chip" style={{ padding: '0.15rem 0.6rem', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700 }}>{m.grade_label}</span>
-                      : <span className="text-xs" style={{ color: 'var(--muted)' }}>—</span>}
-                  </td>
-                  <td className="px-4 py-3.5"><SubBadge expiry={m.sub_expiry} /></td>
-                  <td className="px-4 py-3.5 mobile-hide">
-                    <span className="text-xs" style={{ color: 'var(--muted)' }}>{m.branch_name ?? '—'}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {adding && (
-        <AddMember
+      {(adding || editing) && (
+        <MemberModal
+          member={editing}
           branches={branches}
           disciplines={disciplines}
-          onClose={() => setAdding(false)}
-          onSaved={() => { setAdding(false); reload().catch(() => {}) }}
+          onClose={() => { setAdding(false); setEditing(null) }}
+          onSaved={async () => {
+            setAdding(false); setEditing(null)
+            await reload()
+            setNotice(editing ? 'Membre modifié.' : 'Membre ajouté.')
+          }}
         />
       )}
     </EditablePage>
   )
 }
 
-function initials(name: string): string {
-  return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]!).join('').toUpperCase()
-}
+// Briques ----------------------------------------------------------------
 
-/** Statut d'abonnement, avec le meme vocabulaire de couleurs que l'app d'origine. */
-function SubBadge({ expiry }: { expiry: string | null }) {
-  if (!expiry) return <span className="badge">Inconnu</span>
-
-  const days = Math.ceil((Date.parse(expiry) - Date.now()) / 86_400_000)
-  const cls = days < 0
-    ? 'text-red-300 bg-red-500/10 ring-red-500/30'
-    : days <= 7
-      ? 'text-amber-300 bg-amber-500/10 ring-amber-500/30'
-      : 'text-emerald-300 bg-emerald-500/10 ring-emerald-500/30'
-  const label = days < 0 ? 'Expire' : days <= 7 ? 'Expire bientot' : 'Actif'
-
+function Th({ label, sort, sortBy, sortDir, onSort }: {
+  label: string
+  sort?: 'name' | 'sub_expiry'
+  sortBy?: 'name' | 'sub_expiry' | null
+  sortDir?: 1 | -1
+  onSort?: (k: 'name' | 'sub_expiry') => void
+}) {
+  const on = sort && sortBy === sort
   return (
-    <>
-      <span className={`badge ${cls}`}>{label}</span>
-      <div className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
-        {new Date(expiry).toLocaleDateString('fr-FR')}
-      </div>
-    </>
+    <th className="members-th" style={{
+      padding: '0.75rem 1rem', textAlign: 'start',
+      fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase',
+      letterSpacing: '0.12em', color: on ? 'var(--gold)' : 'var(--muted)',
+      whiteSpace: 'nowrap',
+    }}>
+      {sort && onSort ? (
+        <button onClick={() => onSort(sort)} title="Trier"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, font: 'inherit',
+                         color: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit' }}>
+          {label}
+          {on && (sortDir === 1 ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+        </button>
+      ) : label}
+    </th>
   )
 }
 
-function AddMember({
-  branches, disciplines, onClose, onSaved,
-}: {
-  branches: Branch[]; disciplines: Discipline[]
-  onClose: () => void; onSaved: () => void
-}) {
-  const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
-  const [email, setEmail] = useState('')
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? '')
-  const [disciplineId, setDisciplineId] = useState(disciplines[0]?.id ?? '')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+function Avatar({ name }: { name: string }) {
+  const initials = name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
+  const color = AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length]
+  return (
+    <span aria-hidden="true" style={{
+      width: 36, height: 36, borderRadius: '50%', flex: 'none',
+      display: 'grid', placeItems: 'center',
+      background: color, color: '#0b111c', fontWeight: 800, fontSize: '0.8rem',
+    }}>{initials}</span>
+  )
+}
+
+/**
+ * La ceinture porte sa vraie couleur, declaree par le club.
+ * Une pastille grise pour « ceinture noire » ne dit rien a personne.
+ */
+function BeltBadge({ label, color }: { label: string; color: string | null }) {
+  const tint = color ?? '#94a3b8'
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6,
+      padding: '0.2rem 0.6rem', borderRadius: 999,
+      background: 'var(--overlay-soft)', border: '1px solid var(--hairline)',
+      fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase',
+      letterSpacing: '0.05em', whiteSpace: 'nowrap',
+    }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: tint, flex: 'none' }} />
+      {label}
+    </span>
+  )
+}
+
+/**
+ * Bandeau d'alertes, replie par defaut.
+ *
+ * Une ligne quand tout va bien serait du bruit permanent : il ne s'affiche
+ * que s'il a quelque chose a dire, et le detail par categorie attend le clic.
+ */
+function AlertsBanner({ members }: { members: MemberRow[] }) {
+  const [open, setOpen] = useState(false)
+  const [group, setGroup] = useState<string | null>(null)
+
+  const groups = useMemo(() => [
+    { key: 'sub_expired', label: 'Abonnement expiré', tone: '#ef4444',
+      list: members.filter(m => subStatus(m) === 'expired') },
+    { key: 'ins_expired', label: 'Assurance expirée', tone: '#f87171',
+      list: members.filter(m => insStatus(m) === 'expired') },
+    { key: 'sub_expiring', label: 'Abonnement bientôt expiré', tone: '#f59e0b',
+      list: members.filter(m => subStatus(m) === 'expiring') },
+    { key: 'ins_expiring', label: 'Assurance bientôt expirée', tone: '#f59e0b',
+      list: members.filter(m => insStatus(m) === 'expiring') },
+    { key: 'uninsured', label: 'Non assuré', tone: '#a78bfa',
+      list: members.filter(m => insStatus(m) === 'uninsured') },
+    { key: 'passport', label: 'Passeport sportif manquant', tone: '#a78bfa',
+      list: members.filter(m => !m.sport_passport_key) },
+  ].filter(g => g.list.length > 0), [members])
+
+  if (groups.length === 0) return null
+  const total = groups.reduce((s, g) => s + g.list.length, 0)
 
   return (
-    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true" aria-label="Ajouter un membre">
-      <div className="compta-modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-          <h2 style={{ fontSize: '1.05rem', fontWeight: 700, letterSpacing: '-0.02em' }}>Ajouter un membre</h2>
-          <button className="gf-hide" onClick={onClose} aria-label="Fermer"><X size={15} /></button>
+    <div style={{
+      borderRadius: 18, overflow: 'hidden',
+      border: '1px solid rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.06)',
+    }}>
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                padding: '0.7rem 1rem', textAlign: 'start', cursor: 'pointer',
+                background: 'none', border: 0,
+              }}>
+        <TriangleAlert size={15} style={{ color: '#f59e0b', flex: 'none' }} />
+        <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: '0.8rem' }}>
+          Alertes documents &amp; abonnements
+        </span>
+        <span style={{
+          minWidth: '1.25rem', height: '1.25rem', borderRadius: 999, padding: '0 5px',
+          display: 'inline-grid', placeItems: 'center',
+          background: 'rgba(245,158,11,0.22)', color: '#fbbf24',
+          fontSize: '0.66rem', fontWeight: 800,
+        }}>{total}</span>
+        <ChevronDown size={15} style={{
+          marginInlineStart: 'auto', color: 'rgba(245,158,11,0.7)',
+          transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s',
+        }} />
+      </button>
+
+      {open && (
+        <div style={{
+          padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: 6,
+          borderTop: '1px solid rgba(245,158,11,0.15)',
+        }}>
+          {groups.map(g => {
+            const isOpen = group === g.key
+            return (
+              <div key={g.key} style={{
+                borderRadius: 12, overflow: 'hidden',
+                borderInlineStart: `2px solid ${g.tone}`, background: 'var(--overlay-soft)',
+              }}>
+                <button onClick={() => setGroup(isOpen ? null : g.key)}
+                        style={{
+                          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '0.5rem 0.75rem', textAlign: 'start', cursor: 'pointer',
+                          background: 'none', border: 0,
+                        }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, flex: 1 }}>{g.label}</span>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                    {g.list.length} membre{g.list.length > 1 ? 's' : ''}
+                  </span>
+                  <ChevronDown size={13} style={{
+                    color: 'var(--muted)', transform: isOpen ? 'rotate(180deg)' : 'none',
+                  }} />
+                </button>
+                {isOpen && (
+                  <div style={{
+                    padding: '0.5rem 0.75rem 0.7rem', display: 'flex', flexDirection: 'column', gap: 4,
+                    borderTop: '1px solid var(--hairline)',
+                  }}>
+                    {g.list.map(m => (
+                      <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%',
+                                       background: g.tone, flex: 'none' }} />
+                        <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{m.name}</span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--muted)',
+                                       marginInlineStart: 'auto' }}>
+                          {g.key.startsWith('sub')
+                            ? `${Math.abs(daysUntil(m.sub_expiry) ?? 0)} j`
+                            : m.phone}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
-
-        <div aria-live="polite">
-          {error && <p role="alert" style={{ color: '#fca5a5', fontSize: '0.82rem', marginBottom: 12 }}>{error}</p>}
-        </div>
-
-        <form
-          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-          onSubmit={async e => {
-            e.preventDefault()
-            setBusy(true); setError(null)
-            try {
-              await api.post('/api/members', {
-                name, phone,
-                email: email || undefined,
-                branchId: branchId || undefined,
-                disciplineId: disciplineId || undefined,
-              })
-              onSaved()
-            } catch (err) {
-              setError(err instanceof ApiError ? err.message : 'Enregistrement impossible')
-              setBusy(false)
-            }
-          }}
-        >
-          <input className="input-dark" placeholder="Nom complet" required value={name}
-                 onChange={e => setName(e.target.value)} autoFocus maxLength={200} />
-          <input className="input-dark" placeholder="Telephone" required value={phone}
-                 onChange={e => setPhone(e.target.value)} inputMode="tel" maxLength={30} />
-          <input className="input-dark" placeholder="E-mail (facultatif)" type="email" value={email}
-                 onChange={e => setEmail(e.target.value)} maxLength={200} />
-
-          {branches.length > 0 && (
-            <select className="input-dark" value={branchId} onChange={e => setBranchId(e.target.value)}
-                    aria-label="Salle">
-              {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-          )}
-          {disciplines.length > 0 && (
-            <select className="input-dark" value={disciplineId} onChange={e => setDisciplineId(e.target.value)}
-                    aria-label="Sport">
-              {disciplines.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          )}
-
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={onClose} disabled={busy}>
-              Annuler
-            </button>
-            <button type="submit" className="btn-dark" style={{ flex: 1, background: 'var(--gold)', borderColor: 'transparent' }}
-                    disabled={busy || !name.trim() || !phone.trim()}>
-              {busy ? 'Enregistrement…' : 'Ajouter'}
-            </button>
-          </div>
-        </form>
-      </div>
+      )}
     </div>
   )
 }

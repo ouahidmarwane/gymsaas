@@ -1230,6 +1230,32 @@ export const api = {
         return json(result)
       }
 
+      /**
+       * Renouvellement d'assurance.
+       *
+       * Distinct de l'abonnement : les deux echeances courent separement, et
+       * les confondre obligerait a renouveler l'une pour prolonger l'autre.
+       * Un encaissement accompagne le geste au tarif d'assurance en vigueur,
+       * comme pour l'abonnement — les separer laisse la caisse diverger des
+       * le premier oubli.
+       */
+      const insuranceRoute = path.match(/^\/api\/members\/([^/]+)\/insurance$/)
+      if (insuranceRoute && method === 'POST') {
+        atLeast(principal, 'staff', true)
+        const body = await readJson(request)
+        const months = Number(body.months ?? 12)
+        if (!Number.isInteger(months) || months < 1 || months > 36) {
+          throw new HttpError(400, 'Duree invalide : de 1 a 36 mois')
+        }
+        const result = await clubOf(env, principal).renewInsurance({
+          memberId: insuranceRoute[1]!,
+          months,
+          charge: body.charge !== false,
+          actorId: principal.userId, actorName: principal.name,
+        })
+        return json(result)
+      }
+
       // Equipe du club ----------------------------------------------------
       //
       // Les comptes vivent dans le plan de controle, pas dans le club : c'est
