@@ -16,6 +16,8 @@ export interface MemberRow {
   is_insured: number
   ins_expiry: string | null
   photo_key: string | null
+  /** Date du depot : elle entre dans l'adresse de la photo, contre le cache. */
+  photo_at: string | null
   sport_passport_key: string | null
   /**
    * Piece d'identite : carte nationale ou passeport, jamais les deux.
@@ -34,6 +36,18 @@ export interface MemberRow {
   has_grading: number | null
   grade_label: string | null
   grade_color: string | null
+}
+
+/**
+ * Adresse de la photo d'un membre.
+ *
+ * La date du depot est dans l'adresse : sans elle, l'adresse serait fixe et
+ * le navigateur reafficherait l'ancienne photo apres un remplacement, en
+ * laissant croire que l'envoi a echoue.
+ */
+export function photoUrl(m: Pick<MemberRow, 'id' | 'photo_key' | 'photo_at'>): string | null {
+  if (!m.photo_key) return null
+  return `/api/members/${m.id}/photo?v=${encodeURIComponent(m.photo_at ?? '1')}`
 }
 
 export type SubStatus = 'active' | 'expiring' | 'expired' | 'unknown'

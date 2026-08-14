@@ -5686,27 +5686,120 @@ html[data-skin='clair'] .app-main { background: transparent; }
 /* ─── Fiche membre ──────────────────────────────────────────────
    Tout est bati sur les jetons de surface : la fiche suit les cinq
    habillages sans une seule regle par theme. */
-.mdet { width: 460px; padding: 1.75rem; position: relative; }
+
+/* Le fond derriere la modale. Deux halos prennent la teinte de la personne
+   affichee : la fiche ne flotte plus sur un rectangle noir, et deux membres
+   ouverts l'un apres l'autre ne se ressemblent plus. */
+.mdet-overlay { background: rgba(4, 7, 14, 0.72); }
+.mdet-overlay::before {
+  content: ''; position: fixed; inset: -20%; pointer-events: none;
+  background:
+    radial-gradient(38rem 38rem at 22% 18%,
+      color-mix(in srgb, var(--mdet-tint, #818cf8) 26%, transparent), transparent 62%),
+    radial-gradient(32rem 32rem at 82% 88%,
+      color-mix(in srgb, var(--gold) 20%, transparent), transparent 60%);
+  filter: blur(28px);
+  animation: mdetDrift 22s ease-in-out infinite alternate;
+}
+@keyframes mdetDrift {
+  from { transform: translate3d(-1.5%, -1%, 0) scale(1); }
+  to   { transform: translate3d(1.5%, 1.5%, 0) scale(1.06); }
+}
+
+.mdet {
+  width: 460px;
+  /* Le portrait touche les bords : la marge est reprise section par
+     section, sinon un bandeau encadre de vide ne ferait pas illusion. */
+  padding: 0;
+  position: relative;
+  /* Horizontalement rogne, pour que la photo epouse les coins arrondis ;
+     verticalement defilant, sinon les boutons du bas deviennent
+     inaccessibles sur un portable. */
+  overflow: hidden auto;
+  animation: mdetRise 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes mdetRise {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Prolongement de la photo derriere le contenu : floute, tres pale, il
+   s'efface avant le bas. Une seconde couche est necessaire — aucune
+   propriete CSS ne fait varier un flou le long d'un meme element. */
+.mdet-wash {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background-image: var(--mdet-photo, none);
+  background-size: 130% auto; background-position: top center;
+  background-repeat: no-repeat;
+  filter: blur(42px) saturate(1.4);
+  opacity: 0.14;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, rgba(0,0,0,0.55) 38%, transparent 78%);
+          mask-image: linear-gradient(to bottom, #000 0, rgba(0,0,0,0.55) 38%, transparent 78%);
+}
+/* Le mode clair delave : la meme opacite y donnerait une tache grise. */
+html[data-theme='light'] .mdet-wash { opacity: 0.09; }
+
+.mdet-hero {
+  position: relative; z-index: 1;
+  height: 228px; overflow: hidden;
+  background: var(--overlay-soft);
+}
+.mdet-hero.empty {
+  display: grid; place-items: center;
+  height: 190px;
+}
+.mdet-hero-img {
+  width: 100%; height: 100%; object-fit: cover; object-position: center 30%;
+  display: block;
+}
+.mdet-hero-initial {
+  font-size: 5rem; font-weight: 800; letter-spacing: -0.04em;
+  width: 100%; height: 100%; display: grid; place-items: center;
+}
+/* Le fondu vers le fond de la modale. Sans lui le portrait se terminerait
+   sur une arete franche au milieu de la fiche. */
+.mdet-hero-fade {
+  position: absolute; inset: auto 0 0 0; height: 62%;
+  background: linear-gradient(to bottom, transparent, var(--float-bg) 92%);
+  backdrop-filter: blur(0.5px);
+}
+
+.mdet-hero-tools {
+  position: absolute; inset-inline-start: 1.1rem; bottom: 0.9rem;
+  display: flex; gap: 6px; z-index: 2;
+}
+.mdet-hero-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0.3rem 0.6rem; border-radius: 999px; cursor: pointer;
+  /* Un fond opaque, pas un jeton de surface : ces boutons se posent sur une
+     photo dont on ignore la couleur. */
+  background: rgba(9, 13, 22, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(10px);
+  color: #fff; font-size: 0.72rem; font-weight: 700;
+  transition: background 0.15s;
+}
+.mdet-hero-btn:hover { background: rgba(9, 13, 22, 0.85); }
+.mdet-hero-btn:disabled { opacity: 0.5; cursor: default; }
+.mdet-hero-problem {
+  position: absolute; inset-inline: 1.1rem; bottom: 3rem; z-index: 2;
+}
+
+.mdet-body { position: relative; z-index: 1; padding: 0 1.75rem 1.75rem; }
+
+.mdet-identity { margin-top: -0.75rem; margin-bottom: 0.25rem; }
 
 .mdet-close {
-  position: absolute; top: 1rem; inset-inline-end: 1rem;
+  position: absolute; top: 1rem; inset-inline-end: 1rem; z-index: 3;
   width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center;
-  background: var(--overlay); border: 1px solid var(--hairline);
-  color: var(--text); cursor: pointer; transition: background 0.15s;
+  /* Opaque, pour la meme raison que les boutons du portrait. */
+  background: rgba(9, 13, 22, 0.6); border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(10px);
+  color: #fff; cursor: pointer; transition: background 0.15s;
 }
-.mdet-close:hover { background: var(--overlay-strong); }
+.mdet-close:hover { background: rgba(9, 13, 22, 0.85); }
 
-.mdet-head {
-  display: flex; align-items: center; gap: 1rem;
-  /* Marge pour la croix : un nom long passait dessous. */
-  padding-inline-end: 2.5rem; margin-bottom: 1rem;
-}
-.mdet-avatar {
-  width: 78px; height: 78px; border-radius: 50%; flex: none;
-  display: grid; place-items: center;
-  font-size: 2rem; font-weight: 800; color: #0b111c;
-}
 .mdet-name {
   font-size: 1.55rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1.1;
   /* Un nom sans espace ne doit pas pousser la modale hors de l'ecran. */
@@ -5718,7 +5811,7 @@ html[data-skin='clair'] .app-main { background: transparent; }
   color: var(--muted); overflow-wrap: anywhere;
 }
 
-.mdet-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+.mdet-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 0.85rem; }
 
 .mdet-section {
   margin: 1.5rem 0 0.6rem;
@@ -5793,4 +5886,11 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 .mdet-actions {
   display: flex; gap: 8px; margin-top: 1.5rem;
   padding-top: 1.25rem; border-top: 1px solid var(--hairline);
+}
+
+/* Le halo qui derive et l'entree de la modale sont du decor : ils sont les
+   premiers a disparaitre pour qui a demande moins de mouvement. */
+@media (prefers-reduced-motion: reduce) {
+  .mdet { animation: none; }
+  .mdet-overlay::before { animation: none; }
 }

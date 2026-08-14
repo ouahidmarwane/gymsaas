@@ -462,6 +462,66 @@ export class ClubDatabase extends DurableObject<Env> {
     return { previousKey: input.fileKey ? row.id_doc_key : null }
   }
 
+  /**
+   * Photo du membre.
+   *
+   * Meme mecanique que la piece d'identite, mais separee : une photo se
+   * montre a l'accueil, une carte nationale se garde. Les melanger reviendrait
+   * a donner le meme droit de lecture aux deux.
+   *
+   * La date de depot est enregistree parce qu'elle entre dans l'adresse du
+   * fichier : sans elle, le navigateur reafficherait l'ancienne photo apres
+   * un remplacement.
+   */
+  setMemberPhoto(input: {
+    memberId: string
+    fileKey: string
+    actorId?: string
+    actorName?: string
+  }): { previousKey: string | null } {
+    const row = this.sql
+      .exec<{ photo_key: string | null; name: string }>(
+        'SELECT photo_key, name FROM members WHERE id = ?', input.memberId,
+      ).toArray()[0]
+    if (!row) throw new Error('Membre inconnu')
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE members SET photo_key = ?, photo_at = ${NOW} WHERE id = ?`,
+        input.fileKey, input.memberId,
+      )
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, actor_id, actor_name)
+         VALUES ('member_photo_set', 'member', ?, ?, ?, ?)`,
+        input.memberId, row.name, input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+
+    return { previousKey: row.photo_key }
+  }
+
+  clearMemberPhoto(memberId: string, actor: { id?: string; name?: string }):
+  { previousKey: string | null } {
+    const row = this.sql
+      .exec<{ photo_key: string | null; name: string }>(
+        'SELECT photo_key, name FROM members WHERE id = ?', memberId,
+      ).toArray()[0]
+    if (!row) throw new Error('Membre inconnu')
+
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        'UPDATE members SET photo_key = NULL, photo_at = NULL WHERE id = ?', memberId,
+      )
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, actor_id, actor_name)
+         VALUES ('member_photo_clear', 'member', ?, ?, ?, ?)`,
+        memberId, row.name, actor.id ?? null, actor.name ?? null,
+      )
+    })
+
+    return { previousKey: row.photo_key }
+  }
+
   /** Retire la piece et rend sa cle, pour que le routeur efface le fichier. */
   clearMemberDocument(memberId: string, actor: { id?: string; name?: string }):
   { previousKey: string | null } {

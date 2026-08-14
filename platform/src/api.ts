@@ -416,6 +416,13 @@ function proofExtension(contentType: string): string {
   return ext
 }
 
+/** Photo : les memes formats, moins le PDF, qui ne s'affiche pas dans <img>. */
+function imageExtension(contentType: string): string {
+  const ext = proofExtension(contentType)
+  if (ext === 'pdf') throw new HttpError(400, 'Format accepte : PNG, JPEG ou WebP')
+  return ext
+}
+
 const MAX_GRADES = 40
 
 function parseGrades(v: unknown): Array<{ label: string; labelAr: string | null; color: string | null }> {
@@ -1284,6 +1291,73 @@ export const api = {
       }
 
       /**
+       * Photo du membre.
+       *
+       * Separee de la piece d'identite, et pas seulement pour l'affichage :
+       * une photo de trombinoscope se montre a l'accueil, un scan de carte
+       * nationale ne se montre pas. Un seul emplacement pour les deux aurait
+       * donne le meme droit de lecture aux deux.
+       */
+      const memberPhoto = path.match(/^\/api\/members\/([^/]+)\/photo$/)
+      if (memberPhoto && method === 'PUT') {
+        atLeast(principal, 'staff', true)
+        const memberId = memberPhoto[1]!
+        const club = clubOf(env, principal)
+        if (!(await club.getMember(memberId))) return fail(404, 'Membre inconnu')
+
+        const contentType = request.headers.get('Content-Type') ?? ''
+        // Pas de PDF ici : une photo s'affiche dans une balise <img>, et un
+        // PDF y donnerait un cadre vide sans dire pourquoi.
+        const ext = imageExtension(contentType)
+        const declared = Number(request.headers.get('Content-Length') ?? '0')
+        if (!Number.isFinite(declared) || declared > MAX_PROOF_BYTES) {
+          throw new HttpError(413, 'Photo trop volumineuse : 4 Mo maximum')
+        }
+        const bytes = await request.arrayBuffer()
+        if (bytes.byteLength === 0) throw new HttpError(400, 'Fichier vide')
+        if (bytes.byteLength > MAX_PROOF_BYTES) {
+          throw new HttpError(413, 'Photo trop volumineuse : 4 Mo maximum')
+        }
+
+        const fileKey = `member-photos/${scopedOrgId(principal)}/${memberId}-${Date.now()}.${ext}`
+        await env.MEDIA.put(fileKey, bytes, { httpMetadata: { contentType } })
+        const { previousKey } = await club.setMemberPhoto({
+          memberId, fileKey, actorId: principal.userId, actorName: principal.name,
+        })
+        if (previousKey) await env.MEDIA.delete(previousKey)
+
+        return json({ ok: true })
+      }
+
+      if (memberPhoto && method === 'GET') {
+        // La photo est visible par qui peut consulter la fiche, y compris un
+        // role de lecture seule : elle sert a reconnaitre la personne au
+        // comptoir. La piece d'identite, elle, exige davantage.
+        atLeast(principal, 'viewer')
+        const member = await clubOf(env, principal).getMember(memberPhoto[1]!)
+        if (!member?.photo_key) return fail(404, 'Aucune photo')
+        const object = await env.MEDIA.get(String(member.photo_key))
+        if (!object) return fail(404, 'Fichier introuvable')
+        return new Response(object.body, {
+          headers: {
+            'Content-Type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+            // Cache franc : l'adresse porte la date de depot, donc un
+            // remplacement change l'adresse et le cache ne ment jamais.
+            'Cache-Control': 'private, max-age=300',
+            'X-Content-Type-Options': 'nosniff',
+          },
+        })
+      }
+
+      if (memberPhoto && method === 'DELETE') {
+        atLeast(principal, 'staff', true)
+        const { previousKey } = await clubOf(env, principal)
+          .clearMemberPhoto(memberPhoto[1]!, { id: principal.userId, name: principal.name })
+        if (previousKey) await env.MEDIA.delete(previousKey)
+        return json({ ok: true })
+      }
+
+      /**
        * Piece d'identite d'un membre : carte nationale ou passeport.
        *
        * Le fichier arrive brut dans le corps, comme le logo et le
@@ -1787,7 +1861,8 @@ export const api = {
         //    a chaque remplacement. Les pieces d'identite des membres sont du
         //    lot — supprimer un club en laissant derriere soi des scans de
         //    cartes nationales serait le pire oubli possible.
-        for (const prefix of [`org-logos/${orgId}/`, `member-docs/${orgId}/`]) {
+        for (const prefix of [`org-logos/${orgId}/`, `member-docs/${orgId}/`,
+                              `member-photos/${orgId}/`]) {
           let cursor: string | undefined
           do {
             const page = await env.MEDIA.list({ prefix, cursor })

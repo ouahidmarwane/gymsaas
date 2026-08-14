@@ -1,10 +1,10 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle } from 'lucide-react'
+import { X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera } from 'lucide-react'
 import { api, upload, ApiError } from '@/lib/client'
 import {
-  type MemberRow, subStatus, insStatus, daysUntil,
+  type MemberRow, subStatus, insStatus, daysUntil, photoUrl,
   SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
 } from '@/lib/member-status'
 
@@ -43,38 +43,53 @@ export default function MemberDetail({
   const ins = insStatus(member)
   const left = daysUntil(member.sub_expiry)
   const wa = whatsappFor(member, clubName)
+  const photo = photoUrl(member)
 
   // « saad SBATA » : le prenom porte la fiche, le nom se lit dessous. Tout
   // sur une ligne, un nom compose de quatre mots deborde du bandeau.
   const [head, ...rest] = member.name.trim().split(/\s+/)
   const tail = rest.join(' ')
-  const color = AVATAR_COLORS[member.name.charCodeAt(0) % AVATAR_COLORS.length]
+  const color = AVATAR_COLORS[member.name.charCodeAt(0) % AVATAR_COLORS.length]!
 
   return (
-    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true"
-         aria-label={`Fiche de ${member.name}`}>
-      <div className="compta-modal mdet" onClick={e => e.stopPropagation()}>
+    <div className="compta-modal-overlay mdet-overlay" onClick={onClose}
+         role="dialog" aria-modal="true" aria-label={`Fiche de ${member.name}`}
+         /* La teinte de la personne diffuse derriere la modale : deux fiches
+            ouvertes l'une apres l'autre ne se ressemblent plus. */
+         style={{ '--mdet-tint': color } as React.CSSProperties}>
+      <div className="compta-modal mdet" onClick={e => e.stopPropagation()}
+           style={photo ? ({ '--mdet-photo': `url("${photo}")` } as React.CSSProperties) : undefined}>
+        {/* Le prolongement de la photo : floute, tres pale, il descend
+            derriere les coordonnees et s'efface avant les boutons. */}
+        <div className="mdet-wash" aria-hidden="true" />
+
         <button className="mdet-close" onClick={onClose} aria-label="Fermer">
           <X size={16} strokeWidth={2.4} />
         </button>
 
-        <header className="mdet-head">
-          <span className="mdet-avatar" aria-hidden="true" style={{ background: color }}>
-            {(head?.[0] ?? '?').toUpperCase()}
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <h2 className="mdet-name">{head}</h2>
-            {tail && <div className="mdet-surname">{tail}</div>}
+        {/*
+          Le portrait tient le haut de la fiche a lui seul.
+          La meme image se prolonge dessous, floutee et tres pale, puis
+          s'efface : le bandeau ne se termine pas sur une arete franche, il
+          se dissout dans le contenu. Deux couches, parce qu'aucune propriete
+          CSS ne fait varier un flou le long d'un element.
+        */}
+        <PhotoHero member={member} photo={photo} initial={(head?.[0] ?? '?').toUpperCase()}
+                   color={color} canWrite={canWrite} onChanged={onChanged} />
+
+        <div className="mdet-body">
+        <header className="mdet-identity">
+          <h2 className="mdet-name">{head}</h2>
+          {tail && <div className="mdet-surname">{tail}</div>}
+
+          {/* Memes pastilles que le tableau : leur contraste est deja verifie
+              sur les cinq habillages, et deux jeux de couleurs pour un meme
+              statut finiraient par diverger. */}
+          <div className="mdet-badges">
+            <span className={`badge ${SUB_TONE[sub]}`}>{SUB_LABEL[sub]}</span>
+            <span className={`badge ${INS_TONE[ins]}`}>{INS_LABEL[ins]}</span>
           </div>
         </header>
-
-        {/* Memes pastilles que le tableau : leur contraste est deja verifie
-            sur les cinq habillages, et deux jeux de couleurs pour un meme
-            statut finiraient par diverger. */}
-        <div className="mdet-badges">
-          <span className={`badge ${SUB_TONE[sub]}`}>{SUB_LABEL[sub]}</span>
-          <span className={`badge ${INS_TONE[ins]}`}>{INS_LABEL[ins]}</span>
-        </div>
 
         <h3 className="mdet-section">Informations</h3>
         <div className="mdet-rows">
@@ -129,6 +144,95 @@ export default function MemberDetail({
             </button>
           )}
         </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Le portrait, et rien d'autre, en haut de la fiche.
+ *
+ * Sans photo, l'initiale coloree occupe la meme place : la fiche garde sa
+ * silhouette, qu'on ait pris le portrait ou pas. Un cadre vide en attendant
+ * aurait donne l'impression d'un chargement qui n'arrive jamais.
+ */
+function PhotoHero({ member, photo, initial, color, canWrite, onChanged }: {
+  member: MemberRow
+  photo: string | null
+  initial: string
+  color: string
+  canWrite: boolean
+  onChanged: () => void | Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  async function send(file: File) {
+    // Refuse ici ce que le serveur refuserait : faire monter quatre
+    // mega-octets pour lire « format non accepte » est une perte de temps
+    // sur la connexion d'une salle de sport.
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setProblem('Format accepté : PNG, JPEG ou WebP.'); return
+    }
+    if (file.size > 4 * 1024 * 1024) { setProblem('4 Mo maximum.'); return }
+
+    setBusy(true); setProblem(null)
+    try {
+      await upload('PUT', `/api/members/${member.id}/photo`, file)
+      await onChanged()
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : 'Envoi impossible')
+    } finally {
+      setBusy(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  async function remove() {
+    setBusy(true); setProblem(null)
+    try {
+      await api.del(`/api/members/${member.id}/photo`)
+      await onChanged()
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : 'Suppression impossible')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div className={`mdet-hero${photo ? '' : ' empty'}`}>
+      {photo
+        ? <img className="mdet-hero-img" src={photo} alt={`Photo de ${member.name}`} />
+        : <span className="mdet-hero-initial" aria-hidden="true"
+                style={{ color, background: `radial-gradient(circle at 50% 40%, ${color}33, transparent 70%)` }}>
+            {initial}
+          </span>}
+
+      {/* Le fondu vers le fond de la modale : sans lui, le portrait se
+          terminerait sur une arete franche au milieu de la fiche. */}
+      <div className="mdet-hero-fade" aria-hidden="true" />
+
+      {canWrite && (
+        <div className="mdet-hero-tools">
+          <button className="mdet-hero-btn" disabled={busy}
+                  onClick={() => fileRef.current?.click()}
+                  title={photo ? 'Remplacer la photo' : 'Ajouter une photo'}>
+            <Camera size={14} strokeWidth={2.2} /> {photo ? 'Changer' : 'Photo'}
+          </button>
+          {photo && (
+            <button className="mdet-hero-btn" disabled={busy} onClick={remove}
+                    title="Retirer la photo" aria-label="Retirer la photo">
+              <Trash2 size={14} strokeWidth={2.2} />
+            </button>
+          )}
+          <input ref={fileRef} type="file" hidden accept="image/png,image/jpeg,image/webp"
+                 onChange={e => { const f = e.target.files?.[0]; if (f) send(f) }} />
+        </div>
+      )}
+
+      <div aria-live="polite">
+        {problem && <p role="alert" className="mdet-problem mdet-hero-problem">{problem}</p>}
       </div>
     </div>
   )

@@ -336,4 +336,16 @@ MIGRATIONS.push({
   ],
 })
 
+MIGRATIONS.push({
+  version: 6,
+  name: 'date-de-la-photo',
+  statements: [
+    // La colonne photo_key existe depuis l'origine, mais rien ne datait le
+    // depot. Sans cette date, la photo est servie a une adresse fixe : le
+    // navigateur garde l'ancienne en cache et le club croit que le
+    // remplacement a echoue. La date entre dans l'adresse et la change.
+    `ALTER TABLE members ADD COLUMN photo_at TEXT`,
+  ],
+})
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

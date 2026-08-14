@@ -139,6 +139,55 @@ test('sans session, aucun fichier ne sort', async () => {
   assert.ok(res.status === 401 || res.status === 403, `statut inattendu : ${res.status}`)
 })
 
+// Photo du membre ---------------------------------------------------------
+
+test('la photo se depose, se date et se remplace', async () => {
+  const up = await put(owner, `/api/members/${memberId}/photo`, PNG, 'image/png')
+  assert.equal(up.status, 200, JSON.stringify(up.data))
+
+  const list = await owner.call('GET', '/api/members?limit=50')
+  const row = list.data.members.find(m => m.id === memberId)
+  assert.ok(row.photo_key, 'la cle de la photo manque')
+  // La date entre dans l'adresse servie au navigateur : sans elle, l'adresse
+  // serait fixe et l'ancienne photo resterait affichee apres remplacement.
+  assert.ok(row.photo_at, 'la date de depot manque')
+
+  const file = await get(owner, `/api/members/${memberId}/photo`)
+  assert.equal(file.status, 200)
+  assert.equal(file.type, 'image/png')
+  assert.deepEqual(file.bytes, PNG)
+
+  await put(owner, `/api/members/${memberId}/photo`, PNG2, 'image/png')
+  const after = await get(owner, `/api/members/${memberId}/photo`)
+  assert.deepEqual(after.bytes, PNG2, 'l ancienne photo est toujours servie')
+})
+
+test('un PDF n est pas une photo', async () => {
+  // Il passe pour une piece d'identite, pas pour un portrait : une balise
+  // <img> n'afficherait qu'un cadre vide, sans dire pourquoi.
+  const res = await put(owner, `/api/members/${memberId}/photo`, PNG, 'application/pdf')
+  assert.equal(res.status, 400)
+})
+
+test('un autre club ne voit pas la photo', async () => {
+  const s = uniq()
+  const other = client()
+  assert.equal((await other.call('POST', '/api/auth/signup', {
+    clubName: 'Club Photo', slug: `photo-${s}`, name: 'Owner Photo',
+    email: `photo-${s}@example.ma`, password: 'motdepasse-solide-ph',
+  })).status, 201)
+  assert.equal((await get(other, `/api/members/${memberId}/photo`)).status, 404)
+})
+
+test('la photo se retire', async () => {
+  assert.equal((await owner.call('DELETE', `/api/members/${memberId}/photo`)).status, 200)
+  assert.equal((await get(owner, `/api/members/${memberId}/photo`)).status, 404)
+  const list = await owner.call('GET', '/api/members?limit=50')
+  const row = list.data.members.find(m => m.id === memberId)
+  assert.equal(row.photo_key, null)
+  assert.equal(row.photo_at, null)
+})
+
 test('le retrait est reserve aux responsables', async () => {
   const s = uniq()
   const staffEmail = `staff-doc-${s}@example.ma`

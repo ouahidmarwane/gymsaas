@@ -16,7 +16,7 @@ import MemberExportModal from '@/components/MemberExportModal'
 import MemberImportModal from '@/components/MemberImportModal'
 import { toCsv, download } from '@/lib/csv'
 import {
-  type MemberRow, subStatus, insStatus, isDormant, daysUntil,
+  type MemberRow, subStatus, insStatus, isDormant, daysUntil, photoUrl,
   SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
 } from '@/lib/member-status'
 
@@ -282,7 +282,7 @@ export default function MembersPage() {
                     <tr key={m.id} className="members-row">
                       <td style={{ padding: '0.85rem 1rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                          <Avatar name={m.name} />
+                          <Avatar member={m} />
                           <div style={{ minWidth: 0 }}>
                             {/* Le nom ouvre la fiche : c'est l'endroit ou l'on
                                 clique d'instinct quand quelqu'un est au
@@ -491,15 +491,23 @@ function Th({ label, sort, sortBy, sortDir, onSort }: {
   )
 }
 
-function Avatar({ name }: { name: string }) {
-  const initials = name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
-  const color = AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length]
+function Avatar({ member }: { member: MemberRow }) {
+  const initials = member.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
+  const color = AVATAR_COLORS[member.name.charCodeAt(0) % AVATAR_COLORS.length]
+  const photo = photoUrl(member)
   return (
     <span aria-hidden="true" style={{
-      width: 36, height: 36, borderRadius: '50%', flex: 'none',
+      width: 36, height: 36, borderRadius: '50%', flex: 'none', overflow: 'hidden',
       display: 'grid', placeItems: 'center',
       background: color, color: '#0b111c', fontWeight: 800, fontSize: '0.8rem',
-    }}>{initials}</span>
+    }}>
+      {/* La photo quand elle existe, l'initiale sinon : deux lignes voisines
+          doivent rester alignees, donc jamais de cadre vide en attendant. */}
+      {photo
+        ? <img src={photo} alt="" loading="lazy"
+               style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        : initials}
+    </span>
   )
 }
 
