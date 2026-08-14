@@ -164,18 +164,23 @@ for (const club of CLUBS) {
     // Encaissements : l'inscription au jour de l'adhesion, l'assurance dans
     // la foulee, puis quelques mensualites. La caisse reelle diverge donc de
     // l'estimation tarifaire — c'est exactement ce que la page doit montrer.
+    // Moyens de paiement alternes : une ventilation ou tout tombe dans la
+    // meme colonne ne montre pas ce que l'ecran sait faire.
+    const method = index % 3 === 0 ? 'transfer' : 'cash'
+
     await call('POST', '/api/payments', {
-      memberId: id, amountCents: 15_000, type: 'registration', paidAt: joinDate,
+      memberId: id, amountCents: 15_000, type: 'registration', paidAt: joinDate, method,
     })
     if (insured) {
       await call('POST', '/api/payments', {
-        memberId: id, amountCents: 5_000, type: 'insurance', paidAt: joinDate,
+        memberId: id, amountCents: 5_000, type: 'insurance', paidAt: joinDate, method: 'cash',
       })
     }
     for (let m = month; m <= today.getMonth(); m += 2) {
       await call('POST', '/api/payments', {
         memberId: id, amountCents: 10_000, type: 'monthly',
         paidAt: `${today.getFullYear()}-${String(m + 1).padStart(2, '0')}-05`,
+        method,
       })
     }
   }

@@ -443,7 +443,17 @@ export class ClubDatabase extends DurableObject<Env> {
 
   // Paiements --------------------------------------------------------------
 
-  listPayments(opts: { year?: number; month?: number; limit?: number } = {}) {
+  /**
+   * Lignes d'encaissement, filtrees par periode.
+   *
+   * `from` / `to` bornent sur des dates completes ; `year` / `month` restent
+   * acceptes pour ne pas casser les appels existants. Les deux formes se
+   * combinent, la plus restrictive gagne.
+   */
+  listPayments(opts: {
+    year?: number; month?: number; from?: string; to?: string
+    branchId?: string | null; limit?: number
+  } = {}) {
     const limit = Number.isFinite(opts.limit) ? Math.min(Math.max(opts.limit!, 1), 500) : 300
     const conditions: string[] = []
     const params: unknown[] = []
@@ -456,13 +466,20 @@ export class ClubDatabase extends DurableObject<Env> {
       conditions.push("strftime('%m', p.paid_at) = ?")
       params.push(String(opts.month).padStart(2, '0'))
     }
+    if (opts.from) { conditions.push('p.paid_at >= ?'); params.push(opts.from) }
+    if (opts.to) { conditions.push('p.paid_at <= ?'); params.push(opts.to) }
+    if (opts.branchId) { conditions.push('p.branch_id = ?'); params.push(opts.branchId) }
+
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 
     return this.sql.exec(
-      `SELECT p.*, m.name AS member_name, b.name AS branch_name
+      `SELECT p.*, m.name AS member_name, b.name AS branch_name,
+              o.name AS reversed_member_name
          FROM payments p
          LEFT JOIN members m  ON m.id = p.member_id
          LEFT JOIN branches b ON b.id = p.branch_id
+         LEFT JOIN payments r ON r.id = p.reverses_id
+         LEFT JOIN members o  ON o.id = r.member_id
          ${where}
         ORDER BY p.paid_at DESC, p.created_at DESC
         LIMIT ?`,
@@ -474,6 +491,7 @@ export class ClubDatabase extends DurableObject<Env> {
     memberId: string
     amountCents: number
     type: string
+    method?: string | null
     paidAt?: string
     notes?: string | null
     actorId?: string
@@ -485,11 +503,22 @@ export class ClubDatabase extends DurableObject<Env> {
         'SELECT branch_id, discipline_id, name FROM members WHERE id = ?', input.memberId,
       ).one()
 
+    // Tarif en vigueur a cet instant, conserve pour l'audit uniquement.
+    // C'est amount_cents qui fait foi : un encaissement partiel, une remise
+    // ou un tarif change plus tard ne doivent rien changer a la ligne.
+    const prices = this.getPrices()
+    const tariff = input.type === 'monthly' ? prices.monthlyCents
+      : input.type === 'insurance' ? prices.insuranceCents
+      : input.type === 'registration' ? prices.registrationCents
+      : null
+
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        `INSERT INTO payments (id, member_id, amount_cents, type, paid_at, branch_id, discipline_id, notes, recorded_by)
-         VALUES (?, ?, ?, ?, COALESCE(?, date('now')), ?, ?, ?, ?)`,
-        id, input.memberId, input.amountCents, input.type, input.paidAt ?? null,
+        `INSERT INTO payments (id, member_id, amount_cents, type, method, tariff_cents,
+                               paid_at, branch_id, discipline_id, notes, recorded_by)
+         VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, date('now')), ?, ?, ?, ?)`,
+        id, input.memberId, input.amountCents, input.type, input.method ?? null, tariff,
+        input.paidAt ?? null,
         member.branch_id, member.discipline_id, input.notes ?? null, input.actorId ?? null,
       )
       this.sql.exec(
@@ -499,6 +528,140 @@ export class ClubDatabase extends DurableObject<Env> {
       )
     })
     return { id }
+  }
+
+  /**
+   * Annule un encaissement par une ecriture inverse.
+   *
+   * On ne modifie ni ne supprime jamais la ligne d'origine : une erreur de
+   * saisie fait partie de l'historique, et un releve dont les lignes changent
+   * apres coup ne vaut rien. Les deux ecritures coexistent, leur somme vaut
+   * zero, et tout SUM reste juste sans traitement particulier.
+   */
+  reversePayment(input: {
+    paymentId: string
+    reason: string
+    actorId?: string
+    actorName?: string
+  }): { id: string; amountCents: number } {
+    const original = this.sql.exec<{
+      id: string; member_id: string; amount_cents: number; type: string
+      method: string | null; branch_id: string | null; discipline_id: string | null
+      reverses_id: string | null; paid_at: string
+    }>(
+      `SELECT id, member_id, amount_cents, type, method, branch_id, discipline_id,
+              reverses_id, paid_at
+         FROM payments WHERE id = ?`,
+      input.paymentId,
+    ).toArray()[0]
+
+    if (!original) throw new Error('Encaissement introuvable')
+    // Annuler une annulation reviendrait a re-encaisser en douce, sous une
+    // etiquette qui dit le contraire. Si le remboursement etait une erreur,
+    // on saisit un nouvel encaissement.
+    if (original.reverses_id) throw new Error('Cette ligne est deja une annulation')
+
+    const already = this.sql
+      .exec<{ n: number }>('SELECT COUNT(*) AS n FROM payments WHERE reverses_id = ?', input.paymentId)
+      .one().n
+    if (already > 0) throw new Error('Cet encaissement est deja annule')
+
+    const id = crypto.randomUUID()
+    const member = this.sql
+      .exec<{ name: string }>('SELECT name FROM members WHERE id = ?', original.member_id)
+      .toArray()[0]
+
+    this.ctx.storage.transactionSync(() => {
+      // L'annulation reprend la DATE de l'originale, pas celle du jour.
+      //
+      // Autrement, annuler en aout un encaissement de mai laisserait le total
+      // de mai a son montant d'origine : le releve d'une periode ne serait
+      // plus juste, ce qui est precisement ce qu'une annulation doit
+      // garantir. Le moment reel de la correction reste lisible dans
+      // created_at et dans le journal.
+      this.sql.exec(
+        `INSERT INTO payments (id, member_id, amount_cents, type, method,
+                               reverses_id, reversal_reason,
+                               paid_at, branch_id, discipline_id, recorded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, original.member_id, -original.amount_cents, original.type, original.method,
+        original.id, input.reason, original.paid_at,
+        original.branch_id, original.discipline_id, input.actorId ?? null,
+      )
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, detail, actor_id, actor_name)
+         VALUES ('payment_reverse', 'payment', ?, ?, ?, ?, ?)`,
+        original.id, member?.name ?? null, input.reason,
+        input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+
+    return { id, amountCents: -original.amount_cents }
+  }
+
+  /** Ventilation par moyen de paiement sur une periode. */
+  revenueByMethod(opts: { from?: string; to?: string } = {}): Array<{ method: string; cents: number; lines: number }> {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (opts.from) { conditions.push('paid_at >= ?'); params.push(opts.from) }
+    if (opts.to) { conditions.push('paid_at <= ?'); params.push(opts.to) }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    return this.sql.exec<{ method: string; cents: number; lines: number }>(
+      `SELECT COALESCE(method, 'inconnu') AS method,
+              SUM(amount_cents) AS cents,
+              COUNT(*) AS lines
+         FROM payments ${where}
+        GROUP BY method
+        ORDER BY cents DESC`,
+      ...params,
+    ).toArray()
+  }
+
+  /**
+   * Qui doit, combien, depuis quand.
+   *
+   * Le club ne tient pas de facturier par membre : la dette se deduit de la
+   * date d'echeance de l'abonnement et du tarif en vigueur. C'est une
+   * estimation assumee, pas une creance comptable — d'ou `monthsLate`, qui
+   * permet de la verifier d'un coup d'oeil.
+   *
+   * Rien n'est stocke : un impaye regle disparait de lui-meme des que la
+   * date d'echeance avance.
+   */
+  outstanding(): Array<{
+    memberId: string; name: string; phone: string; branchName: string | null
+    dueSince: string; daysLate: number; monthsLate: number; amountCents: number
+  }> {
+    const monthly = this.getPrices().monthlyCents
+
+    return this.sql.exec<{
+      id: string; name: string; phone: string; branch_name: string | null
+      sub_expiry: string; days_late: number
+    }>(
+      `SELECT m.id, m.name, m.phone, b.name AS branch_name, m.sub_expiry,
+              CAST(julianday('now') - julianday(m.sub_expiry) AS INTEGER) AS days_late
+         FROM members m
+         LEFT JOIN branches b ON b.id = m.branch_id
+        WHERE m.status != 'archived'
+          AND m.sub_expiry IS NOT NULL
+          AND date(m.sub_expiry) < date('now')
+        ORDER BY m.sub_expiry`,
+    ).toArray().map(row => {
+      // Un mois entame est un mois du : c'est la regle d'un abonnement, et
+      // arrondir a l'inferieur ferait travailler le club gratuitement.
+      const monthsLate = Math.max(1, Math.ceil(row.days_late / 30))
+      return {
+        memberId: row.id,
+        name: row.name,
+        phone: row.phone,
+        branchName: row.branch_name,
+        dueSince: row.sub_expiry,
+        daysLate: row.days_late,
+        monthsLate,
+        amountCents: monthsLate * monthly,
+      }
+    })
   }
 
   /** Recettes par mois sur douze mois, pour le graphique de comptabilite. */

@@ -658,15 +658,47 @@ export const api = {
         const club = clubOf(env, principal)
         const year = url.searchParams.get('year')
         const month = url.searchParams.get('month')
-        const [payments, byMonth, byType] = await Promise.all([
+        const from = dateOnly(url.searchParams.get('from'), 'from')
+        const to = dateOnly(url.searchParams.get('to'), 'to')
+        if (from && to && to < from) return fail(400, 'La periode se termine avant de commencer')
+
+        const [payments, byMonth, byType, byMethod, outstanding] = await Promise.all([
           club.listPayments({
             year: year ? Number(year) : undefined,
             month: month ? Number(month) : undefined,
+            from: from ?? undefined,
+            to: to ?? undefined,
+            branchId: optional(url.searchParams.get('branchId'), 60),
           }),
           club.revenueByMonth(),
           club.revenueByType(),
+          club.revenueByMethod({ from: from ?? undefined, to: to ?? undefined }),
+          club.outstanding(),
         ])
-        return json({ payments, byMonth, byType })
+        return json({ payments, byMonth, byType, byMethod, outstanding })
+      }
+
+      // Annulation : une ecriture inverse, jamais une modification.
+      const reverseRoute = path.match(/^\/api\/payments\/([^/]+)\/reverse$/)
+      if (reverseRoute && method === 'POST') {
+        atLeast(principal, 'admin', true)
+        const body = await readJson(request)
+        // Valide AVANT le try : un motif manquant est une erreur de requete
+        // (400), pas un refus metier (409). Les melanger rendait « motif
+        // absent » indiscernable de « deja annule ».
+        const reason = str(body.reason, 'reason', 300)
+        try {
+          const result = await clubOf(env, principal).reversePayment({
+            paymentId: reverseRoute[1]!,
+            reason,
+            actorId: principal.userId, actorName: principal.name,
+          })
+          return json(result, { status: 201 })
+        } catch (e) {
+          // Le Durable Object refuse d'annuler deux fois ou d'annuler une
+          // annulation : ce sont des refus metier, pas des pannes.
+          return fail(409, e instanceof Error ? e.message : 'Annulation impossible')
+        }
       }
 
       if (path === '/api/payments' && method === 'POST') {
@@ -684,7 +716,8 @@ export const api = {
           memberId: str(body.memberId, 'memberId', 60),
           amountCents: Math.round(amount),
           type,
-          paidAt: optional(body.paidAt, 10) ?? undefined,
+          method: optional(body.method, 40),
+          paidAt: dateOnly(body.paidAt, 'paidAt') ?? undefined,
           notes: optional(body.notes, 300),
           actorId: principal.userId, actorName: principal.name,
         })
@@ -1558,7 +1591,13 @@ export const api = {
                       WHERE i.org_id = o.id AND i.paid_at IS NULL) AS unpaid_cents,
                     (SELECT MIN(i.due_date) FROM org_invoices i
                       WHERE i.org_id = o.id AND i.paid_at IS NULL) AS next_due,
-                    (SELECT MAX(i.paid_at) FROM org_invoices i WHERE i.org_id = o.id) AS last_paid_at
+                    (SELECT MAX(i.paid_at) FROM org_invoices i WHERE i.org_id = o.id) AS last_paid_at,
+                    -- Derniere relance, toutes echeances confondues : c'est
+                    -- elle qui dit s'il est decent de relancer a nouveau.
+                    (SELECT MAX(r.last_reminder_at)
+                       FROM org_invoice_reminders r
+                       JOIN org_invoices i ON i.id = r.invoice_id
+                      WHERE i.org_id = o.id) AS last_reminder_at
                FROM organizations o
                LEFT JOIN org_billing b ON b.org_id = o.id
               ORDER BY o.name
@@ -1568,11 +1607,17 @@ export const api = {
           env.CONTROL.prepare(
             `SELECT i.*, o.name AS org_name, o.slug AS org_slug, b.phone,
                     p.status AS proof_status, p.reference AS proof_reference,
-                    p.file_key IS NOT NULL AS proof_has_file, p.submitted_at AS proof_at
+                    p.file_key IS NOT NULL AS proof_has_file, p.submitted_at AS proof_at,
+                    -- Tracabilite de l'arbitrage : qui a tranche, et quand.
+                    p.reviewed_at AS proof_reviewed_at, p.reject_reason AS proof_reject_reason,
+                    ru.name AS proof_reviewed_by_name,
+                    r.last_reminder_at, r.reminder_count
                FROM org_invoices i
                JOIN organizations o ON o.id = i.org_id
                LEFT JOIN org_billing b ON b.org_id = i.org_id
                LEFT JOIN org_invoice_proofs p ON p.invoice_id = i.id
+               LEFT JOIN users ru ON ru.id = p.reviewed_by
+               LEFT JOIN org_invoice_reminders r ON r.invoice_id = i.id
               WHERE i.period_start BETWEEN ? AND ?
                 AND (? IS NULL OR CAST(strftime('%m', i.period_start) AS INTEGER) - 1 = ?)
               ORDER BY i.due_date DESC
@@ -1595,6 +1640,17 @@ export const api = {
           "SELECT value FROM platform_settings WHERE key = 'bank_details'",
         ).first<{ value: string }>()
 
+        // Encaisse du mois en cours, compte sur la date de REGLEMENT et non
+        // sur la periode : c'est la tresorerie du mois, pas son chiffre
+        // d'affaires theorique.
+        const mrr = await env.CONTROL.prepare(
+          `SELECT COALESCE(SUM(amount_cents), 0) AS cashed,
+                  COUNT(DISTINCT org_id) AS clubs
+             FROM org_invoices
+            WHERE paid_at IS NOT NULL
+              AND strftime('%Y-%m', paid_at) = strftime('%Y-%m','now')`,
+        ).first<{ cashed: number; clubs: number }>()
+
         const years = await env.CONTROL.prepare(
           `SELECT DISTINCT CAST(strftime('%Y', period_start) AS INTEGER) AS y
              FROM org_invoices ORDER BY y DESC`,
@@ -1616,6 +1672,16 @@ export const api = {
           }),
           invoices: invoices.results,
           chart,
+          // Revenu de la plateforme : ce qui est reellement rentre sur le mois
+          // en cours, et les cumuls de l'annee retenue. Derive des memes
+          // echeances que le graphique — aucune table d'agregats a
+          // resynchroniser, donc aucun ecart possible entre les deux.
+          mrr: {
+            currentMonthCents: mrr?.cashed ?? 0,
+            payingClubs: mrr?.clubs ?? 0,
+            billedYearCents: chart.reduce((s, m) => s + m.billed, 0),
+            cashedYearCents: chart.reduce((s, m) => s + m.paid, 0),
+          },
           bankDetails: bank?.value ?? null,
           today: isoSeconds(new Date()).slice(0, 10),
         })
@@ -1766,6 +1832,39 @@ export const api = {
             'X-Content-Type-Options': 'nosniff',
           },
         })
+      }
+
+      /**
+       * Note qu'une relance vient d'etre envoyee.
+       *
+       * Le message part par WhatsApp, hors de notre portee : on n'enregistre
+       * donc pas un envoi, on enregistre le fait que l'exploitant a ouvert la
+       * conversation. C'est suffisant pour ne pas relancer le meme club trois
+       * fois dans la journee, et honnete sur ce que l'on sait reellement.
+       */
+      const reminderRoute = path.match(/^\/api\/admin\/invoices\/([^/]+)\/reminder$/)
+      if (reminderRoute && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const invoiceId = reminderRoute[1]!
+        const known = await env.CONTROL.prepare('SELECT 1 FROM org_invoices WHERE id = ?')
+          .bind(invoiceId).first()
+        if (!known) return fail(404, 'Echeance inconnue')
+
+        const body = await readJson(request).catch(() => ({} as Record<string, unknown>))
+        await env.CONTROL.prepare(
+          `INSERT INTO org_invoice_reminders (invoice_id, last_reminder_by, channel)
+           VALUES (?, ?, ?)
+           ON CONFLICT(invoice_id) DO UPDATE SET
+             last_reminder_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+             reminder_count = org_invoice_reminders.reminder_count + 1,
+             last_reminder_by = excluded.last_reminder_by,
+             channel = excluded.channel`,
+        ).bind(invoiceId, principal.userId, optional(body.channel, 20) ?? 'whatsapp').run()
+
+        const row = await env.CONTROL.prepare(
+          'SELECT last_reminder_at, reminder_count FROM org_invoice_reminders WHERE invoice_id = ?',
+        ).bind(invoiceId).first()
+        return json(row)
       }
 
       // Coordonnees bancaires montrees aux clubs sur leur page d'abonnement.

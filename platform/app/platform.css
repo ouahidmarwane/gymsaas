@@ -587,3 +587,16 @@ html[data-theme='dark'] .gf-map .leaflet-tile-pane {
   background: rgba(37,211,102,0.24);
   color: #4ade80;
 }
+
+/* Jalon de rappel (J-7, J-3, jour J, J+3). Un badge plutot qu'un mot :
+   il se repere sans lire, dans une colonne parcourue en diagonale. */
+.tag-stage {
+  display: inline-block;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.15em 0.5em;
+  border-radius: 4px;
+  white-space: nowrap;
+}

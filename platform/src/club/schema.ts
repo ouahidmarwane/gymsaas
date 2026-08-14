@@ -222,4 +222,75 @@ MIGRATIONS.push({
   ],
 })
 
+MIGRATIONS.push({
+  version: 3,
+  name: 'paiements-figes-et-annulations',
+  statements: [
+    // La table est RECONSTRUITE, pas simplement etendue.
+    //
+    // Une annulation s'ecrit en montant negatif : c'est ce qui rend tout
+    // SUM(amount_cents) juste pour toujours, sans qu'aucune requete future
+    // n'ait a se souvenir d'un CASE. Or le CHECK (amount_cents >= 0) l'
+    // interdisait, et SQLite ne sait pas retirer une contrainte autrement
+    // qu'en refaisant la table.
+    //
+    // L'alternative — garder des montants positifs et un drapeau — reportait
+    // la correction sur chaque SUM : un seul oubli et les totaux mentent.
+    `CREATE TABLE payments_v3 (
+       id            TEXT PRIMARY KEY,
+       member_id     TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+
+       -- Montant FIGE a la creation. Aucun tarif modifie ensuite ne doit
+       -- pouvoir le changer : une ligne passee est un fait, pas un calcul.
+       -- Negatif uniquement pour une annulation.
+       amount_cents  INTEGER NOT NULL,
+
+       type          TEXT NOT NULL
+                       CHECK (type IN ('monthly','insurance','registration','other')),
+
+       -- Moyen de paiement. Pas de CHECK : la liste des moyens evoluera plus
+       -- vite que le schema, et une valeur inconnue vaut mieux qu'un refus.
+       method        TEXT,
+
+       -- Tarif en vigueur au moment de l'encaissement, conserve pour l'audit
+       -- seulement. Il n'entre dans aucun calcul : c'est amount_cents qui
+       -- fait foi. Il sert a expliquer un ecart, pas a le corriger.
+       tariff_cents  INTEGER,
+
+       -- Ligne annulee par celle-ci. Une annulation ne modifie jamais
+       -- l'originale : les deux coexistent, et leur somme vaut zero.
+       reverses_id   TEXT,
+       reversal_reason TEXT,
+
+       paid_at       TEXT NOT NULL DEFAULT (date('now')),
+       branch_id     TEXT REFERENCES branches(id) ON DELETE SET NULL,
+       discipline_id TEXT REFERENCES disciplines(id) ON DELETE SET NULL,
+       notes         TEXT,
+       recorded_by   TEXT,
+       created_at    TEXT NOT NULL DEFAULT (${NOW})
+     )`,
+
+    `INSERT INTO payments_v3
+       (id, member_id, amount_cents, type, paid_at, branch_id, discipline_id,
+        notes, recorded_by, created_at)
+     SELECT id, member_id, amount_cents, type, paid_at, branch_id, discipline_id,
+            notes, recorded_by, created_at
+       FROM payments`,
+
+    `DROP TABLE payments`,
+    `ALTER TABLE payments_v3 RENAME TO payments`,
+
+    `CREATE INDEX IF NOT EXISTS idx_payments_member ON payments(member_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_payments_date   ON payments(paid_at DESC)`,
+
+    // Index couvrants : la comptabilite filtre par salle sur une periode, et
+    // ventile par type. Sans eux, chaque filtre balaie toute la table.
+    `CREATE INDEX IF NOT EXISTS idx_payments_branch_date ON payments(branch_id, paid_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_payments_type_date   ON payments(type, paid_at)`,
+    // Retrouver l'annulation d'une ligne, et empecher d'en poser deux.
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_reverses
+       ON payments(reverses_id) WHERE reverses_id IS NOT NULL`,
+  ],
+})
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

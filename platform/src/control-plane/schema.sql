@@ -282,3 +282,19 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   value      TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
+
+-- Derniere relance envoyee pour une echeance.
+--
+-- Table separee plutot qu'une colonne sur org_invoices : le fichier de schema
+-- est rejoue tel quel sur une base existante, et SQLite n'a pas de
+-- ALTER TABLE ADD COLUMN IF NOT EXISTS.
+--
+-- Le compteur accompagne la date : « relance il y a deux jours » ne dit pas
+-- la meme chose selon que c'est la premiere ou la cinquieme.
+CREATE TABLE IF NOT EXISTS org_invoice_reminders (
+  invoice_id       TEXT PRIMARY KEY REFERENCES org_invoices(id) ON DELETE CASCADE,
+  last_reminder_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  reminder_count   INTEGER NOT NULL DEFAULT 1,
+  last_reminder_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  channel          TEXT
+);

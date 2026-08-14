@@ -31,6 +31,7 @@ interface ClubBilling {
   unpaid_cents: number
   next_due: string | null
   last_paid_at: string | null
+  last_reminder_at: string | null
 }
 
 interface Invoice {
@@ -50,6 +51,11 @@ interface Invoice {
   proof_reference: string | null
   proof_has_file: number | null
   proof_at: string | null
+  proof_reviewed_at: string | null
+  proof_reviewed_by_name: string | null
+  proof_reject_reason: string | null
+  last_reminder_at: string | null
+  reminder_count: number | null
 }
 
 interface Payload {
@@ -59,14 +65,59 @@ interface Payload {
   clubs: ClubBilling[]
   invoices: Invoice[]
   chart: Array<{ month: number; billed: number; paid: number }>
+  mrr: {
+    currentMonthCents: number
+    payingClubs: number
+    billedYearCents: number
+    cashedYearCents: number
+  }
   bankDetails: string | null
   today: string
+}
+
+/**
+ * Etape de rappel, deduite de la seule date de fin de couverture.
+ *
+ * Rien n'est stocke pour la calculer : quatre comparaisons sur `expires_at`
+ * suffisent, et un jalon franchi pendant la nuit se voit au reveil sans
+ * qu'aucune tache n'ait eu a tourner.
+ */
+type Stage = 'j7' | 'j3' | 'jour' | 'j3plus' | null
+
+function stageOf(club: ClubBilling, today: string): Stage {
+  const left = daysUntil(club.expires_at, today)
+  if (left === null) return null
+  if (left === 0) return 'jour'
+  if (left > 0 && left <= 3) return 'j3'
+  if (left > 3 && left <= 7) return 'j7'
+  if (left <= -3) return 'j3plus'
+  return null
+}
+
+const STAGE_LABEL: Record<Exclude<Stage, null>, string> = {
+  j7: 'J-7', j3: 'J-3', jour: 'Jour J', j3plus: 'J+3 impayé',
+}
+const STAGE_COLOR: Record<Exclude<Stage, null>, string> = {
+  j7: '#38bdf8', j3: '#f59e0b', jour: '#f97316', j3plus: '#ef4444',
 }
 
 const MONTHS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']
 
 const dh = (cents: number) => `${Math.round(cents / 100).toLocaleString('fr-FR')} DH`
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('fr-FR') : '—')
+
+/** Moins de 24 h : relancer a nouveau serait du harcelement. */
+const relanceFraiche = (iso: string, now: number) => now - Date.parse(iso) < 86_400_000
+
+function relative(iso: string, now: number): string {
+  const s = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000))
+  if (s < 60) return "a l'instant"
+  const m = Math.floor(s / 60)
+  if (m < 60) return `il y a ${m} min`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `il y a ${h} h`
+  return `il y a ${Math.floor(h / 24)} j`
+}
 
 /** Jours restants avant une date, negatif si elle est passee. */
 function daysUntil(iso: string | null, today: string): number | null {
@@ -182,6 +233,9 @@ export default function FacturationPage() {
     } finally { setBusy(null) }
   }
 
+  // Lu une fois par rendu : la page ne se rafraichit qu'au chargement ou
+  // apres une action, un compteur qui bat chaque seconde n'apporterait rien.
+  const now = Date.now()
   const today = data?.today ?? new Date().toISOString().slice(0, 10)
   const clubs = useMemo(() => data?.clubs ?? [], [data])
   const invoices = data?.invoices ?? []
@@ -252,8 +306,8 @@ export default function FacturationPage() {
 
       {/* Chiffres de l'annee retenue. */}
       <div className="compta-kpi-grid">
-        <Kpi label="Encaissé" value={dh(cashed)} icon={Wallet} color="#16a34a"
-             sub={`sur ${dh(billed)} facturés en ${year}`} />
+        <Kpi label="Encaissé ce mois" value={dh(data?.mrr.currentMonthCents ?? 0)} icon={Wallet} color="#16a34a"
+             sub={`${data?.mrr.payingClubs ?? 0} club(s) · ${dh(cashed)} sur ${dh(billed)} en ${year}`} />
         <Kpi label="Reste à encaisser" value={dh(outstanding)} icon={Clock} color="#f59e0b"
              sub={`${clubs.reduce((s, c) => s + c.unpaid_count, 0)} échéance(s) ouverte(s)`} />
         <Kpi label="Clubs à jour" value={String(counts.active)} icon={CheckCircle2} color="#2f6bff"
@@ -328,13 +382,15 @@ export default function FacturationPage() {
           <div className="gf-table-wrap">
             <table className="gf-table">
               <thead>
-                <tr><th>Club</th><th>Couvert jusqu&apos;au</th><th>Reste</th>
-                    <th>Dû</th><th>Situation</th><th>Action</th></tr>
+                <tr><th>Club</th><th>Couvert jusqu&apos;au</th><th>Rappel</th><th>Reste</th>
+                    <th>Dû</th><th>Situation</th><th>Dernière relance</th><th>Action</th></tr>
               </thead>
               <tbody>
                 {toHandle.map(club => {
                   const state = stateOf(club, today)
+                  const stage = stageOf(club, today)
                   const left = daysUntil(club.expires_at, today)
+                  const openInvoice = invoices.find(i => i.org_id === club.id && !i.paid_at)
                   return (
                     <tr key={club.id}>
                       <td>
@@ -342,6 +398,14 @@ export default function FacturationPage() {
                         <div className="gf-table-sub">{club.slug}</div>
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>{day(club.expires_at)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {stage ? (
+                          <span className="tag-stage" style={{ color: STAGE_COLOR[stage],
+                                  background: `${STAGE_COLOR[stage]}22` }}>
+                            {STAGE_LABEL[stage]}
+                          </span>
+                        ) : <span className="gf-table-sub">—</span>}
+                      </td>
                       <td style={{ whiteSpace: 'nowrap', color: STATE_COLOR[state], fontWeight: 700 }}>
                         {left === null ? '—'
                           : left < 0 ? `${Math.abs(left)} j de retard`
@@ -354,6 +418,15 @@ export default function FacturationPage() {
                       <td style={{ whiteSpace: 'nowrap', color: STATE_COLOR[state], fontWeight: 700 }}>
                         {STATE_LABEL[state]}
                       </td>
+                      {/* Sans cette colonne, on relance le meme club trois fois
+                          dans la journee sans le savoir. */}
+                      <td className="gf-table-sub" style={{ whiteSpace: 'nowrap' }}>
+                        {club.last_reminder_at
+                          ? <span style={{ color: relanceFraiche(club.last_reminder_at, now) ? '#f59e0b' : undefined }}>
+                              {relative(club.last_reminder_at, now)}
+                            </span>
+                          : 'jamais'}
+                      </td>
                       <td>
                         {/* Rien n'est du : le geste attendu n'est pas de
                             relancer, c'est d'emettre la periode suivante. */}
@@ -362,7 +435,14 @@ export default function FacturationPage() {
                         ) : club.phone ? (
                           <a className="gf-mini-btn" data-tone="whatsapp"
                              href={waLink(club.phone, reminderText(club, state, today))}
-                             target="_blank" rel="noopener noreferrer">
+                             target="_blank" rel="noopener noreferrer"
+                             // On note l'ouverture de la conversation, pas un
+                             // envoi : le message part hors de notre portee.
+                             onClick={() => {
+                               if (!openInvoice) return
+                               api.post(`/api/admin/invoices/${openInvoice.id}/reminder`, {})
+                                 .then(load).catch(() => {})
+                             }}>
                             <MessageCircle size={12} strokeWidth={2.4} /> Relancer
                           </a>
                         ) : (
@@ -492,6 +572,21 @@ export default function FacturationPage() {
                             <span style={{ color: late ? '#ef4444' : '#f59e0b', fontWeight: 700 }}>
                               {late ? 'En retard' : 'À échoir'}
                             </span>
+                          )}
+                          {/* Qui a tranche, et quand : sans cela, un virement
+                              conteste six mois plus tard n'a plus de trace. */}
+                          {inv.proof_reviewed_at && (
+                            <div className="gf-table-sub">
+                              {inv.proof_status === 'rejected' ? 'Refusé' : 'Validé'} par{' '}
+                              {inv.proof_reviewed_by_name ?? 'la plateforme'} le {day(inv.proof_reviewed_at)}
+                              {inv.proof_reject_reason ? ` — ${inv.proof_reject_reason}` : ''}
+                            </div>
+                          )}
+                          {inv.last_reminder_at && (
+                            <div className="gf-table-sub">
+                              {inv.reminder_count} relance{(inv.reminder_count ?? 0) > 1 ? 's' : ''},
+                              {' '}dernière {relative(inv.last_reminder_at, now)}
+                            </div>
                           )}
                         </td>
                         <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

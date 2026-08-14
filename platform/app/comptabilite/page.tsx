@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
-  Wallet, ShieldCheck, Receipt, BarChart3, Settings2, HandCoins, Download,
+  Wallet, ShieldCheck, Receipt, BarChart3, Settings2, HandCoins, Download, Undo2, AlertTriangle,
   type LucideIcon,
 } from 'lucide-react'
 import {
@@ -36,8 +36,30 @@ interface Payment {
   branch_name: string | null
   amount_cents: number
   type: string
+  method: string | null
   paid_at: string
   notes: string | null
+  /** Renseigne quand cette ligne annule une autre : montant negatif. */
+  reverses_id: string | null
+  reversal_reason: string | null
+}
+
+interface MethodSplit { method: string; cents: number; lines: number }
+
+/** Dette deduite de l'echeance d'abonnement, jamais stockee. */
+interface Debtor {
+  memberId: string
+  name: string
+  phone: string
+  branchName: string | null
+  dueSince: string
+  daysLate: number
+  monthsLate: number
+  amountCents: number
+}
+
+const METHOD_LABEL: Record<string, string> = {
+  cash: 'Espèces', transfer: 'Virement', card: 'Carte', cheque: 'Chèque', inconnu: 'Non précisé',
 }
 
 const MONTHS_FR = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']
@@ -198,11 +220,18 @@ export default function ComptabilitePage() {
   const [me, setMe] = useState<Me | null>(null)
   const [data, setData] = useState<Finance | null>(null)
   const [payments, setPayments] = useState<Payment[]>([])
+  const [byMethod, setByMethod] = useState<MethodSplit[]>([])
+  const [debtors, setDebtors] = useState<Debtor[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
 
   const [branch, setBranch] = useState<string>('all')
   const [year, setYear] = useState<number | 'all'>(new Date().getFullYear())
   const [month, setMonth] = useState<number | 'all'>('all')
+  // Periode libre, pour un export qui ne tombe pas sur un mois calendaire.
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
 
   const [editPrices, setEditPrices] = useState(false)
@@ -218,26 +247,33 @@ export default function ComptabilitePage() {
     if (year !== 'all') query.set('year', String(year))
     if (month !== 'all') query.set('month', String(month))
     try {
+      // Une periode explicite l'emporte sur annee/mois : c'est le geste le
+      // plus precis, il ne doit pas etre corrige par le moins precis.
+      const cashQuery = new URLSearchParams()
+      if (from && to) { cashQuery.set('from', from); cashQuery.set('to', to) }
+      else if (year !== 'all') {
+        cashQuery.set('year', String(year))
+        if (month !== 'all') cashQuery.set('month', String(month + 1))
+      }
+
       const [finance, cash] = await Promise.all([
         api.get<Finance>(`/api/finance?${query}`),
-        // Les encaissements suivent l'annee et le mois, jamais la salle : le
-        // filtre par salle porte sur l'effectif, pas sur la caisse.
-        api.get<{ payments: Payment[] }>(
-          `/api/payments?${new URLSearchParams(
-            year === 'all' ? {} : month === 'all'
-              ? { year: String(year) }
-              : { year: String(year), month: String(month + 1) },
-          )}`,
+        // Les encaissements suivent la periode, jamais la salle : le filtre
+        // par salle porte sur l'effectif, pas sur la caisse.
+        api.get<{ payments: Payment[]; byMethod: MethodSplit[]; outstanding: Debtor[] }>(
+          `/api/payments?${cashQuery}`,
         ),
       ])
       setData(finance)
       setPayments(cash.payments)
+      setByMethod(cash.byMethod ?? [])
+      setDebtors(cash.outstanding ?? [])
       setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Chargement impossible')
       setData(null)
     }
-  }, [branch, year, month])
+  }, [branch, year, month, from, to])
 
   useEffect(() => { load() }, [load])
 
@@ -262,7 +298,34 @@ export default function ComptabilitePage() {
   const regTotal = scope.registrations * prices.registrationCents
   const grandTotal = monthlyTotal + insTotal + regTotal
 
+  // Les annulations portent un montant negatif : une simple somme suffit,
+  // aucune requete n'a a se souvenir d'un cas particulier.
   const paymentsTotal = payments.reduce((sum, p) => sum + p.amount_cents, 0)
+
+  // Lignes deja annulees, pour ne pas proposer de les annuler deux fois.
+  const reversedIds = useMemo(
+    () => new Set(payments.map(p => p.reverses_id).filter((id): id is string => id !== null)),
+    [payments],
+  )
+
+  /** Annule une ligne par ecriture inverse, apres confirmation du motif. */
+  async function reverse(payment: Payment) {
+    const reason = window.prompt(
+      `Annuler ${dh(payment.amount_cents)} de ${payment.member_name ?? 'ce membre'} ?\n`
+      + 'La ligne d’origine est conservée ; une écriture inverse est ajoutée.\n\nMotif :',
+    )
+    if (reason === null) return
+    if (!reason.trim()) { setError('Un motif est nécessaire pour annuler.'); return }
+
+    setBusy(payment.id); setError(null); setNotice(null)
+    try {
+      await api.post(`/api/payments/${payment.id}/reverse`, { reason: reason.trim() })
+      await load()
+      setNotice(`Annulation enregistrée : ${dh(-payment.amount_cents)}.`)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Annulation impossible')
+    } finally { setBusy(null) }
+  }
 
   // Series par salle. Recharts indexe par cle, et un identifiant de salle
   // peut contenir n'importe quoi : on prefixe pour ne jamais entrer en
@@ -406,22 +469,31 @@ export default function ComptabilitePage() {
     if (!payments.length) return
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
     const rows = [
-      ['Date', 'Membre', 'Type', 'Montant (DH)', 'Salle', 'Note'].map(esc),
+      ['Date', 'Membre', 'Type', 'Moyen', 'Montant (DH)', 'Salle', 'Annulation', 'Note'].map(esc),
       ...payments.map(p => [
         esc(new Date(p.paid_at).toLocaleDateString('fr-FR')),
         esc(p.member_name ?? ''),
         esc(TYPE_LABEL[p.type] ?? p.type),
+        esc(METHOD_LABEL[p.method ?? 'inconnu'] ?? p.method),
+        // Les annulations sortent en negatif : la colonne se somme telle
+        // quelle dans un tableur, sans retraitement.
         esc((p.amount_cents / 100).toFixed(2)),
         esc(p.branch_name ?? ''),
+        esc(p.reverses_id ? (p.reversal_reason ?? 'annulation') : ''),
         esc(p.notes ?? ''),
       ]),
-      ['', '', esc('TOTAL'), esc((paymentsTotal / 100).toFixed(2)), '', ''],
+      ['', '', '', esc('TOTAL'), esc((paymentsTotal / 100).toFixed(2)), '', '', ''],
     ]
     const csv = rows.map(r => r.join(',')).join('\r\n')
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }))
     const a = document.createElement('a')
-    a.href = url
-    a.download = `comptabilite-${branch === 'all' ? 'global' : branch}-${new Date().toISOString().slice(0, 10)}.csv`
+    // Le nom du fichier porte la periode : trois exports dans le meme dossier
+    // doivent rester distinguables sans les ouvrir.
+    const span = from && to ? `${from}_${to}`
+      : year === 'all' ? 'tout'
+      : month === 'all' ? String(year)
+      : `${year}-${String(month + 1).padStart(2, '0')}`
+    a.download = `comptabilite-${branch === 'all' ? 'global' : branch}-${span}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -481,8 +553,22 @@ export default function ComptabilitePage() {
             {MONTHS_FR.map((m, i) => <option key={m} value={i}>{m}</option>)}
           </select>
 
+          {/* Periode libre : un exercice comptable tombe rarement sur un mois
+              calendaire. Renseignee, elle l'emporte sur année/mois. */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <input type="date" className="compta-select" aria-label="Début de période"
+                   value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} />
+            <span className="dz-card-note">→</span>
+            <input type="date" className="compta-select" aria-label="Fin de période"
+                   value={to} min={from || undefined} onChange={e => setTo(e.target.value)} />
+            {(from || to) && (
+              <button className="gf-mini-btn" onClick={() => { setFrom(''); setTo('') }}
+                      title="Revenir au filtre année/mois">✕</button>
+            )}
+          </span>
+
           <button className="btn-ghost" onClick={exportCsv} disabled={payments.length === 0}
-                  title="Exporter les encaissements filtrés en CSV">
+                  title="Exporter les encaissements de la période en CSV">
             <Download size={15} strokeWidth={2.2} /> Exporter CSV
           </button>
 
@@ -496,6 +582,16 @@ export default function ComptabilitePage() {
       }
     >
       <PageState error={error} onRetry={load} />
+
+      <div aria-live="polite">
+        {notice && !error && (
+          <p role="status" style={{
+            padding: '0.7rem 1rem', borderRadius: 14,
+            background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)',
+            color: '#6ee7b7', fontSize: '0.85rem', fontWeight: 600,
+          }}>{notice}</p>
+        )}
+      </div>
 
       <div className="compta-shell">
         {/* Estimations tarifaires */}
@@ -530,27 +626,129 @@ export default function ComptabilitePage() {
                                fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     <th style={{ padding: '0.5rem 0.75rem' }}>Membre</th>
                     <th style={{ padding: '0.5rem 0.75rem' }}>Type</th>
+                    <th style={{ padding: '0.5rem 0.75rem' }}>Moyen</th>
                     <th style={{ padding: '0.5rem 0.75rem' }}>Date</th>
                     <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>Montant</th>
+                    <th style={{ padding: '0.5rem 0.75rem' }} />
                   </tr>
                 </thead>
                 <tbody>
-                  {payments.map(p => (
-                    <tr key={p.id} style={{ borderTop: '1px solid var(--hairline)' }}>
-                      <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>{p.member_name ?? '—'}</td>
-                      <td style={{ padding: '0.6rem 0.75rem', color: 'var(--muted)' }}>{TYPE_LABEL[p.type] ?? p.type}</td>
-                      <td style={{ padding: '0.6rem 0.75rem', color: 'var(--muted)' }}>
-                        {new Date(p.paid_at).toLocaleDateString('fr-FR')}
+                  {payments.map(p => {
+                    const reversal = p.reverses_id !== null
+                    const cancelled = reversedIds.has(p.id)
+                    return (
+                      <tr key={p.id} style={{ borderTop: '1px solid var(--hairline)',
+                                              opacity: cancelled ? 0.55 : 1 }}>
+                        <td style={{ padding: '0.6rem 0.75rem', fontWeight: 600 }}>
+                          {p.member_name ?? '—'}
+                          {reversal && (
+                            <div style={{ fontSize: '0.7rem', color: '#f87171', fontWeight: 600 }}>
+                              Annulation{p.reversal_reason ? ` — ${p.reversal_reason}` : ''}
+                            </div>
+                          )}
+                          {cancelled && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--muted)', fontWeight: 600 }}>
+                              Annulé
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: '0.6rem 0.75rem', color: 'var(--muted)' }}>{TYPE_LABEL[p.type] ?? p.type}</td>
+                        <td style={{ padding: '0.6rem 0.75rem', color: 'var(--muted)' }}>
+                          {METHOD_LABEL[p.method ?? 'inconnu'] ?? p.method}
+                        </td>
+                        <td style={{ padding: '0.6rem 0.75rem', color: 'var(--muted)' }}>
+                          {new Date(p.paid_at).toLocaleDateString('fr-FR')}
+                        </td>
+                        <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right', fontWeight: 700,
+                                     fontVariantNumeric: 'tabular-nums',
+                                     color: p.amount_cents < 0 ? '#f87171' : 'var(--positive-ink)' }}>
+                          {dh(p.amount_cents)}
+                        </td>
+                        <td style={{ padding: '0.6rem 0.75rem' }}>
+                          {/* Corriger, c'est ecrire l'inverse. On ne propose donc
+                              rien sur une annulation ni sur une ligne deja annulee. */}
+                          {canEditPrices && !reversal && !cancelled && (
+                            <button className="gf-mini-btn" data-tone="danger" disabled={busy !== null}
+                                    title="Annuler par écriture inverse"
+                                    onClick={() => reverse(p)}>
+                              <Undo2 size={12} strokeWidth={2.4} /> Annuler
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* Ventilation par moyen : ce qui est en caisse contre ce qui est en
+            banque. Un gerant rapproche l'un et l'autre chaque soir. */}
+        {byMethod.length > 0 && (
+          <section className="dz-card">
+            <div className="dz-card-head">
+              <h2 className="dz-card-title">Par moyen de paiement</h2>
+              <span className="dz-card-note">{periodLabel}</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 22, marginTop: 16 }}>
+              {byMethod.map(m => (
+                <div key={m.method} style={{ minWidth: 130 }}>
+                  <span className="dz-metric-name">{METHOD_LABEL[m.method] ?? m.method}</span>
+                  <div className="dz-metric-value" style={{ fontSize: '1.3rem', margin: '2px 0 0' }}>
+                    {dh(m.cents)}
+                  </div>
+                  <span className="dz-card-note">{m.lines} ligne{m.lines > 1 ? 's' : ''}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Impayés : deduits des echeances, jamais stockes. Un abonnement
+            renouvele fait disparaitre la ligne de lui-meme. */}
+        {debtors.length > 0 && (
+          <section className="dz-card">
+            <div className="dz-card-head">
+              <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                <AlertTriangle size={17} strokeWidth={2.1} style={{ color: '#f59e0b' }} />
+                Impayés
+              </h2>
+              <span className="dz-card-note" style={{ color: '#f59e0b', fontWeight: 800 }}>
+                {dh(debtors.reduce((s, d) => s + d.amountCents, 0))}
+              </span>
+            </div>
+            <div className="gf-table-wrap">
+              <table className="gf-table">
+                <thead>
+                  <tr><th>Membre</th><th>Salle</th><th>Depuis</th><th>Retard</th><th>Estimation</th></tr>
+                </thead>
+                <tbody>
+                  {debtors.slice(0, 12).map(d => (
+                    <tr key={d.memberId}>
+                      <td>
+                        <div className="gf-table-name">{d.name}</div>
+                        <div className="gf-table-sub">{d.phone}</div>
                       </td>
-                      <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right',
-                                   color: 'var(--positive-ink)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-                        {dh(p.amount_cents)}
+                      <td className="gf-table-sub">{d.branchName ?? '—'}</td>
+                      <td className="gf-table-sub" style={{ whiteSpace: 'nowrap' }}>
+                        {new Date(d.dueSince).toLocaleDateString('fr-FR')}
                       </td>
+                      <td style={{ color: '#f59e0b', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        {d.daysLate} j
+                      </td>
+                      <td style={{ fontWeight: 700 }}>{dh(d.amountCents)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            <p className="dz-card-note" style={{ marginTop: 12 }}>
+              Estimation : {debtors[0] ? debtors[0].monthsLate : 0} mois entamé compte pour un mois
+              dû, au tarif en vigueur. Le club ne tient pas de facturier par membre — ce montant
+              sert à relancer, pas à comptabiliser.
+            </p>
           </section>
         )}
 
