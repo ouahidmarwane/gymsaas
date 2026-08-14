@@ -56,6 +56,8 @@ export interface Branding {
   name: string
   nameAr: string | null
   logoUrl: string | null
+  /** Banniere du club, posee par la plateforme. */
+  bannerUrl: string | null
   theme: Theme
   locale: string
 }

@@ -6,6 +6,7 @@ import { api, ApiError, type Me } from '@/lib/client'
 import EditablePage from '@/components/EditablePage'
 import PageState from '@/components/PageState'
 import SubscriptionNotice from '@/components/SubscriptionNotice'
+import ClubHero from '@/components/ClubHero'
 
 export default function DashboardPage() {
   const [me, setMe] = useState<Me | null>(null)
@@ -29,18 +30,29 @@ export default function DashboardPage() {
   // propre prenom laisse croire qu'on est chez soi. On nomme le club.
   const inSupport = me?.scope.mode === 'support'
 
+  const canEdit = ['owner', 'admin', 'staff'].includes(me?.org?.role ?? '')
+    || me?.scope.mode === 'support'
+
   return (
     <EditablePage
       page="dashboard"
       me={me}
-      title={inSupport
-        ? (me?.branding?.name ?? 'Club')
-        : <>Bonjour, <span>{firstName}</span> !</>}
-      subtitle={inSupport
-        ? 'Tableau de bord du club, vu depuis la plateforme'
-        : new Date().toLocaleDateString('fr-MA', {
-            weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-          })}
+      /* La salutation vit dans la banniere, pas dans l'en-tete de page :
+         l'afficher deux fois etait la premiere chose qu'on remarquait. */
+      hero={
+        <ClubHero
+          branding={me?.branding ?? null}
+          canEdit={canEdit}
+          greeting={inSupport
+            ? (me?.branding?.name ?? 'Club')
+            : <>Bonjour, <span>{firstName}</span> !</>}
+          subtitle={inSupport
+            ? 'Tableau de bord du club, vu depuis la plateforme'
+            : new Date().toLocaleDateString('fr-MA', {
+                weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+              })}
+        />
+      }
     >
       <PageState error={error} />
 

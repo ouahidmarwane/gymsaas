@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Trophy, Plus, X, Medal } from 'lucide-react'
+import { useDiscipline } from '@/lib/discipline'
 import { api, ApiError, type Me } from '@/lib/client'
 import PageState from '@/components/PageState'
 import EditablePage from '@/components/EditablePage'
@@ -42,20 +43,23 @@ export default function ChampionshipsPage() {
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
+  // Le vivier d'athletes suit la discipline retenue en haut : proposer un
+  // judoka pour un championnat de karate n'aurait pas de sens.
+  const { active } = useDiscipline()
 
   const load = useCallback(async () => {
     try {
       const [meData, d, m] = await Promise.all([
         api.get<Me>('/api/me'),
         api.get<{ championships: Championship[] }>('/api/championships'),
-        api.get<{ members: Member[] }>('/api/members?limit=200'),
+        api.get<{ members: Member[] }>(`/api/members?limit=200&disciplineId=${active}`),
       ])
       setMe(meData); setList(d.championships); setMembers(m.members); setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Chargement impossible')
       setList([])
     }
-  }, [])
+  }, [active])
 
   useEffect(() => { load() }, [load])
 

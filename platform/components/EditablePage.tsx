@@ -16,14 +16,17 @@ import { renderCard, type Stats } from '@/components/DashboardCards'
  * palette, enregistrement — est identique partout.
  */
 export default function EditablePage({
-  page, me, eyebrow, title, subtitle, actions, children,
+  page, me, eyebrow, title, subtitle, actions, hero, children,
 }: {
   page: string
   me: Me | null
   eyebrow?: ReactNode
-  title: ReactNode
+  /** Ignore quand `hero` est fourni : la banniere porte alors le titre. */
+  title?: ReactNode
   subtitle?: ReactNode
   actions?: ReactNode
+  /** En-tete pleine largeur, a la place du titre ordinaire. */
+  hero?: ReactNode
   children?: ReactNode
 }) {
   const [layout, setLayout] = useState<CardPlacement[] | null>(null)
@@ -84,22 +87,26 @@ export default function EditablePage({
 
   return (
     <div className="dashboard-shell">
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-                    gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 0 }}>
-          {eyebrow && <p className="section-heading" style={{ marginBottom: 6 }}>{eyebrow}</p>}
-          <h1 className="dz-hello">{title}</h1>
-          {subtitle && <p className="dz-sub">{subtitle}</p>}
+      {hero}
+
+      {(!hero || actions || (canEdit && !editing)) && (
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+                      gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0 }}>
+            {!hero && eyebrow && <p className="section-heading" style={{ marginBottom: 6 }}>{eyebrow}</p>}
+            {!hero && <h1 className="dz-hello">{title}</h1>}
+            {!hero && subtitle && <p className="dz-sub">{subtitle}</p>}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {actions}
+            {canEdit && !editing && (
+              <button className="btn-ghost" onClick={() => { setDraft(layout); setEditing(true) }}>
+                <Pencil size={15} strokeWidth={2.2} /> Modifier
+              </button>
+            )}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {actions}
-          {canEdit && !editing && (
-            <button className="btn-ghost" onClick={() => { setDraft(layout); setEditing(true) }}>
-              <Pencil size={15} strokeWidth={2.2} /> Modifier
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       <div aria-live="polite">
         {error && (

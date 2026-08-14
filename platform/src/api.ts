@@ -645,6 +645,96 @@ export const api = {
         return json({ ok: true })
       }
 
+      /**
+       * Tout ce qui reclame l'attention du club, en une reponse.
+       *
+       * Trois sources qui vivent a trois endroits : les echeances des membres
+       * (base du club), l'abonnement du club a la plateforme et les evenements
+       * de securite le concernant (plan de controle). Les fusionner ici plutot
+       * que dans le navigateur evite trois appels au montage de chaque page,
+       * et garantit que la pastille du clocheton compte la meme chose que la
+       * liste qu'elle ouvre.
+       *
+       * Rien n'est stocke : tout se deduit des dates a la lecture.
+       */
+      if (path === '/api/notifications' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        const orgId = scopedOrgId(principal)
+
+        const [memberAlerts, subscription, events] = await Promise.all([
+          clubOf(env, principal).alerts(),
+          subscriptionOf(env, orgId),
+          env.CONTROL.prepare(
+            `SELECT e.id, e.type, e.detail, e.ip, e.created_at, u.name AS user_name
+               FROM security_events e
+               LEFT JOIN users u ON u.id = e.user_id
+              WHERE e.org_id = ? AND e.handled_at IS NULL
+                AND e.created_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 days')
+              ORDER BY e.created_at DESC LIMIT 20`,
+          ).bind(orgId).all(),
+        ])
+
+        const items: Array<{
+          id: string; kind: string; severity: 'info' | 'warn' | 'danger'
+          title: string; detail: string | null; href: string | null; at: string | null
+        }> = []
+
+        // L'abonnement du club d'abord : c'est ce qui coupe tout le reste.
+        if (subscription.expired) {
+          items.push({
+            id: 'subscription', kind: 'subscription', severity: 'danger',
+            title: 'Abonnement expire',
+            detail: `Couvert jusqu'au ${subscription.expiresAt}`,
+            href: '/abonnement', at: subscription.expiresAt,
+          })
+        } else if (subscription.daysLeft !== null && subscription.daysLeft >= 0 && subscription.daysLeft <= 14) {
+          items.push({
+            id: 'subscription', kind: 'subscription', severity: 'warn',
+            title: `Abonnement a renouveler dans ${subscription.daysLeft} jour(s)`,
+            detail: subscription.dueCents > 0 ? `${Math.round(subscription.dueCents / 100)} DH a regler` : null,
+            href: '/abonnement', at: subscription.expiresAt,
+          })
+        }
+
+        for (const row of events.results) {
+          const e = row as Record<string, unknown>
+          items.push({
+            id: `sec-${e.id}`, kind: 'security',
+            severity: e.type === 'failed_burst' ? 'danger' : 'warn',
+            title: e.type === 'failed_burst'
+              ? 'Rafale d echecs de mot de passe'
+              : `Connexion depuis un nouvel appareil${e.user_name ? ` — ${e.user_name}` : ''}`,
+            detail: (e.ip as string | null) ?? null,
+            href: '/account', at: e.created_at as string,
+          })
+        }
+
+        const LABEL: Record<string, string> = {
+          sub_expired: 'Abonnement expire', sub_expiring: 'Abonnement bientot expire',
+          ins_expired: 'Assurance expiree', ins_expiring: 'Assurance bientot expiree',
+          ins_missing: 'Assurance manquante',
+        }
+        for (const a of memberAlerts) {
+          items.push({
+            id: `m-${a.memberId}-${a.kind}`, kind: 'member',
+            severity: a.kind.endsWith('_expired') || a.kind === 'ins_missing' ? 'danger' : 'warn',
+            title: `${a.name} — ${LABEL[a.kind] ?? a.kind}`,
+            detail: a.daysLeft === null ? null
+              : a.daysLeft < 0 ? `${Math.abs(a.daysLeft)} jour(s) de retard`
+              : `dans ${a.daysLeft} jour(s)`,
+            href: '/members', at: a.dueDate,
+          })
+        }
+
+        // Le plus grave d'abord : une liste triee par date enterrerait un
+        // abonnement coupe sous vingt assurances qui expirent la semaine
+        // prochaine.
+        const WEIGHT = { danger: 0, warn: 1, info: 2 }
+        items.sort((a, b) => WEIGHT[a.severity] - WEIGHT[b.severity])
+
+        return json({ items, count: items.length })
+      }
+
       // Alertes : calculees a la volee depuis les echeances, jamais stockees.
       if (path === '/api/alerts' && method === 'GET') {
         atLeast(principal, 'viewer')
@@ -890,6 +980,60 @@ export const api = {
 
       // Sert le logo. Le prefixe impose empeche de detourner cette route
       // vers les photos ou passeports des membres.
+      /**
+       * Banniere du club, posee par la plateforme.
+       *
+       * Reservee a l'exploitant : c'est une piece d'identite visuelle qu'on
+       * installe pour le client, comme la disposition des ecrans. Un club qui
+       * pourrait la remplacer casserait sa propre en-tete sans recours.
+       *
+       * Meme prefixe R2 que le logo, donc le meme proxy la sert et la meme
+       * garde de cle s'applique — aucune surface nouvelle a securiser.
+       */
+      if (path === '/api/branding/banner' && (method === 'PUT' || method === 'DELETE')) {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const orgId = scopedOrgId(principal)
+
+        const previous = await env.CONTROL.prepare(
+          'SELECT file_key FROM org_banners WHERE org_id = ?',
+        ).bind(orgId).first<{ file_key: string }>()
+
+        if (method === 'DELETE') {
+          if (previous) await env.MEDIA.delete(previous.file_key).catch(() => {})
+          await env.CONTROL.prepare('DELETE FROM org_banners WHERE org_id = ?').bind(orgId).run()
+          return json({ ok: true })
+        }
+
+        const contentType = request.headers.get('Content-Type') ?? ''
+        const ext = logoExtension(contentType)
+        // Taille verifiee avant lecture : une banniere pleine largeur invite
+        // a televerser un fichier d'appareil photo de vingt megaoctets.
+        const declared = Number(request.headers.get('Content-Length') ?? '0')
+        if (!Number.isFinite(declared) || declared > MAX_BANNER_BYTES) {
+          throw new HttpError(413, 'Banniere trop volumineuse : 4 Mo maximum')
+        }
+        const bytes = await request.arrayBuffer()
+        if (bytes.byteLength === 0) throw new HttpError(400, 'Fichier vide')
+        if (bytes.byteLength > MAX_BANNER_BYTES) {
+          throw new HttpError(413, 'Banniere trop volumineuse : 4 Mo maximum')
+        }
+
+        const key = `org-logos/${orgId}/banner-${Date.now()}.${ext}`
+        await env.MEDIA.put(key, bytes, { httpMetadata: { contentType } })
+        await env.CONTROL.prepare(
+          `INSERT INTO org_banners (org_id, file_key, updated_by) VALUES (?, ?, ?)
+           ON CONFLICT(org_id) DO UPDATE SET file_key = excluded.file_key,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+             updated_by = excluded.updated_by`,
+        ).bind(orgId, key, principal.userId).run()
+
+        // L'ancienne apres la nouvelle : si l'ecriture echoue, le club garde
+        // une banniere plutot que de se retrouver sans rien.
+        if (previous) await env.MEDIA.delete(previous.file_key).catch(() => {})
+
+        return json({ bannerUrl: `/api/branding/logo/${encodeURIComponent(key)}` })
+      }
+
       const logoRoute = path.match(/^\/api\/branding\/logo\/(.+)$/)
       if (logoRoute && method === 'GET') {
         atLeast(principal, 'viewer')
@@ -1009,10 +1153,15 @@ export const api = {
         // Number('abc') vaut NaN, qui traversait les bornes et arrivait tel
         // quel dans le LIMIT — au mieux une erreur, au pire plus de limite
         // du tout et toute la table renvoyee.
+        // Le filtre discipline vient de la barre du haut. Absent ou 'all',
+        // il ne restreint rien : un club a discipline unique ne le voit meme
+        // pas s'afficher.
+        const wanted = url.searchParams.get('disciplineId')
         const members = await club.listMembers({
           limit: intParam(url, 'limit', 50),
           offset: intParam(url, 'offset', 0),
           search: url.searchParams.get('q') ?? undefined,
+          disciplineId: wanted && wanted !== 'all' ? wanted : null,
         })
         return json({ members })
       }
@@ -2334,13 +2483,18 @@ async function signup(request: Request, env: Env, ip: string | null): Promise<Re
 // Marque -----------------------------------------------------------------------
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024
+// Plus large que le logo : une banniere pleine largeur est une vraie image.
+const MAX_BANNER_BYTES = 4 * 1024 * 1024
 
 async function brandingOf(env: Env, orgId: string) {
   const row = await env.CONTROL.prepare(
-    'SELECT name, name_ar, logo_key, theme, locale FROM organizations WHERE id = ?',
+    `SELECT o.name, o.name_ar, o.logo_key, o.theme, o.locale, b.file_key AS banner_key
+       FROM organizations o
+       LEFT JOIN org_banners b ON b.org_id = o.id
+      WHERE o.id = ?`,
   ).bind(orgId).first<{
     name: string; name_ar: string | null; logo_key: string | null
-    theme: string | null; locale: string
+    theme: string | null; locale: string; banner_key: string | null
   }>()
   if (!row) throw new HttpError(404, 'Club inconnu')
 
@@ -2349,6 +2503,7 @@ async function brandingOf(env: Env, orgId: string) {
     nameAr: row.name_ar,
     // On expose l'URL du proxy, jamais la cle brute ni une URL R2 publique.
     logoUrl: row.logo_key ? `/api/branding/logo/${encodeURIComponent(row.logo_key)}` : null,
+    bannerUrl: row.banner_key ? `/api/branding/logo/${encodeURIComponent(row.banner_key)}` : null,
     theme: readTheme(row.theme),
     locale: row.locale,
   }

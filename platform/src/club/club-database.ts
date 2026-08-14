@@ -248,7 +248,11 @@ export class ClubDatabase extends DurableObject<Env> {
 
   // Membres --------------------------------------------------------------
 
-  listMembers(opts: { limit?: number; offset?: number; search?: string } = {}) {
+  listMembers(opts: {
+    limit?: number; offset?: number; search?: string
+    /** Filtre discipline, pilote par la barre du haut. */
+    disciplineId?: string | null
+  } = {}) {
     // Bornes resistantes a NaN : Math.min(Math.max(NaN, 1), 200) vaut NaN,
     // qui atteindrait le LIMIT et le viderait de son sens.
     const clamp = (v: number | undefined, min: number, max: number, fallback: number) =>
@@ -265,20 +269,25 @@ export class ClubDatabase extends DurableObject<Env> {
        WHERE m.status != 'archived'`
 
     // Toujours des requetes parametrees : l'entree utilisateur ne rejoint
-    // jamais le texte SQL.
-    if (opts.search) {
-      const like = `%${opts.search}%`
-      return this.sql
-        .exec(
-          `${select} AND (m.name LIKE ? OR m.phone LIKE ?)
-           ORDER BY m.created_at DESC LIMIT ? OFFSET ?`,
-          like, like, limit, offset,
-        )
-        .toArray()
+    // jamais le texte SQL. Le filtre discipline s'ajoute comme condition,
+    // il ne se concatene pas.
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (opts.disciplineId) {
+      conditions.push('m.discipline_id = ?')
+      params.push(opts.disciplineId)
     }
+    if (opts.search) {
+      conditions.push('(m.name LIKE ? OR m.phone LIKE ?)')
+      params.push(`%${opts.search}%`, `%${opts.search}%`)
+    }
+    const extra = conditions.length ? ` AND ${conditions.join(' AND ')}` : ''
 
     return this.sql
-      .exec(`${select} ORDER BY m.created_at DESC LIMIT ? OFFSET ?`, limit, offset)
+      .exec(
+        `${select}${extra} ORDER BY m.created_at DESC LIMIT ? OFFSET ?`,
+        ...params, limit, offset,
+      )
       .toArray()
   }
 

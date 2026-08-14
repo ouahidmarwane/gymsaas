@@ -298,3 +298,16 @@ CREATE TABLE IF NOT EXISTS org_invoice_reminders (
   last_reminder_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   channel          TEXT
 );
+
+-- Banniere du club, affichee en tete de son tableau de bord.
+--
+-- Table separee plutot qu'une colonne sur organizations : le fichier de
+-- schema est rejoue tel quel, et SQLite n'a pas de ALTER TABLE ADD COLUMN
+-- IF NOT EXISTS. Seule la plateforme la pose — c'est une piece d'identite
+-- visuelle qu'on installe pour le client, pas un reglage de comptoir.
+CREATE TABLE IF NOT EXISTS org_banners (
+  org_id     TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+  file_key   TEXT NOT NULL,               -- cle R2, jamais une URL
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  updated_by TEXT REFERENCES users(id) ON DELETE SET NULL
+);

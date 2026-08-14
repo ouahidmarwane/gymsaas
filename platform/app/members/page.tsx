@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Search, X } from 'lucide-react'
+import { useDiscipline } from '@/lib/discipline'
 import { api, ApiError, type Me } from '@/lib/client'
 import EditablePage from '@/components/EditablePage'
 import PageState from '@/components/PageState'
@@ -25,6 +26,10 @@ interface Discipline { id: string; name: string }
 const AVATAR_COLORS = ['#2f6bff', '#4d8cff', '#9b72ff', '#7ea5ff', '#8b5cf6', '#16a34a']
 
 export default function MembersPage() {
+  // Discipline retenue dans la barre du haut. La liste se recharge quand
+  // elle change : filtrer cote serveur evite de rapatrier deux cents membres
+  // pour n'en montrer trente.
+  const { active } = useDiscipline()
   const [me, setMe] = useState<Me | null>(null)
   const [members, setMembers] = useState<Member[] | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
@@ -35,7 +40,7 @@ export default function MembersPage() {
 
   async function reload() {
     const [m, b, d] = await Promise.all([
-      api.get<{ members: Member[] }>('/api/members?limit=200'),
+      api.get<{ members: Member[] }>(`/api/members?limit=200&disciplineId=${active}`),
       api.get<{ branches: Branch[] }>('/api/branches'),
       api.get<{ disciplines: Discipline[] }>('/api/disciplines'),
     ])
@@ -46,7 +51,8 @@ export default function MembersPage() {
     Promise.all([api.get<Me>('/api/me'), reload()])
       .then(([meData]) => setMe(meData))
       .catch(e => setError(e instanceof ApiError ? e.message : 'Chargement impossible'))
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active])
 
   const canWrite = me
     ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin', 'staff'].includes(me.org?.role ?? ''))

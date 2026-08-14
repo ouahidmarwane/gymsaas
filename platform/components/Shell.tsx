@@ -9,6 +9,8 @@ import {
 } from 'lucide-react'
 import { api, ApiError, type Me, type Capabilities } from '@/lib/client'
 import { SKINS, DEFAULT_THEME } from '@/src/club/branding'
+import TopBar from '@/components/TopBar'
+import { DisciplineProvider } from '@/lib/discipline'
 
 // Coquille de l'application : le rail flottant en pilule de 78px, exactement
 // comme l'application d'origine. Les classes viennent de globals.css, repris
@@ -188,6 +190,7 @@ export default function Shell({ children }: { children: ReactNode }) {
   const logo = isOperatorView ? null : me?.branding?.logoUrl
 
   return (
+    <DisciplineProvider>
     <div className="app-shell">
       {inSupport && me && <SupportBar me={me} onLeft={() => { router.replace('/admin'); router.refresh() }} />}
 
@@ -294,8 +297,17 @@ export default function Shell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      <main className="app-main">{children}</main>
+      <main className="app-main">
+        {/* Barre du haut : filtre discipline, alertes, historique, reglages.
+            Uniquement dans un club — la plateforme n'a ni discipline ni
+            journal de club a montrer. */}
+        {me && (inSupport || me.org) && (
+          <TopBar canSeeHistory={['owner', 'admin'].includes(me.org?.role ?? '') || inSupport} />
+        )}
+        {children}
+      </main>
     </div>
+    </DisciplineProvider>
   )
 }
 
