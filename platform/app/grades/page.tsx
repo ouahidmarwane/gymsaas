@@ -72,7 +72,16 @@ interface Overview {
   distribution: Array<{ label: string; color: string | null; count: number }>
   disciplines: Array<{ id: string; name: string }>
   ladders: Record<string, Level[]>
-  stats: { pending: number; passed: number; failed: number; successRate: number | null }
+  stats: {
+    pending: number
+    /** Convoqués pour LA session affichée, pas toutes dates confondues. */
+    pendingForSession: number
+    passed: number
+    failed: number
+    /** Passages déjà jugés : le dénominateur du taux. */
+    decided: number
+    successRate: number | null
+  }
 }
 
 const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin',
@@ -190,13 +199,17 @@ export default function GradesPage() {
           </div>
         </section>
 
+        {/* Un chiffre, une mesure, et la mesure est écrite dessous.
+            « Convoqués / réussis » mêlait les convocations d'une session aux
+            réussites de tout l'historique : la barre oblique laissait croire
+            à un rapport entre les deux. */}
         <section className="dz-card grade-kpi">
           <span className="grade-kpi-icon"><Award size={18} strokeWidth={2.1} /></span>
           <div style={{ minWidth: 0 }}>
-            <div className="grade-kpi-value">
-              {data ? `${data.stats.pending} / ${data.stats.passed}` : '—'}
+            <div className="grade-kpi-value">{data ? data.stats.pendingForSession : '—'}</div>
+            <div className="grade-kpi-label">
+              {data ? `convoqués pour le ${day(sessionDate)}` : 'Convoqués'}
             </div>
-            <div className="grade-kpi-label">Convoqués / réussis</div>
           </div>
         </section>
 
@@ -206,9 +219,15 @@ export default function GradesPage() {
             <div className="grade-kpi-value">
               {/* Aucun résultat, aucun taux : « 0 % » se lirait comme un échec
                   complet alors que rien n'a encore eu lieu. */}
-              {data?.stats.successRate === null || !data ? '—' : `${data.stats.successRate} %`}
+              {!data || data.stats.successRate === null ? '—' : `${data.stats.successRate} %`}
             </div>
-            <div className="grade-kpi-label">Taux de réussite</div>
+            <div className="grade-kpi-label">
+              {/* Le dénominateur est écrit : un taux sans son assiette ne
+                  veut rien dire. */}
+              {data && data.stats.decided > 0
+                ? `de réussite sur ${data.stats.decided} passage${data.stats.decided > 1 ? 's' : ''}`
+                : 'aucun passage jugé'}
+            </div>
           </div>
         </section>
       </div>
@@ -226,15 +245,50 @@ export default function GradesPage() {
               cycle de 3 mois · ancré en {MONTHS[data.anchorMonth - 1]}
             </span>
           </div>
-          <GradeCalendar
-            anchorMonth={data.anchorMonth}
-            selected={sessionDate.slice(0, 10)}
-            today={new Date().toISOString().slice(0, 10)}
-            sessions={data.sessions.map(s => ({
-              date: s.scheduled_date, status: s.status, name: s.member_name,
-            }))}
-            onPick={d => setDate(d)}
-          />
+          <div className="gcal-split">
+            <GradeCalendar
+              anchorMonth={data.anchorMonth}
+              selected={sessionDate.slice(0, 10)}
+              today={new Date().toISOString().slice(0, 10)}
+              sessions={data.sessions.map(s => ({
+                date: s.scheduled_date, status: s.status, name: s.member_name,
+              }))}
+              onPick={d => setDate(d)}
+            />
+
+            {/* Ce que porte le jour choisi. Sans ce panneau, le calendrier ne
+                serait qu'un decor : on verrait qu'un jour est marque sans
+                pouvoir savoir par qui. */}
+            <div>
+              <div className="gcal-day-title">{longDay(sessionDate)}</div>
+              {(() => {
+                const onDay = data.sessions.filter(
+                  s => s.scheduled_date.slice(0, 10) === sessionDate.slice(0, 10))
+                if (onDay.length === 0) {
+                  return (
+                    <p className="gcal-day-empty">
+                      Aucun passage ce jour-là. Convoquez depuis la liste des éligibles :
+                      elle est calculée pour cette date.
+                    </p>
+                  )
+                }
+                return (
+                  <div className="gcal-day-list">
+                    {onDay.map(s => (
+                      <div key={s.id} className="gcal-day-row">
+                        <span className={`gcal-dot ${s.status}`} aria-hidden="true" />
+                        <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden',
+                                       textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {s.member_name}
+                        </span>
+                        <BeltChip label={s.to_label ?? 'niveau suivant'} color={s.to_color} />
+                      </div>
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
         </section>
       )}
 

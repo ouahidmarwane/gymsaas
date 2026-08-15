@@ -1385,7 +1385,15 @@ export class ClubDatabase extends DurableObject<Env> {
     distribution: Array<{ label: string; color: string | null; count: number }>
     disciplines: Array<Record<string, unknown>>
     ladders: Record<string, Array<{ id: string; label: string; color: string | null; rank: number }>>
-    stats: { pending: number; passed: number; failed: number; successRate: number | null }
+    stats: {
+      pending: number
+      /** Convoques pour LA session affichee, pas toutes dates confondues. */
+      pendingForSession: number
+      passed: number
+      failed: number
+      decided: number
+      successRate: number | null
+    }
   } {
     const anchorMonth = this.gradeAnchorMonth()
     const nextSessionDate = nextGradeDate(anchorMonth, opts.today)
@@ -1417,8 +1425,20 @@ export class ClubDatabase extends DurableObject<Env> {
       ladders: this.gradeLadders(),
       stats: {
         pending: filtered.filter(s => s.status === 'pending').length,
+        // Deux mesures differentes, et les melanger etait une erreur : le
+        // nombre de convoques n'a de sens que rapporte a UNE session, alors
+        // que le taux de reussite se lit sur tout l'historique. Affiches
+        // ensemble derriere une barre oblique, ils laissaient croire a un
+        // rapport entre eux — « 1 / 0 » ressemblait a un score.
+        // String() : les colonnes remontent typees en valeur SQLite generique,
+        // et une date y est une chaine ou rien.
+        pendingForSession: filtered.filter(
+          s => s.status === 'pending'
+            && String(s.scheduled_date ?? '').slice(0, 10) === sessionDate.slice(0, 10),
+        ).length,
         passed,
         failed,
+        decided,
         // Aucun resultat, aucun taux : « 0 % » se lirait comme un echec
         // complet alors que rien n'a encore eu lieu.
         successRate: decided > 0 ? Math.round((passed / decided) * 100) : null,
