@@ -45,6 +45,12 @@
   /* Elements flottants : palette d'edition, barre d'outils, menus. */
   --float-bg: rgba(11,15,26,0.96);
   --float-border: rgba(255,255,255,0.1);
+  /* Voile derriere une fenetre modale.
+     Un jeton a lui seul, et non une teinte calculee depuis la couleur de
+     fond : un voile assombrit toujours, y compris sur un habillage clair
+     ou le fond est un blanc casse. Le calculer aurait donne un voile blanc
+     sur fond blanc, et la modale aurait flotte sans rien detacher. */
+  --scrim: rgba(6, 9, 16, 0.62);
   /* Le vert de l'argent encaisse. Un vert clair sur fond clair ne se lit
      pas : il descend d'un cran avec la base. */
   --positive: #4ade80;
@@ -97,6 +103,9 @@ html[data-theme='light'] {
   --grid-line: rgba(15,23,42,0.05);
   --float-bg: rgba(255,255,255,0.97);
   --float-border: rgba(15,23,42,0.12);
+  /* Meme en mode clair le voile assombrit : c'est ce qui detache la modale
+     de la page. Plus leger qu'en sombre, la page etant deja claire. */
+  --scrim: rgba(15, 23, 42, 0.42);
   --positive: #15803d;
   --positive-ink: #166534;
 }
@@ -2156,16 +2165,18 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 /* Price modal */
 .compta-modal-overlay {
   position: fixed; inset: 0; z-index: 200;
-  background: rgba(0,0,0,0.65);
+  /* La teinte vient de l'habillage, jamais d'un noir ecrit en dur : sur
+     « chaleureux » un voile neutre eteignait le beige de la page. */
+  background: var(--scrim);
   display: flex; align-items: center; justify-content: center;
   /* Sur un ecran bas, centrer une modale plus haute que la fenetre coupe le
      haut ET le bas. Le padding lui laisse une marge, et le defilement de
      l'overlay rattrape ce qui deborde encore. */
   padding: 1rem;
   overflow-y: auto;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  animation: fadeIn 0.18s ease forwards;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: scrimIn 260ms ease both;
 }
 /* ─── Ouverture et fermeture des modales ────────────────────────
    La carte grandit depuis le point clique — le point d'origine est pose en
@@ -2173,59 +2184,89 @@ html:not([data-theme='light']) .member-row .text-red-600 {
    plus courte que l'entree : on attend une fenetre qui s'ouvre, on n'attend
    pas une fenetre qui part. */
 /*
-  Un zoom lent, et rien d'autre.
+  La mise au point.
 
-  La carte grandit de 0,90 a 1 sur une courbe qui ralentit franchement en
-  fin de course : le mouvement se voit au debut, se pose a la fin. Aucune
-  rotation, aucun rayon anime, aucun flou — le texte ne traverse donc aucune
-  taille intermediaire ou il scintillerait.
+  La carte arrive floue et legerement trop grande, puis se resserre et se
+  nette — le geste d'un objectif qui accroche son sujet. Elle repart par le
+  meme chemin, deux fois plus vite : on attend une fenetre qui s'ouvre, on
+  n'attend pas une fenetre qui part.
+
+  Ecrit une seule fois ici, pour les quatorze modales. Aucune n'a le droit
+  de redefinir ces valeurs chez elle : c'est ainsi qu'une application garde
+  un seul geste, et non quatorze variantes qui divergent au premier reglage.
+
+  Trois proprietes, toutes composees par le GPU : opacite, filtre, echelle.
+  Aucune ne declenche de recalcul de mise en page.
 */
 @keyframes modalGrow {
-  from { opacity: 0; transform: scale(0.9); }
-  to   { opacity: 1; transform: none; }
+  from { opacity: 0; filter: blur(10px); transform: scale(1.04); }
+  to   { opacity: 1; filter: blur(0);    transform: scale(1); }
 }
 
-/* Elle se referme deux fois plus vite : on attend une fenetre qui s'ouvre,
-   on n'attend pas une fenetre qui part. */
 @keyframes modalFold {
-  from { opacity: 1; transform: none; }
-  to   { opacity: 0; transform: scale(0.94); }
+  from { opacity: 1; filter: blur(0);    transform: scale(1); }
+  to   { opacity: 0; filter: blur(10px); transform: scale(1.04); }
 }
-@keyframes overlayOut {
+/* Le voile : il s'assombrit et floute la page en meme temps que la carte se
+   nette. Sa teinte vient du jeton --scrim, redefini par chaque habillage. */
+@keyframes scrimIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes scrimOut {
   from { opacity: 1; }
   to   { opacity: 0; }
 }
 
-.compta-modal-overlay.is-closing,
-.docview-overlay.is-closing {
-  /* Le voile part un peu apres la carte : elle doit avoir fini de se
-     replier quand le fond disparait, pas l'inverse. */
-  animation: overlayOut 0.22s ease forwards;
-  /* Le fond ne se reclique pas pendant qu'il s'en va. */
-  pointer-events: none;
+/* Les trois familles de carte, en un seul endroit. `both` retient la
+   premiere image avant le depart : sans lui la carte apparait nette et a sa
+   taille pendant une image, puis saute au flou. */
+.compta-modal,
+.compta-expand-modal,
+.docview {
+  /* L'echelle se resserre sur une courbe qui freine en fin de course ;
+     l'opacite et le flou suivent en `ease`, sans quoi la nettete arrive
+     avant que la carte ait fini de se poser. */
+  animation: modalGrow 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .compta-modal-overlay.is-closing .compta-modal,
 .compta-modal-overlay.is-closing .compta-expand-modal,
 .docview-overlay.is-closing .docview {
-  animation: modalFold 0.22s cubic-bezier(0.4, 0, 1, 1) both;
+  animation: modalFold 170ms ease both;
 }
 
-.compta-expand-modal {
-  animation: modalGrow 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+.compta-modal-overlay.is-closing,
+.docview-overlay.is-closing {
+  animation: scrimOut 170ms ease forwards;
+  /* Le fond ne se reclique pas pendant qu'il s'en va. */
+  pointer-events: none;
 }
 
+/*
+  Moins de mouvement : ni flou ni zoom, un fondu de 120 ms et rien d'autre.
+  Le flou est precisement ce qui gene ici — il rend le texte illisible le
+  temps de l'animation, ce qu'on demande justement a eviter.
+*/
 @media (prefers-reduced-motion: reduce) {
   .compta-modal, .compta-expand-modal, .docview,
-  .compta-modal-overlay, .compta-modal-overlay.is-closing,
-  .docview-overlay, .docview-overlay.is-closing,
   .compta-modal-overlay.is-closing .compta-modal,
   .compta-modal-overlay.is-closing .compta-expand-modal,
-  .docview-overlay.is-closing .docview { animation: none; }
+  .docview-overlay.is-closing .docview {
+    filter: none;
+    transform: none;
+    animation: scrimIn 120ms ease both;
+  }
+  .compta-modal-overlay.is-closing .compta-modal,
+  .compta-modal-overlay.is-closing .compta-expand-modal,
+  .docview-overlay.is-closing .docview { animation: scrimOut 120ms ease both; }
+
+  .compta-modal-overlay, .docview-overlay { animation: scrimIn 120ms ease both; }
+  .compta-modal-overlay.is-closing,
+  .docview-overlay.is-closing { animation: scrimOut 120ms ease forwards; }
 }
 
 .compta-modal {
-  animation: modalGrow 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
   background: var(--float-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -5644,6 +5685,8 @@ html[data-skin='chaleureux'] {
   --grid-line: rgba(120,72,36,0.07);
   --float-bg: rgba(255,248,239,0.97);
   --float-border: rgba(120,72,36,0.2);
+  /* Brun chaud plutot que noir : un voile neutre eteignait le beige. */
+  --scrim: rgba(58, 32, 12, 0.48);
   --positive: #15803d;
   --positive-ink: #14532d;
   /* La braise : le beige seul serait fade, le degrade de feu porte la
@@ -5673,6 +5716,7 @@ html[data-skin='sport'] {
   --grid-line: rgba(134,239,172,0.06);
   --float-bg: rgba(7,18,12,0.96);
   --float-border: rgba(134,239,172,0.18);
+  --scrim: rgba(3, 14, 8, 0.62);
   --positive: #4ade80;
   --positive-ink: #86efac;
   /* Les couloirs d'une piste, en diagonale et a peine visibles : la texture
@@ -5702,6 +5746,7 @@ html[data-skin='tatami'] {
   --grid-line: rgba(212,175,120,0.07);
   --float-bg: rgba(19,16,14,0.96);
   --float-border: rgba(212,175,120,0.2);
+  --scrim: rgba(12, 9, 6, 0.62);
   --positive: #4ade80;
   --positive-ink: #a7f3d0;
   /* Le tressage d'un tatami : deux trames croisees au pas de neuf pixels,
@@ -6043,10 +6088,12 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 .docview-overlay {
   position: fixed; inset: 0; z-index: 500;
   display: grid; place-items: center; padding: 1.5rem;
-  background: rgba(3, 6, 12, 0.72);
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
-  animation: fadeIn 0.16s ease forwards;
+  /* Plus appuye que le voile ordinaire : celui-ci se pose par-dessus une
+     fiche deja ouverte, et le document doit rester la seule chose nette. */
+  background: var(--scrim);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  animation: scrimIn 260ms ease both;
 }
 .docview {
   /* La boite epouse ce qu'elle montre. A largeur fixe, un portrait vertical
@@ -6061,7 +6108,8 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   border: 1px solid var(--overlay-strong);
   border-radius: 20px; overflow: hidden;
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.6);
-  animation: modalGrow 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* L'animation vient de la regle partagee, plus haut. Une seconde
+     declaration ici la ferait diverger au premier reglage. */
 }
 .docview-bar {
   display: flex; align-items: center; gap: 1rem;

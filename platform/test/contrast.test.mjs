@@ -13,7 +13,18 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
+/**
+ * La feuille, commentaires retires.
+ *
+ * Sans cela, une phrase de commentaire mentionnant « --bg : » etait lue
+ * comme une declaration : le lecteur prenait le texte du commentaire pour la
+ * valeur du jeton, ecrasait la vraie, et le test echouait en accusant une
+ * couleur illisible. La cause etait a trois cents lignes de la, dans une
+ * phrase en francais. Un lecteur naif de CSS doit au moins ignorer ce que
+ * CSS lui-meme ignore.
+ */
 const CSS = readFileSync(fileURLToPath(new URL('../app/globals.css', import.meta.url)), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
 
 /** Bloc qui DEFINIT la palette — pas le premier portant ce selecteur. */
 function block(selector, from = 0) {

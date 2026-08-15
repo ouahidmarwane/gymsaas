@@ -37,10 +37,10 @@ if (typeof document !== 'undefined') {
 const POINTER_TTL_MS = 1500
 
 /**
- * Duree du repliement, en accord avec `modalFold` dans la feuille de style.
+ * Duree de la sortie, en accord avec `modalFold` dans la feuille de style.
  * Plus court ici, et le demontage couperait l'animation en plein vol.
  */
-const FOLD_MS = 220
+const FOLD_MS = 170
 
 export function useModalMotion(onClose: () => void, ms = FOLD_MS) {
   const [closing, setClosing] = useState(false)
