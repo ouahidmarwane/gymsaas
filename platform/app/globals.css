@@ -5862,6 +5862,10 @@ html[data-theme='light'] .row-menu {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px;
 }
 .grade-arrow { color: var(--muted); font-size: 0.8rem; }
+.grade-note {
+  margin-top: 4px; font-size: 0.74rem; font-style: italic; color: var(--muted);
+  overflow-wrap: anywhere;
+}
 
 /* La pastille de ceinture. Le point porte la vraie couleur du grade ; le
    texte reste au jeton du theme, sinon un blanc casse disparaitrait en mode
@@ -5928,6 +5932,52 @@ html:not([data-theme='light']) .grade-count.late { color: #fbbf24; }
    blanc et brule sur un fond noir. */
 .grade-warn { color: #b45309; }
 html:not([data-theme='light']) .grade-warn { color: #f59e0b; }
+
+/* ── Convocation posée à la main ── */
+.gsm-label { font-size: 0.76rem; font-weight: 600; color: var(--muted); }
+.gsm-people {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 220px; overflow: auto;
+  padding: 4px; border-radius: 14px;
+  background: var(--overlay-soft); border: 1px solid var(--hairline);
+}
+.gsm-person {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 0.45rem 0.7rem; border-radius: 10px; cursor: pointer;
+  background: none; border: 1px solid transparent; color: var(--text);
+  font-size: 0.82rem; text-align: start;
+  transition: background 0.14s;
+}
+.gsm-person:hover { background: var(--overlay); }
+.gsm-person.on {
+  background: color-mix(in srgb, var(--gold) 16%, transparent);
+  border-color: color-mix(in srgb, var(--gold) 40%, transparent);
+  font-weight: 700;
+}
+.gsm-person-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gsm-person-belt {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  font-size: 0.7rem; color: var(--muted);
+}
+.gsm-flag {
+  flex: none; padding: 0.1rem 0.45rem; border-radius: 999px;
+  font-size: 0.62rem; font-weight: 700;
+  background: rgba(245, 158, 11, 0.16); color: #b45309;
+}
+html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
+
+.gsm-warn {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 0.7rem 0.85rem; border-radius: 14px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  font-size: 0.78rem; line-height: 1.45;
+}
+
+@media (prefers-reduced-motion: reduce) { .gsm-person { transition: none; } }
 
 /* ── Calendrier des passages ──
    Accent du club sur les jours de cycle et le jour choisi ; vert et rouge de

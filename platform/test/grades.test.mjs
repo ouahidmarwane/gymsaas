@@ -204,6 +204,66 @@ test('la ceinture visee doit appartenir a l echelle de la discipline', async () 
   assert.ok(res.status >= 400, `statut inattendu : ${res.status}`)
 })
 
+// 4 — Convocation manuelle -------------------------------------------------
+
+test('un membre hors des regles se convoque a la main, avec son motif', async () => {
+  const s = uniq()
+  // Inscrit hier : la regle des trois mois l'exclut de tous les eligibles.
+  const m = await club.call('POST', '/api/members', {
+    name: `Transfert ${s}`, phone: `0638${s.slice(0, 6)}`,
+    disciplineId, joinDate: inDays(-1), subExpiry: inDays(300),
+  })
+  const id = m.data.id
+
+  const view = await club.call('GET', '/api/grades')
+  assert.ok(!view.data.eligible.some(e => e.id === id),
+    'inscrit hier : il ne doit pas etre dans les eligibles')
+
+  // Mais il doit etre convocable a la main : la regle est un defaut, pas une
+  // loi — celui-ci arrive d'un autre club avec son grade.
+  const list = await club.call('GET', '/api/grades/schedulable')
+  const row = list.data.members.find(p => p.id === id)
+  assert.ok(row, 'il doit apparaitre dans les convocables')
+  assert.equal(row.senior_ok, 0, 'et etre signale comme hors des regles')
+  assert.equal(row.sub_ok, 1)
+
+  const conv = await club.call('POST', '/api/grades/sessions', {
+    memberId: id, scheduledDate: inDays(0), toGradeId: ladder[1].id,
+    notes: 'Arrive du club voisin, ceinture deja acquise',
+  })
+  assert.equal(conv.status, 201, JSON.stringify(conv.data))
+
+  const after = await club.call('GET', '/api/grades')
+  const sess = after.data.sessions.find(x => x.id === conv.data.id)
+  assert.match(sess.notes, /club voisin/, 'le motif doit rester attache au passage')
+
+  // Et il doit survivre a la decision : sans commentaire de jugement, la
+  // raison de la convocation est la seule trace expliquant l'exception.
+  assert.equal((await club.call('POST', `/api/grades/sessions/${conv.data.id}/decision`,
+    { passed: true })).status, 200)
+  const done = await club.call('GET', '/api/grades')
+  const hist = done.data.sessions.find(x => x.id === conv.data.id)
+  assert.match(hist.notes, /club voisin/,
+    'une decision sans commentaire ne doit pas effacer le motif')
+  assert.equal(hist.status, 'passed')
+})
+
+test('un membre deja convoque ne l est pas deux fois', async () => {
+  const s = uniq()
+  const m = await club.call('POST', '/api/members', {
+    name: `Double ${s}`, phone: `0639${s.slice(0, 6)}`,
+    disciplineId, joinDate: monthsAgo(10), subExpiry: inDays(300),
+  })
+  const id = m.data.id
+  assert.equal((await club.call('POST', '/api/grades/sessions', {
+    memberId: id, scheduledDate: inDays(30), toGradeId: ladder[0].id,
+  })).status, 201)
+
+  const list = await club.call('GET', '/api/grades/schedulable')
+  assert.ok(!list.data.members.some(p => p.id === id),
+    'une convocation en attente tient la place, meme pour la saisie manuelle')
+})
+
 test('le mois d ancrage se regle et deplace la grille', async () => {
   assert.equal((await club.call('PUT', '/api/grades/settings', { anchorMonth: 1 })).status, 200)
   const view = await club.call('GET', '/api/grades')

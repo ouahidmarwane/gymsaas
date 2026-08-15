@@ -10,6 +10,7 @@ import PageState from '@/components/PageState'
 import EditablePage from '@/components/EditablePage'
 import SlidingTabs from '@/components/SlidingTabs'
 import GradeCalendar from '@/components/GradeCalendar'
+import GradeScheduleModal from '@/components/GradeScheduleModal'
 
 /*
   Ecran unique des passages de grade.
@@ -45,6 +46,8 @@ interface Session {
   to_label: string | null
   to_color: string | null
   discipline_id: string | null
+  /** Motif, quand la convocation a ete posee hors des regles. */
+  notes: string | null
 }
 
 interface Candidate {
@@ -107,6 +110,8 @@ export default function GradesPage() {
   const [busy, setBusy] = useState<string | null>(null)
   /** Ceinture visee choisie a la main, par membre. */
   const [target, setTarget] = useState<Record<string, string>>({})
+  const [scheduling, setScheduling] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -172,8 +177,24 @@ export default function GradesPage() {
       me={me}
       title="Passage de grade"
       subtitle={data ? `${data.stats.pending} passage${data.stats.pending > 1 ? 's' : ''} programmé${data.stats.pending > 1 ? 's' : ''}` : 'Chargement…'}
+      actions={canWrite && data ? (
+        <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
+                onClick={() => setScheduling(true)}>
+          <CalendarPlus size={16} strokeWidth={2.3} /> Programmer un passage
+        </button>
+      ) : undefined}
     >
       <PageState error={error} onRetry={load} />
+
+      <div aria-live="polite">
+        {notice && !error && (
+          <p role="status" style={{
+            padding: '0.7rem 1rem', borderRadius: 14,
+            background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)',
+            color: '#6ee7b7', fontSize: '0.85rem', fontWeight: 600,
+          }}>{notice}</p>
+        )}
+      </div>
 
       {/* Filtre discipline : seulement celles que le club a configurées. */}
       {(data?.disciplines.length ?? 0) > 1 && (
@@ -342,6 +363,9 @@ export default function GradesPage() {
                     <BeltChip label={s.to_label ?? 'niveau suivant'} color={s.to_color} />
                     <span className="dz-card-note">· {day(s.scheduled_date)}</span>
                   </div>
+                  {/* Le motif reste visible : c'est ce qui distingue un
+                      passage accorde par exception d'un passage ordinaire. */}
+                  {s.notes && <div className="grade-note">« {s.notes} »</div>}
                 </div>
 
                 <span className={`grade-count${d < 0 ? ' late' : ''}`}>
@@ -512,6 +536,18 @@ export default function GradesPage() {
             })}
           </div>
         </section>
+      )}
+
+      {scheduling && (
+        <GradeScheduleModal
+          defaultDate={sessionDate.slice(0, 10)}
+          onClose={() => setScheduling(false)}
+          onDone={async name => {
+            setScheduling(false)
+            await load()
+            setNotice(`${name} est convoqué.`)
+          }}
+        />
       )}
 
       {/* ── Historique ── */}

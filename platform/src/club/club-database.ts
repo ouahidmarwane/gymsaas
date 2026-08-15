@@ -1284,10 +1284,57 @@ export class ClubDatabase extends DurableObject<Env> {
     return out
   }
 
+  /**
+   * Tous les membres qu'on peut convoquer a la main.
+   *
+   * La liste des eligibles applique la regle des trois mois ; celle-ci ne
+   * l'applique pas. Elle existe parce que la regle est un defaut, pas une
+   * loi : un membre arrive d'un autre club avec son grade, un rattrapage
+   * apres blessure, une promotion exceptionnelle decidee par l'instructeur.
+   *
+   * `eligible` accompagne chaque ligne pour que l'interface puisse dire
+   * franchement « celui-ci sort des regles habituelles » au lieu de laisser
+   * croire que tout se vaut.
+   */
+  gradeSchedulable(sessionDate: string) {
+    return this.sql.exec(
+      `SELECT m.id, m.name, m.discipline_id, d.name AS discipline_name,
+              g.label AS current_label, g.color AS current_color,
+              n.id AS next_id, n.label AS next_label, n.color AS next_color,
+              (m.sub_expiry IS NULL OR m.sub_expiry >= ?1) AS sub_ok,
+              (COALESCE(
+                 (SELECT MAX(s.scheduled_date) FROM grade_sessions s
+                   WHERE s.member_id = m.id AND s.status IN ('passed','failed')),
+                 m.join_date
+               ) <= date(?1, '-${CYCLE_MONTHS} months')) AS senior_ok
+         FROM members m
+         JOIN disciplines d ON d.id = m.discipline_id AND d.has_grading = 1
+         LEFT JOIN grade_levels g ON g.id = m.grade_id
+         LEFT JOIN grade_levels n
+                ON n.discipline_id = m.discipline_id
+               AND n.rank = (
+                     SELECT MIN(rank) FROM grade_levels
+                      WHERE discipline_id = m.discipline_id
+                        AND rank > COALESCE(g.rank, -1)
+                   )
+        WHERE m.status = 'active'
+          -- Deja convoque : on ne convoque pas deux fois, meme a la main.
+          AND NOT EXISTS (
+            SELECT 1 FROM grade_sessions s
+             WHERE s.member_id = m.id AND s.status = 'pending'
+          )
+        ORDER BY m.name
+        LIMIT 500`,
+      sessionDate,
+    ).toArray()
+  }
+
   createGradeSession(input: {
     memberId: string; scheduledDate: string
     /** Choix de l'instructeur. Absent, la suivante de l'echelle s'applique. */
     toGradeId?: string | null
+    /** Motif, quand le passage sort des regles habituelles. */
+    notes?: string | null
     actorId?: string; actorName?: string
   }): { id: string } {
     const id = crypto.randomUUID()
@@ -1320,12 +1367,13 @@ export class ClubDatabase extends DurableObject<Env> {
 
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        `INSERT INTO grade_sessions (id, member_id, from_grade_id, to_grade_id, scheduled_date)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO grade_sessions (id, member_id, from_grade_id, to_grade_id, scheduled_date, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
         // La ceinture actuelle est FIGEE ici : elle raconte d'ou partait le
         // membre le jour de la convocation. Relue plus tard depuis sa fiche,
         // elle aurait deja avance et la ligne d'historique serait fausse.
         id, input.memberId, member.grade_id, target, input.scheduledDate,
+        input.notes ?? null,
       )
       this.sql.exec(
         `INSERT INTO audit_logs (action, entity, entity_id, entity_name, actor_id, actor_name)
@@ -1347,8 +1395,11 @@ export class ClubDatabase extends DurableObject<Env> {
 
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
+        // COALESCE sur les notes : une decision sans commentaire ne doit pas
+        // effacer le motif ecrit a la convocation. C'est souvent la seule
+        // trace expliquant pourquoi ce passage a ete accorde hors des regles.
         `UPDATE grade_sessions
-            SET status = ?, notes = ?, decided_at = ${NOW}, decided_by = ?
+            SET status = ?, notes = COALESCE(?, notes), decided_at = ${NOW}, decided_by = ?
           WHERE id = ?`,
         input.passed ? 'passed' : 'failed', input.notes ?? null,
         input.actorId ?? null, input.sessionId,

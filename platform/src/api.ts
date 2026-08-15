@@ -685,9 +685,35 @@ export const api = {
           // Le choix de l'instructeur, verifie cote base contre l'echelle de
           // la discipline du membre.
           toGradeId: optional(body.toGradeId, 60),
+          // Motif, quand la convocation est posee a la main hors des regles.
+          notes: optional(body.notes, 500),
           actorId: principal.userId, actorName: principal.name,
         })
         return json({ id }, { status: 201 })
+      }
+
+      /**
+       * Qui peut etre convoque a la main.
+       *
+       * Distincte de la liste des eligibles : celle-ci n'applique pas la
+       * regle des trois mois. La regle est un defaut de bon sens, pas une
+       * loi — un membre venu d'un autre club avec son grade, un rattrapage
+       * apres blessure, une promotion decidee par l'instructeur.
+       *
+       * Chaque ligne dit si elle respecte les regles, pour que l'ecran
+       * puisse le signaler au lieu de laisser croire que tout se vaut.
+       */
+      if (path === '/api/grades/schedulable' && method === 'GET') {
+        atLeast(principal, 'staff', true)
+        const club = clubOf(env, principal)
+        const { hasGrading } = await club.capabilities()
+        if (!hasGrading) return fail(409, 'Aucune discipline gradee dans ce club')
+        const when = dateOnly(url.searchParams.get('date'), 'date')
+          ?? new Date().toISOString().slice(0, 10)
+        return json({
+          members: await club.gradeSchedulable(when),
+          ladders: await club.gradeLadders(),
+        })
       }
 
       const gradeDecide = path.match(/^\/api\/grades\/sessions\/([^/]+)\/decision$/)
