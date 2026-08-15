@@ -78,6 +78,50 @@ test('les cinq habillages sont declares', () => {
   }
 })
 
+/**
+ * Une surface ne se peint pas en fonction du MODE.
+ *
+ * Le tableau des membres portait deux couleurs ecrites en dur : un bleu
+ * clair sous `data-theme='light'`, un bleu nuit sous
+ * `:not([data-theme='light'])`. Mais « pas clair » regroupe quatre
+ * habillages aux palettes distinctes, qui recevaient donc tous le meme bleu
+ * marine — le beige de « chaleureux » et le vert de « sport » s'arretaient
+ * au bord du tableau.
+ *
+ * Le mode dit s'il fait clair ou sombre ; l'habillage dit quelle couleur.
+ * Une surface se peint donc en jetons, jamais en litteral sous un selecteur
+ * de mode. Ce test garde les classes vivantes de l'ecran des membres.
+ */
+test('les surfaces de l ecran membres ne sont pas peintes par mode', () => {
+  const GUARDED = [
+    'members-page-table', 'members-page-table-head', 'members-row',
+    'members-search-input', 'mdet-', 'docview',
+  ]
+
+  const offenders = []
+  // Un bloc = tout ce qui precede une accolade fermante, selecteur compris.
+  for (const chunk of CSS.split('}')) {
+    const open = chunk.lastIndexOf('{')
+    if (open === -1) continue
+    const selector = chunk.slice(0, open)
+    const body = chunk.slice(open + 1)
+
+    if (!selector.includes('data-theme')) continue
+    if (!GUARDED.some(cls => selector.includes(cls))) continue
+
+    for (const m of body.matchAll(/(?:^|[;\s])(background|background-color)\s*:\s*([^;]+)/g)) {
+      const value = m[2].trim()
+      // `none`, `transparent` et `inherit` ne portent pas de couleur.
+      if (/^(none|transparent|inherit|initial|unset)\b/.test(value)) continue
+      if (value.includes('var(')) continue
+      offenders.push(`${selector.trim().split('\n').pop().trim()} → ${value}`)
+    }
+  }
+
+  assert.deepEqual(offenders, [],
+    `Couleur ecrite en dur sous un selecteur de mode :\n  ${offenders.join('\n  ')}`)
+})
+
 test('aucun jeton ne se refere a lui-meme', () => {
   // Une passe de remplacement automatique a deja transforme
   // « --card-border: rgba(...) » en « --card-border: var(--card-border) ».

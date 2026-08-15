@@ -315,16 +315,17 @@ html[data-theme='light'] .history-item:hover  { background: rgba(15,23,42,0.03) 
 html[data-theme='light'] .members-table-count { color: #475569 !important; }
 
 /* ── members-row in light mode ── */
+/* Meme correction que pour le tableau : le blanc pur ecrasait le beige d'un
+   habillage chaleureux en mode clair. Les jetons portent la couleur, la
+   regle ne garde que ce qui la concerne — couper l'animation d'entree. */
 html[data-theme='light'] .members-row {
   animation: none !important;
   opacity: 1 !important;
   transform: none !important;
-  background: #ffffff !important;
-  border-bottom: 1px solid rgba(15,23,42,0.06) !important;
-  color: #0f172a !important;
+  border-bottom: 1px solid var(--hairline) !important;
+  color: var(--text) !important;
 }
 html[data-theme='light'] .members-row:hover {
-  background: #f8fafc !important;
   transform: none !important;
 }
 html[data-theme='light'] .members-row td .text-slate-200,
@@ -334,18 +335,20 @@ html[data-theme='light'] .members-row td .text-slate-500 {
   color: #475569 !important;
 }
 html[data-theme='light'] .members-row button.text-white:not([class*="bg-emerald"]):not([class*="bg-red"]):not([class*="bg-violet"]):not([class*="bg-blue"]) {
-  color: #334155 !important;
-  background: rgba(15,23,42,0.06) !important;
+  color: var(--text) !important;
+  background: var(--overlay) !important;
 }
 
-/* ── Search & filter inputs ── */
+/* ── Search & filter inputs ──
+   En jetons pour la meme raison : en mode clair, un habillage chaleureux
+   doit avoir un champ creme, pas un champ blanc pose sur du beige. */
 html[data-theme='light'] .members-search-input,
 html[data-theme='light'] .members-filter-select {
-  background: #ffffff !important;
-  color: #0f172a !important;
-  border-color: rgba(15,23,42,0.15) !important;
+  background: var(--card-bg) !important;
+  color: var(--text) !important;
+  border-color: var(--card-border) !important;
 }
-html[data-theme='light'] .members-search-input::placeholder { color: #94a3b8 !important; }
+html[data-theme='light'] .members-search-input::placeholder { color: var(--muted) !important; }
 
 html:not([data-theme='light']) .members-table,
 html:not([data-theme='light']) .members-table * {
@@ -656,64 +659,29 @@ html:not([data-theme='light']) .member-row .text-red-600 {
     color: #0f172a !important;
   }
 
-  html[data-theme='light'] .members-page-table {
-    background-color: rgba(247, 250, 255, 0.96) !important;
-    border-color: rgba(148, 163, 184, 0.24) !important;
+  /*
+    Le tableau des membres suivait deux jeux de couleurs ecrits en dur : un
+    bleu clair pour `data-theme='light'`, un bleu nuit pour « tout le reste ».
+    Or « tout le reste », ce sont quatre habillages aux palettes differentes —
+    sombre, chaleureux, sport, nocturne — qui recevaient donc tous le meme
+    bleu marine, et le beige comme le vert restaient a la porte du tableau.
+    Le mode n'est pas l'habillage.
+
+    Les regles sont supprimees, pas remplacees par d'autres : `.dz-card`
+    donne deja le fond de la carte en jetons, et chaque habillage redefinit
+    ces jetons. Ce qu'il fallait, c'etait cesser d'ecraser ce travail avec
+    des `!important`.
+
+    Ne restent que l'en-tete et le survol, en voiles neutres : ils se posent
+    sur la couleur de l'habillage au lieu de la remplacer.
+  */
+  .members-page-table-head {
+    background: var(--overlay-soft) !important;
+    border-bottom: 1px solid var(--hairline) !important;
   }
 
-  html[data-theme='light'] .members-page-table-head {
-    background-color: rgba(219, 234, 254, 0.95) !important;
-    border-bottom-color: rgba(203, 213, 225, 0.8) !important;
-  }
-
-  html[data-theme='light'] .members-page-table th {
-    color: #0f172a !important;
-  }
-
-  html[data-theme='light'] .members-page-table tr {
-    background-color: rgba(255, 255, 255, 0.95) !important;
-  }
-
-  html[data-theme='light'] .members-page-table tr:hover {
-    background-color: rgba(226, 232, 240, 0.72) !important;
-  }
-
-  html[data-theme='light'] .members-page-table .text-slate-900,
-  html[data-theme='light'] .members-page-table .text-slate-500,
-  html[data-theme='light'] .members-page-table .text-slate-700,
-  html[data-theme='light'] .members-page-table th {
-    color: inherit !important;
-  }
-
-  html:not([data-theme='light']) .members-page-table .text-slate-900 {
-    color: #ffffff !important;
-  }
-
-  html[data-theme='light'] .members-page-table .text-slate-200,
-  html[data-theme='light'] .members-page-table .text-slate-400 {
-    color: #0f172a !important;
-  }
-
-  html:not([data-theme='light']) .members-page-table {
-    background: rgba(14, 18, 32, 0.92) !important;
-    border-color: rgba(255, 255, 255, 0.07) !important;
-  }
-
-  html:not([data-theme='light']) .members-page-table-head {
-    background: rgba(15, 23, 42, 0.9) !important;
-    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
-  }
-
-  html:not([data-theme='light']) .members-page-table th {
-    color: #ffffff !important;
-  }
-
-  html:not([data-theme='light']) .members-page-table tr {
-    background: rgba(15, 23, 42, 0.9) !important;
-  }
-
-  html:not([data-theme='light']) .members-page-table tr:hover {
-    background: rgba(47, 107, 255, 0.12) !important;
+  .members-page-table tbody tr:hover {
+    background: var(--overlay) !important;
   }
 }
 
