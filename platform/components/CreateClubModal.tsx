@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { api, ApiError } from '@/lib/client'
 import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 
 /**
  * Creation d'un club depuis le tableau de bord plateforme.
@@ -15,6 +16,7 @@ export default function CreateClubModal({
   onClose, onCreated,
 }: { onClose: () => void; onCreated: (orgId: string) => void }) {
   useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
 
   const [clubName, setClubName] = useState('')
   const [slug, setSlug] = useState('')
@@ -71,14 +73,14 @@ export default function CreateClubModal({
   }
 
   return (
-    <div className="compta-modal-overlay" onClick={onClose}
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss}
          role="dialog" aria-modal="true" aria-label="Ajouter un club">
-      <div className="compta-modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <h2 style={{ fontSize: '1.05rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
             Ajouter un club
           </h2>
-          <button className="gf-hide" onClick={onClose} aria-label="Fermer"><X size={15} /></button>
+          <button className="gf-hide" onClick={dismiss} aria-label="Fermer"><X size={15} /></button>
         </div>
         <p className="dz-card-note" style={{ marginBottom: 18 }}>
           Le club demarre vide. Ses salles et ses sports se declarent ensuite.
@@ -146,7 +148,7 @@ export default function CreateClubModal({
           {/* Le bouton reste actif meme incomplet : c'est le clic qui dit ce
               qui manque. Desactive, il ne disait rien. */}
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={onClose} disabled={busy}>
+            <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={dismiss} disabled={busy}>
               Annuler
             </button>
             <button type="submit" className="btn-dark"

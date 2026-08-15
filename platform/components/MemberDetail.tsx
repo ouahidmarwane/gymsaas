@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { api, upload, ApiError } from '@/lib/client'
 import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 import {
   type MemberRow, subStatus, insStatus, daysUntil, photoUrl,
   SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
@@ -44,6 +45,7 @@ export default function MemberDetail({
   onChanged: () => void | Promise<void>
 }) {
   useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
 
   const sub = subStatus(member)
   const ins = insStatus(member)
@@ -58,16 +60,16 @@ export default function MemberDetail({
   const color = AVATAR_COLORS[member.name.charCodeAt(0) % AVATAR_COLORS.length]!
 
   return (
-    <div className="compta-modal-overlay mdet-overlay" onClick={onClose}
+    <div className={`compta-modal-overlay mdet-overlay${overlayClass}`} onClick={dismiss}
          role="dialog" aria-modal="true" aria-label={`Fiche de ${member.name}`}
          /* La teinte de la personne diffuse derriere la modale : deux fiches
             ouvertes l'une apres l'autre ne se ressemblent plus. */
          style={{ '--mdet-tint': color } as React.CSSProperties}>
-      <div className="compta-modal mdet" onClick={e => e.stopPropagation()}
+      <div ref={cardRef} className="compta-modal mdet" onClick={e => e.stopPropagation()}
            style={photo ? ({ '--mdet-photo': `url("${photo}")` } as React.CSSProperties) : undefined}>
         {/* Hors du defilement : la croix reste sous la main quand on descend
             dans la fiche, et elle ne passe pas sous la barre. */}
-        <button className="mdet-close" onClick={onClose} aria-label="Fermer">
+        <button className="mdet-close" onClick={dismiss} aria-label="Fermer">
           <X size={16} strokeWidth={2.4} />
         </button>
 
@@ -470,6 +472,7 @@ function DocViewer({ src, title, onClose }: {
   const [error, setError] = useState<string | null>(null)
 
   useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
 
   useEffect(() => {
     let url: string | null = null
@@ -489,21 +492,16 @@ function DocViewer({ src, title, onClose }: {
     }
   }, [src])
 
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', key)
-    return () => document.removeEventListener('keydown', key)
-  }, [onClose])
-
   const isPdf = blob?.type.includes('pdf')
 
   return createPortal(
-    <div className="docview-overlay" onClick={onClose} role="dialog" aria-modal="true"
-         aria-label={title}>
-      <div className="docview" onClick={e => e.stopPropagation()}>
+    // Echap est gere par useModalMotion, avec la meme animation que la croix.
+    <div className={`docview-overlay${overlayClass}`} onClick={dismiss}
+         role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={cardRef} className="docview" onClick={e => e.stopPropagation()}>
         <div className="docview-bar">
           <span className="docview-title">{title}</span>
-          <button className="mdet-hero-btn" onClick={onClose} aria-label="Fermer">
+          <button className="mdet-hero-btn" onClick={dismiss} aria-label="Fermer">
             <X size={15} strokeWidth={2.4} />
           </button>
         </div>

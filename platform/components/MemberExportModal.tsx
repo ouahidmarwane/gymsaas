@@ -8,6 +8,7 @@ import {
 } from '@/lib/member-status'
 import { toCsv, download } from '@/lib/csv'
 import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 
 interface Branch { id: string; name: string }
 interface Discipline { id: string; name: string }
@@ -45,6 +46,7 @@ export default function MemberExportModal({
   onClose: () => void
 }) {
   useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
 
   const [sub, setSub] = useState<string>('all')
   const [ins, setIns] = useState<string>('all')
@@ -95,19 +97,19 @@ export default function MemberExportModal({
                  year !== 'all' && year, dormant && 'inactifs', noIdDoc && 'sans-piece-identite']
       .filter(Boolean).join('_') || 'tous'
     download(toCsv(rows), `membres-${tag}-${new Date().toISOString().slice(0, 10)}.csv`)
-    onClose()
+    dismiss()
   }
 
   return (
-    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true"
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss} role="dialog" aria-modal="true"
          aria-label="Export filtré des membres">
-      <div className="compta-modal" style={{ width: 520 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 520 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       marginBottom: 6 }}>
           <h2 style={{ fontSize: '1.05rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
             Export filtré
           </h2>
-          <button className="gf-hide" onClick={onClose} aria-label="Fermer"><X size={15} /></button>
+          <button className="gf-hide" onClick={dismiss} aria-label="Fermer"><X size={15} /></button>
         </div>
         <p className="dz-card-note" style={{ marginBottom: 18 }}>
           Les critères se cumulent. Laissez sur « Tous » ce qui ne vous intéresse pas.
@@ -168,7 +170,7 @@ export default function MemberExportModal({
               : `${selected.length} membre${selected.length > 1 ? 's' : ''} sur ${members.length}`}
           </span>
           <span style={{ display: 'flex', gap: 8 }}>
-            <button className="compta-modal-cancel" onClick={onClose}>Annuler</button>
+            <button className="compta-modal-cancel" onClick={dismiss}>Annuler</button>
             <button className="compta-modal-save" onClick={run} disabled={selected.length === 0}>
               <Download size={14} strokeWidth={2.3} style={{ verticalAlign: '-2px', marginInlineEnd: 5 }} />
               Exporter

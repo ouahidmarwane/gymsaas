@@ -10,6 +10,8 @@ import {
   Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell,
 } from 'recharts'
 import { api, ApiError, type Me } from '@/lib/client'
+import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 import PageState from '@/components/PageState'
 import EditablePage from '@/components/EditablePage'
 import SlidingTabs from '@/components/SlidingTabs'
@@ -198,16 +200,19 @@ function ExpandModal({ title, subtitle, onClose, children }: {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
+
   return (
-    <div className="compta-modal-overlay" onClick={onClose}>
-      <div className={`t-modal ${open} compta-expand-modal`} role="dialog" aria-modal="true"
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss}>
+      <div ref={cardRef} className={`t-modal ${open} compta-expand-modal`} role="dialog" aria-modal="true"
            aria-label={title} onClick={e => e.stopPropagation()}>
         <div className="compta-expand-modal-header">
           <div>
             <h3>{title}</h3>
             <p>{subtitle}</p>
           </div>
-          <button className="compta-expand-close" onClick={onClose} aria-label="Fermer">✕</button>
+          <button className="compta-expand-close" onClick={dismiss} aria-label="Fermer">✕</button>
         </div>
         <div className="compta-expand-modal-body">{children}</div>
       </div>
@@ -840,10 +845,13 @@ function ReversalModal({ payment, onClose, onConfirm }: {
   const ready = reason.trim().length >= 3
     && (kind === 'erreur' || refundedAt >= payment.paid_at.slice(0, 10))
 
+  useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
+
   return (
-    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true"
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss} role="dialog" aria-modal="true"
          aria-label="Annuler un encaissement">
-      <div className={`t-modal ${open} compta-modal`} style={{ width: 460 }}
+      <div ref={cardRef} className={`t-modal ${open} compta-modal`} style={{ width: 460 }}
            onClick={e => e.stopPropagation()}>
         <h3 className="compta-modal-title">
           Annuler {dh(payment.amount_cents)} — {payment.member_name ?? 'membre supprimé'}
@@ -902,7 +910,7 @@ function ReversalModal({ payment, onClose, onConfirm }: {
         </div>
 
         <div className="compta-modal-actions">
-          <button className="compta-modal-cancel" onClick={onClose} disabled={busy}>Annuler</button>
+          <button className="compta-modal-cancel" onClick={dismiss} disabled={busy}>Annuler</button>
           <button className="compta-modal-save" disabled={busy || !ready}
                   style={{ background: '#dc2626' }}
                   onClick={async () => {
@@ -961,9 +969,12 @@ function PriceModal({ draft, setDraft, error, saving, onCancel, onSave }: {
     { key: 'registrationCents', label: 'Frais d’inscription (DH)' },
   ] as const
 
+  useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onCancel)
+
   return (
-    <div className="compta-modal-overlay" onClick={onCancel}>
-      <div className={`t-modal ${open} compta-modal`} role="dialog" aria-modal="true"
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss}>
+      <div ref={cardRef} className={`t-modal ${open} compta-modal`} role="dialog" aria-modal="true"
            aria-label="Tarifs du club" onClick={e => e.stopPropagation()}>
         <h3 className="compta-modal-title">Tarifs du club</h3>
         <div className="compta-modal-fields">
@@ -989,7 +1000,7 @@ function PriceModal({ draft, setDraft, error, saving, onCancel, onSave }: {
           }}>{error}</p>
         )}
         <div className="compta-modal-actions">
-          <button className="compta-modal-cancel" onClick={onCancel}>Annuler</button>
+          <button className="compta-modal-cancel" onClick={dismiss}>Annuler</button>
           <button className="compta-modal-save" disabled={saving} onClick={onSave}>
             {saving ? '…' : 'Enregistrer'}
           </button>

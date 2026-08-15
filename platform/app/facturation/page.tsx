@@ -11,6 +11,8 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 import { api, ApiError, type Theme } from '@/lib/client'
+import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 
 // Donnees ----------------------------------------------------------------
 
@@ -816,10 +818,13 @@ function BillingModal({ club, onClose, onSaved }: {
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
 
+  useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
+
   return (
-    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true"
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss} role="dialog" aria-modal="true"
          aria-label={`Abonnement de ${club.name}`}>
-      <div className="compta-modal" style={{ width: 440 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 440 }} onClick={e => e.stopPropagation()}>
         <h3 className="compta-modal-title">Abonnement — {club.name}</h3>
 
         <div className="compta-modal-fields">
@@ -863,7 +868,7 @@ function BillingModal({ club, onClose, onSaved }: {
         )}
 
         <div className="compta-modal-actions">
-          <button className="compta-modal-cancel" onClick={onClose} disabled={busy}>Annuler</button>
+          <button className="compta-modal-cancel" onClick={dismiss} disabled={busy}>Annuler</button>
           <button className="compta-modal-save" disabled={busy} onClick={async () => {
             setBusy(true); setProblem(null)
             try {
@@ -900,10 +905,13 @@ function InvoiceModal({ club, today, onClose, onSaved }: {
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
 
+  useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
+
   return (
-    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true"
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss} role="dialog" aria-modal="true"
          aria-label={`Nouvelle échéance pour ${club.name}`}>
-      <div className="compta-modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
         <h3 className="compta-modal-title">Nouvelle échéance — {club.name}</h3>
         <p className="dz-card-note" style={{ marginTop: -12, marginBottom: 16 }}>
           Période de {club.cycle_months ?? 1} mois à partir de la date choisie.
@@ -936,7 +944,7 @@ function InvoiceModal({ club, today, onClose, onSaved }: {
         )}
 
         <div className="compta-modal-actions">
-          <button className="compta-modal-cancel" onClick={onClose} disabled={busy}>Annuler</button>
+          <button className="compta-modal-cancel" onClick={dismiss} disabled={busy}>Annuler</button>
           <button className="compta-modal-save" disabled={busy} onClick={async () => {
             setBusy(true); setProblem(null)
             try {

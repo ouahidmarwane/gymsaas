@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { LogIn, Users, Wallet, Building2, Plus, Trash2, AlertTriangle } from 'lucide-react'
 import { api, ApiError, type ClubRow } from '@/lib/client'
+import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 import CreateClubModal from '@/components/CreateClubModal'
 
 const REFRESH_MS = 15_000
@@ -220,10 +222,13 @@ function DeleteClubModal({ club, onClose, onDeleted }: {
   const [problem, setProblem] = useState<string | null>(null)
   const matches = typed.trim() === club.slug
 
+  useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
+
   return (
-    <div className="compta-modal-overlay" onClick={onClose}
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss}
          role="dialog" aria-modal="true" aria-label={`Supprimer ${club.name}`}>
-      <div className="compta-modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <AlertTriangle size={19} strokeWidth={2.3} style={{ color: '#f87171', flex: 'none' }} />
           <h2 style={{ fontSize: '1.05rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
@@ -264,7 +269,7 @@ function DeleteClubModal({ club, onClose, onDeleted }: {
         </div>
 
         <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
-          <button className="btn-ghost" style={{ flex: 1 }} onClick={onClose} disabled={busy}>
+          <button className="btn-ghost" style={{ flex: 1 }} onClick={dismiss} disabled={busy}>
             Annuler
           </button>
           <button

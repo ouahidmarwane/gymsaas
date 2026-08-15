@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { X, Upload, CheckCircle2, TriangleAlert, ShieldCheck } from 'lucide-react'
 import { api, ApiError } from '@/lib/client'
 import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 import {
   parseCsv, checkCsvFile, looksBinary, safeCell, CsvError, MAX_CSV_ROWS, toCsv, download,
 } from '@/lib/csv'
@@ -82,6 +83,7 @@ export default function MemberImportModal({
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
 
   const [fileName, setFileName] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
@@ -206,15 +208,15 @@ export default function MemberImportModal({
   }
 
   return (
-    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true"
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss} role="dialog" aria-modal="true"
          aria-label="Importer des membres">
-      <div className="compta-modal" style={{ width: 560 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 560 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       marginBottom: 6 }}>
           <h2 style={{ fontSize: '1.05rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
             Importer des membres
           </h2>
-          <button className="gf-hide" onClick={onClose} aria-label="Fermer"><X size={15} /></button>
+          <button className="gf-hide" onClick={dismiss} aria-label="Fermer"><X size={15} /></button>
         </div>
         <p className="dz-card-note" style={{ marginBottom: 16 }}>
           Colonnes reconnues quel que soit leur ordre. Seuls « Nom » et « Téléphone » sont

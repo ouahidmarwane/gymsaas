@@ -5,6 +5,7 @@ import { X, Camera, Trash2 } from 'lucide-react'
 import { api, upload, ApiError } from '@/lib/client'
 import { type MemberRow, photoUrl } from '@/lib/member-status'
 import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 
 interface Branch { id: string; name: string }
 interface Discipline { id: string; name: string }
@@ -26,6 +27,7 @@ export default function MemberModal({
   onSaved: () => void | Promise<void>
 }) {
   useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
 
   const editing = member !== null
   const today = new Date().toISOString().slice(0, 10)
@@ -144,15 +146,15 @@ export default function MemberModal({
   }
 
   return (
-    <div className="compta-modal-overlay" onClick={onClose} role="dialog" aria-modal="true"
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss} role="dialog" aria-modal="true"
          aria-label={editing ? `Modifier ${member.name}` : 'Ajouter un membre'}>
-      <div className="compta-modal" style={{ width: 480 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 480 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       marginBottom: 18 }}>
           <h2 style={{ fontSize: '1.05rem', fontWeight: 700, letterSpacing: '-0.02em' }}>
             {editing ? `Modifier ${member.name}` : 'Ajouter un membre'}
           </h2>
-          <button className="gf-hide" onClick={onClose} aria-label="Fermer"><X size={15} /></button>
+          <button className="gf-hide" onClick={dismiss} aria-label="Fermer"><X size={15} /></button>
         </div>
 
         <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -261,7 +263,7 @@ export default function MemberModal({
 
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
             <button type="button" className="btn-ghost" style={{ flex: 1 }}
-                    onClick={onClose} disabled={busy}>Annuler</button>
+                    onClick={dismiss} disabled={busy}>Annuler</button>
             <button type="submit" className="btn-dark" disabled={busy}
                     style={{ flex: 1, background: 'var(--gold)', borderColor: 'transparent' }}>
               {busy ? 'Enregistrement…' : editing ? 'Enregistrer' : 'Ajouter'}

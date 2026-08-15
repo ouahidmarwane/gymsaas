@@ -2167,7 +2167,52 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   -webkit-backdrop-filter: blur(8px);
   animation: fadeIn 0.18s ease forwards;
 }
+/* ─── Ouverture et fermeture des modales ────────────────────────
+   La carte grandit depuis le point clique — le point d'origine est pose en
+   JavaScript, la courbe et la duree restent ici. La sortie est deux fois
+   plus courte que l'entree : on attend une fenetre qui s'ouvre, on n'attend
+   pas une fenetre qui part. */
+@keyframes modalGrow {
+  from { opacity: 0; transform: scale(0.78); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes modalFold {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: scale(0.82); }
+}
+@keyframes overlayOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.compta-modal-overlay.is-closing,
+.docview-overlay.is-closing {
+  animation: overlayOut 0.2s ease forwards;
+  /* Le fond ne se reclique pas pendant qu'il s'en va. */
+  pointer-events: none;
+}
+
+.compta-modal-overlay.is-closing .compta-modal,
+.compta-modal-overlay.is-closing .compta-expand-modal,
+.docview-overlay.is-closing .docview {
+  animation: modalFold 0.2s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.compta-expand-modal {
+  animation: modalGrow 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compta-modal, .compta-expand-modal, .docview,
+  .compta-modal-overlay, .compta-modal-overlay.is-closing,
+  .docview-overlay, .docview-overlay.is-closing,
+  .compta-modal-overlay.is-closing .compta-modal,
+  .compta-modal-overlay.is-closing .compta-expand-modal,
+  .docview-overlay.is-closing .docview { animation: none; }
+}
+
 .compta-modal {
+  animation: modalGrow 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
   background: var(--float-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -5750,7 +5795,8 @@ html[data-theme='light'] .row-menu {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  animation: mdetRise 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* L'entree vient de .compta-modal : une seule animation pour toutes les
+     modales, sinon deux reglages divergent au premier ajustement. */
 }
 
 .mdet-scroll {
@@ -5759,10 +5805,6 @@ html[data-theme='light'] .row-menu {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-@keyframes mdetRise {
-  from { opacity: 0; transform: translateY(14px) scale(0.985); }
-  to   { opacity: 1; transform: none; }
 }
 
 /* Prolongement de la photo derriere le contenu : floute, tres pale, il
@@ -6001,7 +6043,7 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   border: 1px solid var(--overlay-strong);
   border-radius: 20px; overflow: hidden;
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.6);
-  animation: mdetRise 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: modalGrow 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .docview-bar {
   display: flex; align-items: center; gap: 1rem;

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { Trophy, Plus, X, Medal } from 'lucide-react'
 import { useDiscipline } from '@/lib/discipline'
 import { api, ApiError, type Me } from '@/lib/client'
+import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 import PageState from '@/components/PageState'
 import EditablePage from '@/components/EditablePage'
 
@@ -310,13 +312,16 @@ function CreateChampionship({ onClose, onSaved }: { onClose: () => void; onSaved
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
+
   return (
-    <div className="compta-modal-overlay" onClick={onClose}
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss}
          role="dialog" aria-modal="true" aria-label="Ajouter un championnat">
-      <div className="compta-modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <h2 style={{ fontSize: '1.05rem', fontWeight: 700 }}>Ajouter un championnat</h2>
-          <button className="gf-hide" onClick={onClose} aria-label="Fermer"><X size={15} /></button>
+          <button className="gf-hide" onClick={dismiss} aria-label="Fermer"><X size={15} /></button>
         </div>
 
         {error && <p role="alert" style={{ color: '#fca5a5', fontSize: '0.82rem', marginBottom: 12 }}>{error}</p>}
@@ -341,7 +346,7 @@ function CreateChampionship({ onClose, onSaved }: { onClose: () => void; onSaved
                  value={location} onChange={e => setLocation(e.target.value)} />
 
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={onClose} disabled={busy}>
+            <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={dismiss} disabled={busy}>
               Annuler
             </button>
             <button type="submit" className="btn-dark"

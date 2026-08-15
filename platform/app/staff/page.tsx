@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { UserCog, UserPlus, X, Trash2 } from 'lucide-react'
 import { api, ApiError, type Me } from '@/lib/client'
+import { useScrollLock } from '@/lib/scroll-lock'
+import { useModalMotion } from '@/lib/modal-motion'
 import PageState from '@/components/PageState'
 
 interface StaffRow {
@@ -177,13 +179,16 @@ function AddStaff({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useScrollLock()
+  const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
+
   return (
-    <div className="compta-modal-overlay" onClick={onClose}
+    <div className={`compta-modal-overlay${overlayClass}`} onClick={dismiss}
          role="dialog" aria-modal="true" aria-label="Ajouter un compte">
-      <div className="compta-modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
+      <div ref={cardRef} className="compta-modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <h2 style={{ fontSize: '1.05rem', fontWeight: 700 }}>Ajouter un compte</h2>
-          <button className="gf-hide" onClick={onClose} aria-label="Fermer"><X size={15} /></button>
+          <button className="gf-hide" onClick={dismiss} aria-label="Fermer"><X size={15} /></button>
         </div>
         <p className="dz-card-note" style={{ marginBottom: 16 }}>
           Si l&apos;adresse existe deja sur la plateforme, le compte est simplement
@@ -220,7 +225,7 @@ function AddStaff({ onClose, onSaved }: { onClose: () => void; onSaved: () => vo
           </select>
 
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={onClose} disabled={busy}>
+            <button type="button" className="btn-ghost" style={{ flex: 1 }} onClick={dismiss} disabled={busy}>
               Annuler
             </button>
             <button type="submit" className="btn-dark"
