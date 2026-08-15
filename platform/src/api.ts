@@ -396,6 +396,21 @@ async function subscriptionOf(env: Env, orgId: string) {
 const MAX_PROOF_BYTES = 4 * 1024 * 1024
 
 /**
+ * Plafond d'une photo de membre, plus haut que celui d'un justificatif.
+ *
+ * Rien ne redimensionne ni ne recompresse ici : `MEDIA.put` ecrit l'octet
+ * exact recu. La seule facon de perdre de la definition, c'est un plafond
+ * trop bas qui oblige a compresser avant d'envoyer — et une photo prise au
+ * telephone pese couramment cinq mega-octets.
+ *
+ * Contrepartie assumee : la liste des membres affiche ces memes fichiers en
+ * vignettes de 36 pixels. Deux cents membres a huit mega-octets font une
+ * page lourde. Si cela se fait sentir, la reponse sera une vignette
+ * fabriquee au moment de l'envoi, pas un plafond rabaisse.
+ */
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024
+
+/**
  * Plafond d'un import.
  *
  * Un Durable Object est mono-thread : chaque insertion bloque le club. Cinq
@@ -1310,15 +1325,17 @@ export const api = {
         // PDF y donnerait un cadre vide sans dire pourquoi.
         const ext = imageExtension(contentType)
         const declared = Number(request.headers.get('Content-Length') ?? '0')
-        if (!Number.isFinite(declared) || declared > MAX_PROOF_BYTES) {
-          throw new HttpError(413, 'Photo trop volumineuse : 4 Mo maximum')
+        if (!Number.isFinite(declared) || declared > MAX_PHOTO_BYTES) {
+          throw new HttpError(413, 'Photo trop volumineuse : 8 Mo maximum')
         }
         const bytes = await request.arrayBuffer()
         if (bytes.byteLength === 0) throw new HttpError(400, 'Fichier vide')
-        if (bytes.byteLength > MAX_PROOF_BYTES) {
-          throw new HttpError(413, 'Photo trop volumineuse : 4 Mo maximum')
+        if (bytes.byteLength > MAX_PHOTO_BYTES) {
+          throw new HttpError(413, 'Photo trop volumineuse : 8 Mo maximum')
         }
 
+        // Les octets recus, tels quels : aucun redimensionnement, aucune
+        // recompression. Ce qui est envoye est ce qui sera relu.
         const fileKey = `member-photos/${scopedOrgId(principal)}/${memberId}-${Date.now()}.${ext}`
         await env.MEDIA.put(fileKey, bytes, { httpMetadata: { contentType } })
         const { previousKey } = await club.setMemberPhoto({

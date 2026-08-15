@@ -75,7 +75,7 @@ export default function MemberModal({
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
       setProblem('Photo : format accepté PNG, JPEG ou WebP.'); return
     }
-    if (file.size > 4 * 1024 * 1024) { setProblem('Photo : 4 Mo maximum.'); return }
+    if (file.size > 8 * 1024 * 1024) { setProblem('Photo : 8 Mo maximum.'); return }
     setProblem(null); setPhotoGone(false); setPhotoFile(file)
   }
 
@@ -187,7 +187,7 @@ export default function MemberModal({
                 )}
               </div>
               <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
-                PNG, JPEG ou WebP · 4 Mo maximum
+                PNG, JPEG ou WebP · 8 Mo maximum
                 {!editing && photoFile && ' · envoyée après l’enregistrement'}
               </span>
             </div>

@@ -2173,38 +2173,23 @@ html:not([data-theme='light']) .member-row .text-red-600 {
    plus courte que l'entree : on attend une fenetre qui s'ouvre, on n'attend
    pas une fenetre qui part. */
 /*
-  La feuille de papier.
+  Un zoom lent, et rien d'autre.
 
-  Une boule froissee au point ou l'on a clique, qui s'ouvre : le rayon part
-  de 50 % — un cercle — et rejoint celui de la carte ; l'echelle s'ouvre
-  d'abord en largeur, puis se deploie en hauteur, comme une feuille qu'on
-  deplie dans un sens puis dans l'autre.
-
-  Le rayon final n'est PAS declare a 100 % : chaque modale a le sien (22 px
-  pour la fiche, 20 pour la visionneuse, 24 pour le panneau elargi). Une
-  image-cle omise reprend la valeur propre de l'element — l'ecrire ici les
-  aurait toutes ramenees a la meme.
-
-  Le flou du debut n'est pas decoratif : il couvre la deformation du texte
-  pendant que la carte est ecrasee. Sans lui, on lit des lettres etirees.
+  La carte grandit de 0,90 a 1 sur une courbe qui ralentit franchement en
+  fin de course : le mouvement se voit au debut, se pose a la fin. Aucune
+  rotation, aucun rayon anime, aucun flou — le texte ne traverse donc aucune
+  taille intermediaire ou il scintillerait.
 */
 @keyframes modalGrow {
-  0%   { opacity: 0; border-radius: 50%; filter: blur(5px);
-         transform: scale(0.2) rotate(-11deg); }
-  35%  { opacity: 1; border-radius: 44%; filter: blur(2px);
-         transform: scale(0.62) rotate(-4deg); }
-  65%  { border-radius: 30%; filter: none;
-         transform: scaleX(1.02) scaleY(0.82) rotate(0deg); }
-  100% { opacity: 1; filter: none; transform: none; }
+  from { opacity: 0; transform: scale(0.9); }
+  to   { opacity: 1; transform: none; }
 }
 
-/* Elle se referme en boule, deux fois plus vite. */
+/* Elle se referme deux fois plus vite : on attend une fenetre qui s'ouvre,
+   on n'attend pas une fenetre qui part. */
 @keyframes modalFold {
-  0%   { opacity: 1; transform: none; }
-  55%  { opacity: 1; border-radius: 32%; filter: blur(1px);
-         transform: scaleX(0.94) scaleY(0.5) rotate(3deg); }
-  100% { opacity: 0; border-radius: 50%; filter: blur(4px);
-         transform: scale(0.22) rotate(10deg); }
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: scale(0.94); }
 }
 @keyframes overlayOut {
   from { opacity: 1; }
@@ -2215,7 +2200,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 .docview-overlay.is-closing {
   /* Le voile part un peu apres la carte : elle doit avoir fini de se
      replier quand le fond disparait, pas l'inverse. */
-  animation: overlayOut 0.26s ease 0.04s forwards;
+  animation: overlayOut 0.22s ease forwards;
   /* Le fond ne se reclique pas pendant qu'il s'en va. */
   pointer-events: none;
 }
@@ -2223,11 +2208,11 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 .compta-modal-overlay.is-closing .compta-modal,
 .compta-modal-overlay.is-closing .compta-expand-modal,
 .docview-overlay.is-closing .docview {
-  animation: modalFold 0.26s cubic-bezier(0.4, 0, 0.9, 1) both;
+  animation: modalFold 0.22s cubic-bezier(0.4, 0, 1, 1) both;
 }
 
 .compta-expand-modal {
-  animation: modalGrow 0.52s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: modalGrow 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2240,7 +2225,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 }
 
 .compta-modal {
-  animation: modalGrow 0.52s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: modalGrow 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
   background: var(--float-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -6076,7 +6061,7 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   border: 1px solid var(--overlay-strong);
   border-radius: 20px; overflow: hidden;
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.6);
-  animation: modalGrow 0.52s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: modalGrow 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .docview-bar {
   display: flex; align-items: center; gap: 1rem;
@@ -6108,6 +6093,35 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   width: auto; height: auto;
   max-width: min(1100px, 88vw); max-height: 74vh;
   border-radius: 10px; display: block;
+  /* Le navigateur reduit l'image pour la faire tenir : que ce soit avec un
+     bon filtre, sinon un scan de carte devient illisible avant meme le
+     premier agrandissement. */
+  image-rendering: auto;
+}
+
+/* Zone deplacable : le debordement est rogne, l'image bouge en transform. */
+.docview-pannable {
+  overflow: hidden;
+  /* Le navigateur ne doit pas s'emparer de la molette ni du glisser : ils
+     nous servent a zoomer et a promener l'image. */
+  touch-action: none;
+  overscroll-behavior: contain;
+  cursor: zoom-in;
+}
+.docview-pannable.movable { cursor: grab; }
+.docview-pannable.movable:active { cursor: grabbing; }
+/* L'image ne doit jamais etre saisie comme un objet a deposer ailleurs :
+   le navigateur volerait le glisser. */
+.docview-pannable img { user-select: none; -webkit-user-drag: none; }
+
+.docview-zoom {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 0.6rem; border-top: 1px solid var(--hairline);
+}
+.docview-zoom-value {
+  min-width: 3.6rem; text-align: center;
+  font-size: 0.76rem; font-weight: 700; color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 /* Un PDF n'a pas de taille propre dans un cadre : celle-ci est choisie. */
 .docview-pdf {

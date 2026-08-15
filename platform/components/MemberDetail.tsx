@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera, Phone, Maximize2,
+  X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera, Phone,
+  Maximize2, Minimize2, Plus, Minus,
 } from 'lucide-react'
 import { api, upload, ApiError } from '@/lib/client'
 import { useScrollLock } from '@/lib/scroll-lock'
@@ -219,7 +220,7 @@ function PhotoHero({ member, photo, initial, color, canWrite, onChanged, head, t
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
       setProblem('Format accepté : PNG, JPEG ou WebP.'); return
     }
-    if (file.size > 4 * 1024 * 1024) { setProblem('4 Mo maximum.'); return }
+    if (file.size > 8 * 1024 * 1024) { setProblem('8 Mo maximum.'); return }
 
     setBusy(true); setProblem(null)
     try {
@@ -330,7 +331,7 @@ function IdentityDoc({ member, canWrite, canDelete, onChanged }: {
     // connexion de salle de sport.
     const ok = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf']
     if (!ok.includes(file.type)) { setProblem('Format accepté : PNG, JPEG, WebP ou PDF.'); return }
-    if (file.size > 4 * 1024 * 1024) { setProblem('4 Mo maximum.'); return }
+    if (file.size > 8 * 1024 * 1024) { setProblem('8 Mo maximum.'); return }
 
     setBusy(true); setProblem(null)
     try {
@@ -497,16 +498,117 @@ function DocViewer({ src, title, onClose }: {
           </button>
         </div>
 
-        <div className="docview-stage">
-          {error && <p className="mdet-problem">{error}</p>}
-          {!error && !blob && <p className="mdet-void">Chargement…</p>}
-          {blob && (isPdf
-            ? <iframe className="docview-pdf" src={blob.url} title={title} />
-            : <img className="docview-img" src={blob.url} alt={title} />)}
-        </div>
+        {error && <div className="docview-stage"><p className="mdet-problem">{error}</p></div>}
+        {!error && !blob && <div className="docview-stage"><p className="mdet-void">Chargement…</p></div>}
+        {blob && (isPdf
+          ? <div className="docview-stage">
+              <iframe className="docview-pdf" src={blob.url} title={title} />
+            </div>
+          : <ImageStage url={blob.url} title={title} />)}
       </div>
     </div>,
     document.body,
+  )
+}
+
+/**
+ * Image que l'on peut agrandir et deplacer.
+ *
+ * Une piece d'identite scannee se lit rarement entiere a l'ecran : le numero
+ * est en petits caracteres dans un coin. La vue s'ouvre donc ajustee, puis
+ * la molette agrandit et le glisser promene — a la taille reelle des pixels
+ * envoyes, jamais une version reduite.
+ *
+ * Le deplacement se fait en `transform` pur, sans toucher a la mise en page :
+ * une image de huit millions de pixels doit suivre le curseur sans a-coups.
+ */
+function ImageStage({ url, title }: { url: string; title: string }) {
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const drag = useRef<{ id: number; fromX: number; fromY: number; panX: number; panY: number } | null>(null)
+
+  const MIN = 1
+  const MAX = 6
+  const movable = zoom > 1
+
+  function apply(next: number, origin?: { x: number; y: number }) {
+    const z = Math.min(MAX, Math.max(MIN, next))
+    // Revenu a l'ajuste, l'image se recentre : laisser un decalage la ferait
+    // reapparaitre de travers au zoom suivant.
+    if (z === 1) { setPan({ x: 0, y: 0 }); setZoom(1); return }
+    if (origin) {
+      // Le point sous le curseur reste sous le curseur : sans cela, zoomer
+      // sur un detail l'ecarte de l'ecran et il faut le rechercher.
+      const ratio = z / zoom
+      setPan(p => ({
+        x: origin.x - (origin.x - p.x) * ratio,
+        y: origin.y - (origin.y - p.y) * ratio,
+      }))
+    }
+    setZoom(z)
+  }
+
+  function onWheel(e: React.WheelEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const box = e.currentTarget.getBoundingClientRect()
+    apply(zoom * (e.deltaY < 0 ? 1.18 : 1 / 1.18), {
+      x: e.clientX - box.left - box.width / 2,
+      y: e.clientY - box.top - box.height / 2,
+    })
+  }
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (!movable) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = { id: e.pointerId, fromX: e.clientX, fromY: e.clientY, panX: pan.x, panY: pan.y }
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    setPan({ x: d.panX + (e.clientX - d.fromX), y: d.panY + (e.clientY - d.fromY) })
+  }
+
+  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (drag.current?.id === e.pointerId) drag.current = null
+  }
+
+  return (
+    <>
+      <div className={`docview-stage docview-pannable${movable ? ' movable' : ''}`}
+           onWheel={onWheel}
+           onPointerDown={onPointerDown}
+           onPointerMove={onPointerMove}
+           onPointerUp={onPointerUp}
+           onPointerCancel={onPointerUp}
+           // Double-clic : bascule entre ajuste et deux fois, le geste que
+           // tout le monde essaie en premier sur une image.
+           onDoubleClick={() => apply(zoom > 1 ? 1 : 2)}>
+        <img className="docview-img" src={url} alt={title} draggable={false}
+             style={{
+               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+               // Pas de transition pendant le glisser : elle ferait trainer
+               // l'image derriere le curseur.
+               transition: drag.current ? 'none' : 'transform 0.12s ease-out',
+             }} />
+      </div>
+
+      <div className="docview-zoom">
+        <button className="mdet-hero-btn" onClick={() => apply(zoom / 1.4)}
+                disabled={zoom <= MIN} title="Réduire" aria-label="Réduire">
+          <Minus size={15} strokeWidth={2.4} />
+        </button>
+        <span className="docview-zoom-value">{Math.round(zoom * 100)} %</span>
+        <button className="mdet-hero-btn" onClick={() => apply(zoom * 1.4)}
+                disabled={zoom >= MAX} title="Agrandir" aria-label="Agrandir">
+          <Plus size={15} strokeWidth={2.4} />
+        </button>
+        <button className="mdet-hero-btn" onClick={() => apply(1)}
+                disabled={zoom === 1} title="Ajuster" aria-label="Ajuster">
+          <Minimize2 size={14} strokeWidth={2.2} />
+        </button>
+      </div>
+    </>
   )
 }
 
