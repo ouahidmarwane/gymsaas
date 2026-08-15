@@ -207,19 +207,28 @@ export function ringRadius(life: number, max: number): number {
 }
 
 function step() {
+  // L'image en cours est consommee : on l'oublie AVANT toute chose.
+  //
+  // C'est ce qui rend l'invariant structurel plutot que declaratif. Si
+  // `frame` gardait un identifiant perime apres une exception, `celebrate`
+  // verrait un `frame !== null`, croirait la boucle vivante et ne la
+  // relancerait jamais : l'effet marcherait une fois, puis plus rien, sans
+  // le moindre message. Remis a zero ici, aucun chemin plus bas — present
+  // ou futur — ne peut produire cet etat. Seul le succes le rearme.
+  frame = null
+
   const l = layer
-  if (!l) { frame = null; return }
+  if (!l) return
 
   try {
     draw(l)
   } catch (e) {
-    // Une exception ici tuait la boucle et laissait la derniere image
-    // peinte a l'ecran, indefiniment. Un effet decoratif n'a pas le droit
-    // de laisser des debris sur l'interface : on efface, on vide, on
-    // s'arrete proprement, et on laisse la trace en console pour la suite.
+    // Une exception laissait la derniere image peinte a l'ecran,
+    // indefiniment. Un effet decoratif n'a pas le droit de laisser des
+    // debris sur l'interface : on vide, on efface, on s'arrete proprement,
+    // et on laisse la trace en console pour la suite.
     console.error('[celebrate] rendu interrompu', e)
     particles = []
-    frame = null
     l.ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
   }
 }
@@ -289,10 +298,13 @@ function draw(l: Layer) {
 
   // Le rAF s'arrete des qu'il n'y a plus rien : une boucle qui tourne a vide
   // reveille le processeur toutes les seize millisecondes, pour rien.
+  //
+  // `frame` a ete remis a zero en tete de step : c'est ICI, et nulle part
+  // ailleurs, qu'il se rearme. Un seul point d'ecriture pour le cas nominal,
+  // un seul pour la consommation — il n'y a plus rien a se rappeler.
   if (particles.length > 0) {
     frame = requestAnimationFrame(step)
   } else {
-    frame = null
     l.ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
   }
 }
