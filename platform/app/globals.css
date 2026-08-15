@@ -5988,7 +5988,12 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   animation: fadeIn 0.16s ease forwards;
 }
 .docview {
-  width: min(880px, 100%);
+  /* La boite epouse ce qu'elle montre. A largeur fixe, un portrait vertical
+     flottait au milieu d'un demi-metre de vide, et une carte d'identite
+     paysage etait rognee en hauteur pour rien. */
+  width: max-content;
+  max-width: 100%;
+  min-width: min(300px, 100%);
   max-height: 90vh;
   display: flex; flex-direction: column;
   background: var(--float-bg);
@@ -6004,21 +6009,35 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 }
 .docview-title {
   flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 700;
+  /* Borne la contribution du titre a la largeur : sans elle, un nom long
+     etirerait la boite bien au-dela de l'image qu'elle encadre. */
+  max-width: 34ch;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .docview-stage {
-  display: grid; place-items: center; padding: 1rem;
+  display: grid; place-items: center; padding: 12px;
+  /* Une taille plancher pendant le chargement : sans elle, la boite naitrait
+     minuscule autour du mot « Chargement » puis sauterait a la taille de
+     l'image. */
+  min-width: min(280px, 80vw); min-height: 180px;
   /* Un damier tres discret : un scan sur fond blanc, pose sur du blanc,
      n'a plus de bords visibles. */
   background:
     repeating-conic-gradient(var(--overlay-soft) 0% 25%, transparent 0% 50%) 0 0 / 22px 22px;
   overflow: auto;
 }
+/* width/height auto : l'image garde ses proportions et c'est elle qui donne
+   sa taille a la boite, bornee par l'ecran. */
 .docview-img {
-  max-width: 100%; max-height: 74vh; object-fit: contain;
+  width: auto; height: auto;
+  max-width: min(1100px, 88vw); max-height: 74vh;
   border-radius: 10px; display: block;
 }
-.docview-pdf { width: 100%; height: 74vh; border: 0; border-radius: 10px; background: #fff; }
+/* Un PDF n'a pas de taille propre dans un cadre : celle-ci est choisie. */
+.docview-pdf {
+  width: min(860px, 88vw); height: 76vh;
+  border: 0; border-radius: 10px; background: #fff;
+}
 @media (prefers-reduced-motion: reduce) {
   .docview, .docview-overlay { animation: none; }
 }
