@@ -248,6 +248,111 @@ test('un membre hors des regles se convoque a la main, avec son motif', async ()
   assert.equal(hist.status, 'passed')
 })
 
+test('exactement trois mois le jour de la session : eligible', async () => {
+  const s = uniq()
+  // La borne est « au moins trois mois », pas « plus de trois mois ». Un
+  // membre qui les atteint pile le jour du passage doit passer.
+  const session = inDays(40)
+  const exactly = new Date(`${session}T00:00:00Z`)
+  exactly.setUTCMonth(exactly.getUTCMonth() - 3)
+  const joinDate = exactly.toISOString().slice(0, 10)
+
+  const m = await club.call('POST', '/api/members', {
+    name: `Pile ${s}`, phone: `0640${s.slice(0, 6)}`,
+    disciplineId, joinDate, subExpiry: inDays(300),
+  })
+  assert.equal(m.status, 201, JSON.stringify(m.data))
+
+  const view = await club.call('GET', `/api/grades?date=${session}`)
+  assert.ok(view.data.eligible.some(e => e.id === m.data.id),
+    `inscrit le ${joinDate} pour une session le ${session} : trois mois pile, il doit etre eligible`)
+
+  // Et un jour de moins ne suffit pas : la borne est bien la, pas ailleurs.
+  const s2 = uniq()
+  const tooYoung = new Date(`${session}T00:00:00Z`)
+  tooYoung.setUTCMonth(tooYoung.getUTCMonth() - 3)
+  tooYoung.setUTCDate(tooYoung.getUTCDate() + 1)
+  const m2 = await club.call('POST', '/api/members', {
+    name: `Presque ${s2}`, phone: `0641${s2.slice(0, 6)}`,
+    disciplineId, joinDate: tooYoung.toISOString().slice(0, 10), subExpiry: inDays(300),
+  })
+  const view2 = await club.call('GET', `/api/grades?date=${session}`)
+  assert.ok(!view2.data.eligible.some(e => e.id === m2.data.id),
+    'un jour de moins que trois mois ne doit pas suffire')
+})
+
+test('un passage ne se juge pas avant sa date', async () => {
+  const s = uniq()
+  const m = await club.call('POST', '/api/members', {
+    name: `Futur ${s}`, phone: `0642${s.slice(0, 6)}`,
+    disciplineId, joinDate: monthsAgo(10), subExpiry: inDays(300),
+  })
+  const conv = await club.call('POST', '/api/grades/sessions', {
+    memberId: m.data.id, scheduledDate: inDays(20), toGradeId: ladder[0].id,
+  })
+  assert.equal(conv.status, 201)
+
+  // Le bouton est grise cote ecran, mais un bouton grise est une politesse,
+  // pas une regle : la route doit refuser d'elle-meme.
+  const early = await club.call('POST', `/api/grades/sessions/${conv.data.id}/decision`,
+    { passed: true })
+  assert.ok(early.status >= 400, `juge en avance, statut ${early.status}`)
+
+  const list = await club.call('GET', '/api/members?limit=200')
+  assert.equal(list.data.members.find(x => x.id === m.data.id).grade_label, null,
+    'aucune ceinture ne doit avoir ete accordee')
+})
+
+test('un passage ne se juge qu une fois', async () => {
+  const s = uniq()
+  const m = await club.call('POST', '/api/members', {
+    name: `Unique ${s}`, phone: `0643${s.slice(0, 6)}`,
+    disciplineId, joinDate: monthsAgo(10), subExpiry: inDays(300),
+  })
+  const conv = await club.call('POST', '/api/grades/sessions', {
+    memberId: m.data.id, scheduledDate: inDays(0), toGradeId: ladder[1].id,
+  })
+  assert.equal((await club.call('POST', `/api/grades/sessions/${conv.data.id}/decision`,
+    { passed: true })).status, 200)
+
+  // Le second jugement doit etre refuse. Sans ce garde, un « echoue » pose
+  // apres coup faisait mentir l'historique : le statut passait a echoue, mais
+  // la ceinture restait acquise — seule la reussite la fait monter.
+  const again = await club.call('POST', `/api/grades/sessions/${conv.data.id}/decision`,
+    { passed: false })
+  assert.ok(again.status >= 400, `second jugement accepte, statut ${again.status}`)
+
+  const done = await club.call('GET', '/api/grades')
+  const sess = done.data.sessions.find(x => x.id === conv.data.id)
+  assert.equal(sess.status, 'passed', 'le resultat d origine doit tenir')
+  const list = await club.call('GET', '/api/members?limit=200')
+  assert.equal(list.data.members.find(x => x.id === m.data.id).grade_label, ladder[1].label)
+})
+
+test('la ceinture du tableau des membres suit le passage reussi', async () => {
+  const s = uniq()
+  const m = await club.call('POST', '/api/members', {
+    name: `Tableau ${s}`, phone: `0644${s.slice(0, 6)}`,
+    disciplineId, joinDate: monthsAgo(10), subExpiry: inDays(300),
+  })
+  const id = m.data.id
+
+  const before = await club.call('GET', '/api/members?limit=200')
+  const b = before.data.members.find(x => x.id === id)
+  assert.equal(b.grade_label, null, 'sans grade au depart')
+
+  const conv = await club.call('POST', '/api/grades/sessions', {
+    memberId: id, scheduledDate: inDays(0), toGradeId: ladder[2].id,
+  })
+  await club.call('POST', `/api/grades/sessions/${conv.data.id}/decision`, { passed: true })
+
+  // Meme source de verite que l'ecran des passages : members.grade_id.
+  const after = await club.call('GET', '/api/members?limit=200')
+  const a = after.data.members.find(x => x.id === id)
+  assert.equal(a.grade_label, ladder[2].label)
+  assert.equal(a.grade_color, ladder[2].color, 'la vraie couleur de la ceinture, pas l accent')
+})
+
 test('un membre deja convoque ne l est pas deux fois', async () => {
   const s = uniq()
   const m = await club.call('POST', '/api/members', {
@@ -262,6 +367,33 @@ test('un membre deja convoque ne l est pas deux fois', async () => {
   const list = await club.call('GET', '/api/grades/schedulable')
   assert.ok(!list.data.members.some(p => p.id === id),
     'une convocation en attente tient la place, meme pour la saisie manuelle')
+
+  // Et la route refuse d'elle-meme : un filtre d'affichage n'est pas une
+  // regle. Deux onglets ouverts suffisaient a convoquer deux fois.
+  const twice = await club.call('POST', '/api/grades/sessions', {
+    memberId: id, scheduledDate: inDays(30), toGradeId: ladder[0].id,
+  })
+  assert.ok(twice.status >= 400, `double convocation acceptee, statut ${twice.status}`)
+})
+
+test('la date de session affichee est bien celle du cycle, sans decalage', async () => {
+  // Le KPI affiche « convoques pour le <date de session> ». Cette date vient
+  // du serveur ; on verifie qu'elle tombe sur la grille et dans l'annee
+  // attendue, pour qu'aucun decalage d'annee ne puisse s'y glisser.
+  const view = await club.call('GET', '/api/grades')
+  const d = view.data.sessionDate
+  const today = new Date().toISOString().slice(0, 10)
+  assert.equal(d, view.data.nextSessionDate, 'sans date choisie, la session est la prochaine')
+  assert.ok(d >= today, 'la prochaine session ne peut pas etre passee')
+  assert.ok(isOnGrid(view.data.anchorMonth, d), `${d} doit tomber sur la grille`)
+  // Au plus un an devant : la grille a quatre dates par an.
+  const inAYear = new Date(); inAYear.setUTCFullYear(inAYear.getUTCFullYear() + 1)
+  assert.ok(d <= inAYear.toISOString().slice(0, 10),
+    `${d} est trop loin : la prochaine session ne peut pas depasser un an`)
+
+  // Et une date explicite est rendue telle quelle, sans reinterpretation.
+  const picked = await club.call('GET', '/api/grades?date=2026-12-01')
+  assert.equal(picked.data.sessionDate, '2026-12-01')
 })
 
 test('le mois d ancrage se regle et deplace la grille', async () => {

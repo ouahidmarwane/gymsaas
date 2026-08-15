@@ -11,6 +11,7 @@ import EditablePage from '@/components/EditablePage'
 import SlidingTabs from '@/components/SlidingTabs'
 import GradeCalendar from '@/components/GradeCalendar'
 import GradeScheduleModal from '@/components/GradeScheduleModal'
+import { isOnGrid } from '@/src/club/grade-cycle'
 
 /*
   Ecran unique des passages de grade.
@@ -169,7 +170,15 @@ export default function GradesPage() {
 
   const sessionDate = data?.sessionDate ?? ''
   const left = sessionDate ? daysTo(sessionDate) : 0
-  const offGrid = Boolean(date) && date !== data?.nextSessionDate
+  // Deux situations differentes, qu'un seul libelle confondait.
+  //
+  //   « hors cycle »   — la date ne tombe pas sur la grille du club.
+  //   « autre session » — elle y tombe, mais ce n'est pas la prochaine.
+  //
+  // Tout ce qui n'etait pas la prochaine date etait etiquete « hors cycle » :
+  // le 1er decembre, une vraie session du cycle, passait pour une exception.
+  const onGrid = data ? isOnGrid(data.anchorMonth, sessionDate) : true
+  const moved = Boolean(date) && date !== data?.nextSessionDate
 
   return (
     <EditablePage
@@ -416,11 +425,13 @@ export default function GradesPage() {
             <input id="grade-date" className="input-dark" type="date" style={{ width: 'auto' }}
                    value={sessionDate.slice(0, 10)}
                    onChange={e => setDate(e.target.value || null)} />
-            {offGrid && (
+            {moved && (
               <>
-                <span className="grade-offgrid">hors cycle</span>
+                <span className="grade-offgrid">
+                  {onGrid ? 'autre session du cycle' : 'hors cycle'}
+                </span>
                 <button className="grade-btn" onClick={() => setDate(null)}>
-                  <RefreshCw size={12} strokeWidth={2.2} /> Revenir au cycle
+                  <RefreshCw size={12} strokeWidth={2.2} /> Revenir à la prochaine
                 </button>
               </>
             )}

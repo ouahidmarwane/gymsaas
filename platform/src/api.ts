@@ -724,6 +724,9 @@ export const api = {
           sessionId: gradeDecide[1]!,
           passed: body.passed === true,
           notes: optional(body.notes, 500),
+          // Le jour vient du serveur : une machine mal reglee, ou un client
+          // qui mentirait, ne doit pas pouvoir juger un passage a l'avance.
+          today: new Date().toISOString().slice(0, 10),
           actorId: principal.userId, actorName: principal.name,
         })
         return json({ ok: true })

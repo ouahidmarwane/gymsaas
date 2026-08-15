@@ -1343,6 +1343,21 @@ export class ClubDatabase extends DurableObject<Env> {
         'SELECT grade_id, discipline_id, name FROM members WHERE id = ?', input.memberId,
       ).one()
 
+    // Une seule convocation en attente par membre.
+    //
+    // Les deux listes filtrent deja ceux qui en ont une, mais un filtre
+    // d'affichage n'est pas une regle : deux onglets ouverts, ou un appel
+    // direct, et le membre se retrouvait convoque deux fois pour le meme
+    // passage. La regle vit ici, ou personne ne peut la contourner.
+    const already = this.sql.exec<{ scheduled_date: string }>(
+      `SELECT scheduled_date FROM grade_sessions
+        WHERE member_id = ? AND status = 'pending' LIMIT 1`,
+      input.memberId,
+    ).toArray()[0]
+    if (already) {
+      throw new Error(`${member.name} a deja une convocation en attente pour le ${already.scheduled_date}`)
+    }
+
     // Le niveau vise par defaut est le suivant sur l'echelle de SA discipline.
     const next = this.sql.exec<{ id: string }>(
       `SELECT id FROM grade_levels
@@ -1386,12 +1401,34 @@ export class ClubDatabase extends DurableObject<Env> {
 
   decideGradeSession(input: {
     sessionId: string; passed: boolean; notes?: string | null
+    /** Le jour, fourni par le routeur : le serveur ne se fie pas au client. */
+    today: string
     actorId?: string; actorName?: string
   }): void {
     const session = this.sql
-      .exec<{ member_id: string; to_grade_id: string | null }>(
-        'SELECT member_id, to_grade_id FROM grade_sessions WHERE id = ?', input.sessionId,
+      .exec<{ member_id: string; to_grade_id: string | null; status: string; scheduled_date: string }>(
+        `SELECT member_id, to_grade_id, status, scheduled_date
+           FROM grade_sessions WHERE id = ?`, input.sessionId,
       ).one()
+
+    // Un passage ne se juge pas avant d'avoir eu lieu.
+    //
+    // L'ecran desactive deja les boutons avant la date, mais un bouton grise
+    // est une politesse, pas une regle : la route restait ouverte, et une
+    // ceinture pouvait etre accordee pour une session prevue le mois suivant.
+    if (session.scheduled_date.slice(0, 10) > input.today.slice(0, 10)) {
+      throw new Error(`Ce passage est prevu le ${session.scheduled_date} : il ne peut pas encore etre juge`)
+    }
+
+    // Un resultat ne se juge qu'une fois.
+    //
+    // Sans ce garde, un second appel pouvait faire passer un passage de
+    // « reussi » a « echoue » — sans jamais redescendre la ceinture, puisque
+    // seule la reussite la fait monter. Le membre gardait un grade que son
+    // historique disait rate.
+    if (session.status !== 'pending') {
+      throw new Error('Ce passage a deja ete juge')
+    }
 
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(

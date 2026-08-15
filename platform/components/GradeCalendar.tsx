@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { gradeGrid } from '@/src/club/grade-cycle'
 
@@ -60,6 +60,18 @@ export default function GradeCalendar({
   // courant : c'est la que l'on a quelque chose a regarder.
   const [cursor, setCursor] = useState(() => selected.slice(0, 7))
   const [year, month] = cursor.split('-').map(Number) as [number, number]
+
+  // Et il la SUIT quand elle bouge ailleurs — le champ date, ou le rappel
+  // « + 1 sur une autre date ». Sans cela le calendrier restait sur son mois
+  // et le jour mis en avant se trouvait hors ecran : on croyait regarder la
+  // session choisie alors qu'on regardait un autre mois.
+  useEffect(() => {
+    const target = selected.slice(0, 7)
+    if (target && target !== cursor) setCursor(target)
+    // `cursor` volontairement absent : on ne veut reagir qu'au deplacement de
+    // la selection, pas ramener l'utilisateur en arriere des qu'il feuillette.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected])
 
   const cells = useMemo(() => monthCells(year, month), [year, month])
   const cycle = useMemo(() => new Set(gradeGrid(anchorMonth, year)), [anchorMonth, year])

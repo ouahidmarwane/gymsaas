@@ -301,8 +301,12 @@ export default function MembersPage() {
 
                       {showBelt && (
                         <td style={{ padding: '0.85rem 1rem' }}>
-                          {m.grade_label ? <BeltBadge label={m.grade_label} color={m.grade_color} />
-                            : <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>—</span>}
+                          {/* « sans grade » plutot qu'un tiret : le tiret veut
+                              dire « pas d'information », alors qu'ici on sait
+                              exactement ou en est le membre — il n'a pas encore
+                              passe sa premiere ceinture. C'est justement lui
+                              qu'on cherche dans la liste des eligibles. */}
+                          <BeltBadge label={m.grade_label ?? 'sans grade'} color={m.grade_color} />
                         </td>
                       )}
 
@@ -488,6 +492,14 @@ function Avatar({ member }: { member: MemberRow }) {
 /**
  * La ceinture porte sa vraie couleur, declaree par le club.
  * Une pastille grise pour « ceinture noire » ne dit rien a personne.
+ *
+ * Une seule pastille, et non une par discipline : un membre n'appartient
+ * qu'a une discipline (`members.discipline_id`), donc son grade est deja
+ * celui de sa discipline. Une colonne multi-pastilles decrirait un modele
+ * de donnees qui n'existe pas.
+ *
+ * Meme source de verite que l'ecran des passages : `members.grade_id`, que
+ * la decision d'un passage reussi fait avancer. Aucun calcul parallele.
  */
 function BeltBadge({ label, color }: { label: string; color: string | null }) {
   const tint = color ?? '#94a3b8'
