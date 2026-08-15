@@ -52,7 +52,16 @@ const CLUBS = [
     email: 'karate@demo.ma', accent: '#0e4f8f',
     branches: ['Salle Sbata', 'Salle Rachad'],
     disciplines: [
-      { name: 'Karate', grades: ['Blanche', 'Jaune', 'Orange', 'Verte', 'Bleue', 'Marron', 'Noire'] },
+      // Les ceintures portent leur vraie couleur. Sans elle, l'ecran des
+      // passages et la colonne Ceinture affichent sept pastilles grises
+      // identiques : « Blanche » et « Noire » deviennent indiscernables au
+      // premier coup d'oeil, ce qui est exactement ce que la pastille est
+      // censee eviter.
+      { name: 'Karate', grades: [
+        ['Blanche', '#e5e7eb'], ['Jaune', '#facc15'], ['Orange', '#fb923c'],
+        ['Verte', '#22c55e'], ['Bleue', '#3b82f6'], ['Marron', '#92400e'],
+        ['Noire', '#111827'],
+      ] },
       { name: 'Aerobic', grades: [] },
     ],
     members: [
@@ -67,7 +76,12 @@ const CLUBS = [
     email: 'judo@demo.ma', accent: '#1f6b47',
     branches: ['Dojo Central'],
     disciplines: [
-      { name: 'Judo', grades: ['6e kyu', '5e kyu', '4e kyu', '3e kyu', '2e kyu', '1er kyu', '1er dan'] },
+      // Le judo compte a rebours : le 6e kyu est le premier niveau.
+      { name: 'Judo', grades: [
+        ['6e kyu', '#e5e7eb'], ['5e kyu', '#facc15'], ['4e kyu', '#fb923c'],
+        ['3e kyu', '#22c55e'], ['2e kyu', '#3b82f6'], ['1er kyu', '#92400e'],
+        ['1er dan', '#111827'],
+      ] },
     ],
     members: [
       ['Rachid Amrani', '0662000001'], ['Imane Saidi', '0662000002'],
@@ -130,7 +144,7 @@ for (const club of CLUBS) {
   for (const d of club.disciplines) {
     const { id } = await call('POST', '/api/disciplines', {
       name: d.name,
-      grades: d.grades.map(label => ({ label })),
+      grades: d.grades.map(([label, color]) => ({ label, color })),
     })
     disciplineIds.push(id)
   }
