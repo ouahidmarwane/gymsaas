@@ -12,7 +12,21 @@ import assert from 'node:assert/strict'
 import { BASE, client, createOperator, uniq, waitReady } from './helpers.mjs'
 
 let ops, clubId, victimEmail
-const FAKE_IP = '203.0.113.77'   // plage TEST-NET-3, jamais routee
+
+/**
+ * Adresse forgee, tiree au sort a chaque execution.
+ *
+ * Fixe, elle rendait le fichier dependant du nombre de fois qu'on l'avait
+ * deja lance : ce test fabrique volontairement quatre echecs de connexion,
+ * la table `login_attempts` les garde pendant sa fenetre, et au troisieme
+ * passage le plafond par IP etait atteint — « debloquer rouvre la porte »
+ * recevait un 429 au lieu d'un 200, puis tout ce qui se connecte ensuite
+ * echouait a son tour. Le limiteur faisait son travail ; c'est le test qui
+ * comptait sur une base vierge.
+ *
+ * Plage TEST-NET-3 (203.0.113.0/24), jamais routee sur Internet.
+ */
+const FAKE_IP = `203.0.113.${10 + Math.floor(Math.random() * 200)}`
 
 /** Requete avec une adresse forgee : en local le Worker lit cet en-tete. */
 async function from(ip, method, path, body) {

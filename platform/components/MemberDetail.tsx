@@ -233,16 +233,6 @@ function PhotoHero({ member, photo, initial, color, canWrite, onChanged, head, t
     }
   }
 
-  async function remove() {
-    setBusy(true); setProblem(null)
-    try {
-      await api.del(`/api/members/${member.id}/photo`)
-      await onChanged()
-    } catch (e) {
-      setProblem(e instanceof ApiError ? e.message : 'Suppression impossible')
-    } finally { setBusy(false) }
-  }
-
   return (
     <div className={`mdet-hero${photo ? '' : ' empty'}`}>
       {photo
@@ -268,6 +258,13 @@ function PhotoHero({ member, photo, initial, color, canWrite, onChanged, head, t
         <div className="mdet-hero-phone">Mobile <b>{member.phone}</b></div>
       </div>
 
+      {/*
+        Deux boutons, pas trois. La corbeille etait ici, collee a la croix de
+        fermeture : un geste manque supprimait la photo sans rien demander.
+        Une action destructrice n'a rien a faire a cote du bouton que l'on
+        vise le plus souvent. Le retrait vit dans « Modifier », ou l'on va
+        deja quand on veut changer quelque chose, et il demande confirmation.
+      */}
       <div className="mdet-hero-tools">
         {/* Voir : disponible meme sans droit d'ecriture. Regarder une photo
             n'est pas la modifier. */}
@@ -283,12 +280,6 @@ function PhotoHero({ member, photo, initial, color, canWrite, onChanged, head, t
                   title={photo ? 'Remplacer la photo' : 'Ajouter une photo'}
                   aria-label={photo ? 'Remplacer la photo' : 'Ajouter une photo'}>
             <Camera size={15} strokeWidth={2.2} />
-          </button>
-        )}
-        {canWrite && photo && (
-          <button className="mdet-hero-btn" disabled={busy} onClick={remove}
-                  title="Retirer la photo" aria-label="Retirer la photo">
-            <Trash2 size={15} strokeWidth={2.2} />
           </button>
         )}
         {canWrite && (

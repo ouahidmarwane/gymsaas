@@ -2172,13 +2172,39 @@ html:not([data-theme='light']) .member-row .text-red-600 {
    JavaScript, la courbe et la duree restent ici. La sortie est deux fois
    plus courte que l'entree : on attend une fenetre qui s'ouvre, on n'attend
    pas une fenetre qui part. */
+/*
+  La feuille de papier.
+
+  Une boule froissee au point ou l'on a clique, qui s'ouvre : le rayon part
+  de 50 % — un cercle — et rejoint celui de la carte ; l'echelle s'ouvre
+  d'abord en largeur, puis se deploie en hauteur, comme une feuille qu'on
+  deplie dans un sens puis dans l'autre.
+
+  Le rayon final n'est PAS declare a 100 % : chaque modale a le sien (22 px
+  pour la fiche, 20 pour la visionneuse, 24 pour le panneau elargi). Une
+  image-cle omise reprend la valeur propre de l'element — l'ecrire ici les
+  aurait toutes ramenees a la meme.
+
+  Le flou du debut n'est pas decoratif : il couvre la deformation du texte
+  pendant que la carte est ecrasee. Sans lui, on lit des lettres etirees.
+*/
 @keyframes modalGrow {
-  from { opacity: 0; transform: scale(0.78); }
-  to   { opacity: 1; transform: none; }
+  0%   { opacity: 0; border-radius: 50%; filter: blur(5px);
+         transform: scale(0.2) rotate(-11deg); }
+  35%  { opacity: 1; border-radius: 44%; filter: blur(2px);
+         transform: scale(0.62) rotate(-4deg); }
+  65%  { border-radius: 30%; filter: none;
+         transform: scaleX(1.02) scaleY(0.82) rotate(0deg); }
+  100% { opacity: 1; filter: none; transform: none; }
 }
+
+/* Elle se referme en boule, deux fois plus vite. */
 @keyframes modalFold {
-  from { opacity: 1; transform: none; }
-  to   { opacity: 0; transform: scale(0.82); }
+  0%   { opacity: 1; transform: none; }
+  55%  { opacity: 1; border-radius: 32%; filter: blur(1px);
+         transform: scaleX(0.94) scaleY(0.5) rotate(3deg); }
+  100% { opacity: 0; border-radius: 50%; filter: blur(4px);
+         transform: scale(0.22) rotate(10deg); }
 }
 @keyframes overlayOut {
   from { opacity: 1; }
@@ -2187,7 +2213,9 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 
 .compta-modal-overlay.is-closing,
 .docview-overlay.is-closing {
-  animation: overlayOut 0.2s ease forwards;
+  /* Le voile part un peu apres la carte : elle doit avoir fini de se
+     replier quand le fond disparait, pas l'inverse. */
+  animation: overlayOut 0.26s ease 0.04s forwards;
   /* Le fond ne se reclique pas pendant qu'il s'en va. */
   pointer-events: none;
 }
@@ -2195,11 +2223,11 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 .compta-modal-overlay.is-closing .compta-modal,
 .compta-modal-overlay.is-closing .compta-expand-modal,
 .docview-overlay.is-closing .docview {
-  animation: modalFold 0.2s cubic-bezier(0.4, 0, 1, 1) both;
+  animation: modalFold 0.26s cubic-bezier(0.4, 0, 0.9, 1) both;
 }
 
 .compta-expand-modal {
-  animation: modalGrow 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: modalGrow 0.52s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2212,7 +2240,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 }
 
 .compta-modal {
-  animation: modalGrow 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: modalGrow 0.52s cubic-bezier(0.22, 1, 0.36, 1) both;
   background: var(--float-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
@@ -5877,7 +5905,12 @@ html[data-theme='light'] .mdet-wash { opacity: 0.09; }
 .mdet-hero-phone b { font-weight: 700; color: #fff; font-variant-numeric: tabular-nums; }
 
 .mdet-hero-tools {
-  position: absolute; inset-inline-end: 1.1rem; top: 1rem;
+  position: absolute; top: 1rem;
+  /* Degage la place de la croix, qui est posee sur la carte et non dans le
+     bandeau. A 1,1rem comme elle, les deux se superposaient exactement, a
+     z-index egal : le dernier peint gagnait, et l'outil dessous devenait
+     invisible mais toujours cliquable. */
+  inset-inline-end: 3.9rem;
   display: flex; gap: 6px; z-index: 3;
 }
 .mdet-hero-btn {
@@ -6043,7 +6076,7 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   border: 1px solid var(--overlay-strong);
   border-radius: 20px; overflow: hidden;
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.6);
-  animation: modalGrow 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: modalGrow 0.52s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .docview-bar {
   display: flex; align-items: center; gap: 1rem;

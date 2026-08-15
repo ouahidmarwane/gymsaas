@@ -36,7 +36,13 @@ if (typeof document !== 'undefined') {
 /** Au-dela, le clic n'a plus rien a voir avec cette ouverture. */
 const POINTER_TTL_MS = 1500
 
-export function useModalMotion(onClose: () => void, ms = 200) {
+/**
+ * Duree du repliement, en accord avec `modalFold` dans la feuille de style.
+ * Plus court ici, et le demontage couperait l'animation en plein vol.
+ */
+const FOLD_MS = 260
+
+export function useModalMotion(onClose: () => void, ms = FOLD_MS) {
   const [closing, setClosing] = useState(false)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)

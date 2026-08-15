@@ -80,9 +80,16 @@ export default function MemberModal({
   }
 
   async function dropPhoto() {
-    setPhotoFile(null)
-    if (fileRef.current) fileRef.current.value = ''
+    // Un simple choix de fichier s'annule sans rien detruire.
+    if (photoFile) {
+      setPhotoFile(null)
+      if (fileRef.current) fileRef.current.value = ''
+      return
+    }
     if (!editing || !member.photo_key) { setPhotoGone(true); return }
+    // Le fichier part de R2 et ne revient pas : c'est le dernier endroit
+    // d'ou l'on peut supprimer une photo, et il doit le demander.
+    if (!confirm(`Supprimer définitivement la photo de ${member.name} ?`)) return
     setBusy(true)
     try {
       await api.del(`/api/members/${member.id}/photo`)
