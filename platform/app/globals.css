@@ -5742,11 +5742,23 @@ html[data-theme='light'] .row-menu {
      section, sinon un bandeau encadre de vide ne ferait pas illusion. */
   padding: 0;
   position: relative;
-  /* Horizontalement rogne, pour que la photo epouse les coins arrondis ;
-     verticalement defilant, sinon les boutons du bas deviennent
-     inaccessibles sur un portable. */
-  overflow: hidden auto;
+  /* La carte ne defile pas : elle decoupe. Le defilement est confie a
+     .mdet-scroll, qui n'a pas de rayon. Quand c'etait la carte qui defilait,
+     la gouttiere de la barre carrait ses deux coins de droite — un
+     navigateur peint la barre dans un couloir rectangulaire, hors de
+     l'arrondi. Clippee par un parent arrondi, elle le suit. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   animation: mdetRise 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.mdet-scroll {
+  /* min-height: 0 — sans lui, un enfant flexible refuse de retrecir sous sa
+     hauteur de contenu et ne defile jamais. */
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 @keyframes mdetRise {
   from { opacity: 0; transform: translateY(14px) scale(0.985); }
@@ -6034,15 +6046,19 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 /* La barre de la modale, plus discrete encore que celle de la page : elle
    court le long d'un bord arrondi, a deux centimetres du texte. Elle ne se
    montre franchement qu'au survol de la carte. */
-.compta-modal { scrollbar-color: var(--overlay) transparent; }
-.compta-modal::-webkit-scrollbar { width: 6px; }
-.compta-modal::-webkit-scrollbar-thumb {
+.compta-modal, .mdet-scroll { scrollbar-color: var(--overlay) transparent; }
+.compta-modal::-webkit-scrollbar, .mdet-scroll::-webkit-scrollbar { width: 6px; }
+.compta-modal::-webkit-scrollbar-thumb,
+.mdet-scroll::-webkit-scrollbar-thumb {
   background: var(--overlay);
   border: 1px solid transparent;
   background-clip: padding-box;
 }
-.compta-modal:hover { scrollbar-color: var(--overlay-strong) transparent; }
-.compta-modal:hover::-webkit-scrollbar-thumb {
+.compta-modal:hover, .mdet:hover .mdet-scroll {
+  scrollbar-color: var(--overlay-strong) transparent;
+}
+.compta-modal:hover::-webkit-scrollbar-thumb,
+.mdet:hover .mdet-scroll::-webkit-scrollbar-thumb {
   background: var(--overlay-strong);
   background-clip: padding-box;
 }

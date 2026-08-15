@@ -65,13 +65,24 @@ export default function MemberDetail({
          style={{ '--mdet-tint': color } as React.CSSProperties}>
       <div className="compta-modal mdet" onClick={e => e.stopPropagation()}
            style={photo ? ({ '--mdet-photo': `url("${photo}")` } as React.CSSProperties) : undefined}>
-        {/* Le prolongement de la photo : floute, tres pale, il descend
-            derriere les coordonnees et s'efface avant les boutons. */}
-        <div className="mdet-wash" aria-hidden="true" />
-
+        {/* Hors du defilement : la croix reste sous la main quand on descend
+            dans la fiche, et elle ne passe pas sous la barre. */}
         <button className="mdet-close" onClick={onClose} aria-label="Fermer">
           <X size={16} strokeWidth={2.4} />
         </button>
+
+        {/*
+          Le defilement vit ici, dans un enfant sans rayon, pendant que la
+          carte garde le sien avec overflow: hidden. Sur la carte elle-meme,
+          la gouttiere de la barre carrait les deux coins de droite : un
+          navigateur peint la barre dans un couloir rectangulaire, et le
+          rayon du conteneur ne s'y applique pas. Clippee par le parent, elle
+          suit maintenant l'arrondi.
+        */}
+        <div className="mdet-scroll">
+        {/* Le prolongement de la photo : floute, tres pale, il descend
+            derriere les coordonnees et s'efface avant les boutons. */}
+        <div className="mdet-wash" aria-hidden="true" />
 
         {/*
           Le portrait tient tout le haut, bord a bord, et le nom se pose
@@ -149,6 +160,7 @@ export default function MemberDetail({
         <h3 className="mdet-section">Documents</h3>
         <IdentityDoc member={member} canWrite={canWrite} canDelete={canDelete}
                      onChanged={onChanged} />
+        </div>
         </div>
       </div>
     </div>
