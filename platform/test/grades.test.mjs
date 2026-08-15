@@ -396,6 +396,142 @@ test('la date de session affichee est bien celle du cycle, sans decalage', async
   assert.equal(picked.data.sessionDate, '2026-12-01')
 })
 
+// 5 — Correction d'un resultat ---------------------------------------------
+
+test('un echec saisi par erreur se corrige, et la ceinture remonte', async () => {
+  const s = uniq()
+  const m = await club.call('POST', '/api/members', {
+    name: `Mal note ${s}`, phone: `0645${s.slice(0, 6)}`,
+    disciplineId, joinDate: monthsAgo(10), subExpiry: inDays(300),
+  })
+  const id = m.data.id
+  const conv = await club.call('POST', '/api/grades/sessions', {
+    memberId: id, scheduledDate: inDays(0), toGradeId: ladder[1].id,
+  })
+  // Le clic malheureux.
+  await club.call('POST', `/api/grades/sessions/${conv.data.id}/decision`, { passed: false })
+
+  let list = await club.call('GET', '/api/members?limit=200')
+  assert.equal(list.data.members.find(x => x.id === id).grade_label, null,
+    'apres un echec, la ceinture ne bouge pas')
+
+  const fix = await club.call('POST', `/api/grades/sessions/${conv.data.id}/correction`, {
+    passed: true, reason: 'Clic sur le mauvais bouton',
+  })
+  assert.equal(fix.status, 201, JSON.stringify(fix.data))
+
+  list = await club.call('GET', '/api/members?limit=200')
+  assert.equal(list.data.members.find(x => x.id === id).grade_label, ladder[1].label,
+    'la correction doit faire monter la ceinture')
+
+  // L'original reste, marque corrige : on ne reecrit pas l'histoire.
+  const view = await club.call('GET', '/api/grades')
+  const orig = view.data.sessions.find(x => x.id === conv.data.id)
+  assert.equal(orig.status, 'failed', 'la ligne d origine garde son resultat')
+  assert.equal(orig.corrected, 1, 'et se signale comme corrigee')
+  const made = view.data.sessions.find(x => x.corrects_id === conv.data.id)
+  assert.equal(made.status, 'passed')
+  assert.match(made.correction_reason, /mauvais bouton/i)
+  assert.ok(made.decided_at, 'la correction est horodatee')
+  assert.equal(made.scheduled_date.slice(0, 10), orig.scheduled_date.slice(0, 10),
+    'la correction ne deplace pas la date du passage')
+})
+
+test('une reussite corrigee en echec fait redescendre la ceinture', async () => {
+  const s = uniq()
+  const m = await club.call('POST', '/api/members', {
+    name: `Trop note ${s}`, phone: `0646${s.slice(0, 6)}`,
+    disciplineId, joinDate: monthsAgo(10), subExpiry: inDays(300),
+  })
+  const id = m.data.id
+  const conv = await club.call('POST', '/api/grades/sessions', {
+    memberId: id, scheduledDate: inDays(0), toGradeId: ladder[0].id,
+  })
+  await club.call('POST', `/api/grades/sessions/${conv.data.id}/decision`, { passed: true })
+
+  assert.equal((await club.call('POST', `/api/grades/sessions/${conv.data.id}/correction`, {
+    passed: false, reason: 'Confondu avec un homonyme',
+  })).status, 201)
+
+  const list = await club.call('GET', '/api/members?limit=200')
+  assert.equal(list.data.members.find(x => x.id === id).grade_label, null,
+    'la ceinture doit revenir a celle d avant le passage')
+})
+
+test('le taux de reussite ne compte pas deux fois un passage corrige', async () => {
+  // Un passage corrige, c'est UN passage. Compter la ligne d origine et sa
+  // correction gonflerait a la fois les reussites et les echecs.
+  const view = await club.call('GET', '/api/grades')
+  const sessions = view.data.sessions.filter(x => x.status !== 'pending')
+  const counted = sessions.filter(x => x.corrected !== 1)
+  assert.equal(view.data.stats.passed, counted.filter(x => x.status === 'passed').length)
+  assert.equal(view.data.stats.failed, counted.filter(x => x.status === 'failed').length)
+  assert.ok(sessions.length > counted.length, 'il y a bien des lignes corrigees dans ce club')
+})
+
+test('une correction ne se fait qu une fois, et pas n importe comment', async () => {
+  const s = uniq()
+  const m = await club.call('POST', '/api/members', {
+    name: `Une fois ${s}`, phone: `0647${s.slice(0, 6)}`,
+    disciplineId, joinDate: monthsAgo(10), subExpiry: inDays(300),
+  })
+  const conv = await club.call('POST', '/api/grades/sessions', {
+    memberId: m.data.id, scheduledDate: inDays(0), toGradeId: ladder[0].id,
+  })
+
+  // Rien a corriger tant que rien n'est juge.
+  const early = await club.call('POST', `/api/grades/sessions/${conv.data.id}/correction`,
+    { passed: true, reason: 'trop tot' })
+  assert.ok(early.status >= 400, 'un passage en attente ne se corrige pas')
+
+  await club.call('POST', `/api/grades/sessions/${conv.data.id}/decision`, { passed: false })
+
+  // Un motif est exige : c'est lui qui expliquera l'ecart dans six mois.
+  assert.equal((await club.call('POST', `/api/grades/sessions/${conv.data.id}/correction`,
+    { passed: true, reason: 'ok' })).status, 400, 'motif trop court refuse')
+
+  // Corriger vers le meme resultat n'a pas de sens.
+  assert.ok((await club.call('POST', `/api/grades/sessions/${conv.data.id}/correction`,
+    { passed: false, reason: 'motif valable' })).status >= 400)
+
+  assert.equal((await club.call('POST', `/api/grades/sessions/${conv.data.id}/correction`,
+    { passed: true, reason: 'erreur de saisie averee' })).status, 201)
+
+  // Et une seule fois : la ceinture ne doit pas dependre de l ordre des clics.
+  const twice = await club.call('POST', `/api/grades/sessions/${conv.data.id}/correction`,
+    { passed: false, reason: 'je change encore d avis' })
+  assert.ok(twice.status >= 400, `seconde correction acceptee, statut ${twice.status}`)
+})
+
+test('corriger est refuse au comptoir', async () => {
+  const s = uniq()
+  const staffEmail = `staff-gr-${s}@example.ma`
+  const invited = await club.call('POST', '/api/staff', {
+    name: 'Comptoir', email: staffEmail, password: 'motdepasse-solide-st', role: 'staff',
+  })
+  if (invited.status !== 201) return
+
+  const m = await club.call('POST', '/api/members', {
+    name: `Role ${s}`, phone: `0648${s.slice(0, 6)}`,
+    disciplineId, joinDate: monthsAgo(10), subExpiry: inDays(300),
+  })
+  const conv = await club.call('POST', '/api/grades/sessions', {
+    memberId: m.data.id, scheduledDate: inDays(0), toGradeId: ladder[0].id,
+  })
+
+  const staff = client()
+  assert.equal((await staff.call('POST', '/api/auth/login', {
+    email: staffEmail, password: 'motdepasse-solide-st',
+  })).status, 200)
+
+  // Le comptoir juge le passage — c'est son travail.
+  assert.equal((await staff.call('POST', `/api/grades/sessions/${conv.data.id}/decision`,
+    { passed: false })).status, 200)
+  // Mais il ne reecrit pas l'historique.
+  assert.equal((await staff.call('POST', `/api/grades/sessions/${conv.data.id}/correction`,
+    { passed: true, reason: 'je corrige moi meme' })).status, 403)
+})
+
 test('le mois d ancrage se regle et deplace la grille', async () => {
   assert.equal((await club.call('PUT', '/api/grades/settings', { anchorMonth: 1 })).status, 200)
   const view = await club.call('GET', '/api/grades')

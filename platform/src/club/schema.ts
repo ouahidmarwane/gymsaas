@@ -348,4 +348,30 @@ MIGRATIONS.push({
   ],
 })
 
+MIGRATIONS.push({
+  version: 7,
+  name: 'correction-d-un-resultat-de-passage',
+  statements: [
+    // Un resultat mal saisi doit pouvoir etre corrige, sans jamais etre
+    // reecrit — meme regle que pour un encaissement errone.
+    //
+    // La correction est une NOUVELLE ligne qui designe celle qu'elle
+    // remplace. L'ancienne reste, avec sa date et son auteur : c'est la
+    // seule facon de savoir, six mois plus tard, qu'il y a eu une erreur et
+    // qui l'a corrigee. Un UPDATE en place aurait efface l'incident.
+    //
+    // Aucun statut « annule » n'est ajoute : une ligne est corrigee s'il en
+    // existe une autre qui la designe. L'etat se deduit a la lecture, comme
+    // partout ailleurs ici — et cela evite de reconstruire la table pour
+    // elargir une contrainte CHECK.
+    `ALTER TABLE grade_sessions ADD COLUMN corrects_id TEXT
+       REFERENCES grade_sessions(id) ON DELETE SET NULL`,
+    `ALTER TABLE grade_sessions ADD COLUMN correction_reason TEXT`,
+    // Une seule correction par resultat : deux corrections concurrentes du
+    // meme passage laisseraient la ceinture dependre de l'ordre d'arrivee.
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_grade_sessions_corrects
+       ON grade_sessions(corrects_id) WHERE corrects_id IS NOT NULL`,
+  ],
+})
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

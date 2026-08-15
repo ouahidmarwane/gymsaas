@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
-  Award, Check, X, CalendarPlus, CalendarClock, Percent, TriangleAlert, RefreshCw,
+  Award, Check, X, CalendarPlus, CalendarClock, Percent, TriangleAlert, RefreshCw, Undo2,
 } from 'lucide-react'
 import { api, ApiError, type Me } from '@/lib/client'
 import PageState from '@/components/PageState'
@@ -49,6 +49,11 @@ interface Session {
   discipline_id: string | null
   /** Motif, quand la convocation a ete posee hors des regles. */
   notes: string | null
+  /** 1 si une correction remplace cette ligne. Deduit a la lecture. */
+  corrected: number
+  /** Non nul quand CETTE ligne est la correction d'une autre. */
+  corrects_id: string | null
+  correction_reason: string | null
 }
 
 interface Candidate {
@@ -143,6 +148,12 @@ export default function GradesPage() {
 
   const canWrite = me
     ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin', 'staff'].includes(me.org?.role ?? ''))
+    : false
+
+  // Corriger un résultat déjà acté est réservé aux responsables, comme
+  // l'annulation d'un encaissement : le comptoir juge, il ne réécrit pas.
+  const canManage = me
+    ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin'].includes(me.org?.role ?? ''))
     : false
 
   const pending = useMemo(() => data?.sessions.filter(s => s.status === 'pending') ?? [], [data])
@@ -569,9 +580,17 @@ export default function GradesPage() {
           </div>
           <div className="grade-list">
             {history.map(s => (
-              <div key={s.id} className="grade-row">
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
-                               whiteSpace: 'nowrap', fontSize: '0.85rem' }}>{s.member_name}</span>
+              // La ligne corrigee reste affichee, barrée. La faire disparaitre
+              // reviendrait a reecrire l'histoire : on doit pouvoir voir qu'il
+              // y a eu une erreur, et laquelle.
+              <div key={s.id} className={`grade-row${s.corrected === 1 ? ' voided' : ''}`}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis',
+                                 whiteSpace: 'nowrap', fontSize: '0.85rem' }}>{s.member_name}</span>
+                  {s.correction_reason && (
+                    <div className="grade-note">correction : « {s.correction_reason} »</div>
+                  )}
+                </div>
                 <BeltChip label={s.to_label ?? '—'} color={s.to_color} />
                 <span className={`badge ${s.status === 'passed'
                         ? 'text-emerald-300 bg-emerald-500/10 ring-emerald-500/30'
@@ -579,7 +598,26 @@ export default function GradesPage() {
                       style={{ fontSize: '0.58rem', flex: 'none' }}>
                   {s.status === 'passed' ? 'Réussi' : 'Échoué'}
                 </span>
+                {s.corrected === 1 && <span className="grade-voided-tag">corrigé</span>}
                 <span className="dz-card-note" style={{ flex: 'none' }}>{day(s.scheduled_date)}</span>
+
+                {/* Corriger est reserve aux responsables : le comptoir juge
+                    les passages, il ne reecrit pas l'historique. */}
+                {canManage && s.corrected !== 1 && !s.corrects_id && (
+                  <button className="grade-btn" disabled={busy !== null}
+                          title={`Marquer ce passage comme ${s.status === 'passed' ? 'échoué' : 'réussi'}`}
+                          onClick={() => {
+                            const reason = prompt(
+                              `Corriger le résultat de ${s.member_name} en « ${s.status === 'passed' ? 'échoué' : 'réussi'} ».\nMotif :`)
+                            if (!reason || reason.trim().length < 3) return
+                            act(`fix-${s.id}`, () =>
+                              api.post(`/api/grades/sessions/${s.id}/correction`, {
+                                passed: s.status !== 'passed', reason: reason.trim(),
+                              }))
+                          }}>
+                    <Undo2 size={13} strokeWidth={2.2} /> Corriger
+                  </button>
+                )}
               </div>
             ))}
           </div>

@@ -5867,6 +5867,17 @@ html[data-theme='light'] .row-menu {
   overflow-wrap: anywhere;
 }
 
+/* Une ligne corrigee reste lisible mais s'efface : elle raconte ce qui s'est
+   passe, elle ne decrit plus l'etat courant. La faire disparaitre reviendrait
+   a reecrire l'histoire. */
+.grade-row.voided { opacity: 0.55; }
+.grade-row.voided .badge { text-decoration: line-through; }
+.grade-voided-tag {
+  flex: none; padding: 0.1rem 0.5rem; border-radius: 999px;
+  font-size: 0.62rem; font-weight: 700; white-space: nowrap;
+  background: var(--overlay); color: var(--muted);
+}
+
 /* La pastille de ceinture. Le point porte la vraie couleur du grade ; le
    texte reste au jeton du theme, sinon un blanc casse disparaitrait en mode
    clair et un noir en mode sombre. */

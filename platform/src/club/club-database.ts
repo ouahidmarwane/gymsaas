@@ -1158,7 +1158,10 @@ export class ClubDatabase extends DurableObject<Env> {
     return this.sql.exec<Record<string, SqlStorageValue>>(
       `SELECT g.*, m.name AS member_name, m.phone, m.discipline_id,
               f.label AS from_label, f.color AS from_color,
-              t.label AS to_label,   t.color AS to_color
+              t.label AS to_label,   t.color AS to_color,
+              -- « Corrige » n'est pas un statut range en base : c'est le fait
+              -- qu'une autre ligne designe celle-ci. Deduit a la lecture.
+              EXISTS (SELECT 1 FROM grade_sessions c WHERE c.corrects_id = g.id) AS corrected
          FROM grade_sessions g
          JOIN members m ON m.id = g.member_id
          LEFT JOIN grade_levels f ON f.id = g.from_grade_id
@@ -1494,8 +1497,12 @@ export class ClubDatabase extends DurableObject<Env> {
       ? sessions.filter(s => s.discipline_id === opts.disciplineId)
       : sessions
 
-    const passed = filtered.filter(s => s.status === 'passed').length
-    const failed = filtered.filter(s => s.status === 'failed').length
+    // Un resultat corrige ne compte plus : sinon la ligne d'origine ET sa
+    // correction entreraient toutes deux dans le taux, gonflant a la fois les
+    // reussites et les echecs pour un seul passage reellement dispute.
+    const counted = filtered.filter(s => s.corrected !== 1)
+    const passed = counted.filter(s => s.status === 'passed').length
+    const failed = counted.filter(s => s.status === 'failed').length
     const decided = passed + failed
 
     return {
@@ -1532,6 +1539,115 @@ export class ClubDatabase extends DurableObject<Env> {
         successRate: decided > 0 ? Math.round((passed / decided) * 100) : null,
       },
     }
+  }
+
+  /**
+   * Corrige un resultat mal saisi.
+   *
+   * Un instructeur clique « Echoue » au lieu de « Reussi ». Sans chemin de
+   * correction, le membre reste mal note pour toujours : sa ceinture est
+   * fausse, et le passage suivant vise un niveau qu'il possede deja — ou en
+   * saute un.
+   *
+   * Le geste suit la meme regle que l'annulation d'un encaissement : on
+   * n'ecrit jamais par-dessus, on ajoute. La ligne d'origine reste avec sa
+   * date et son auteur ; une nouvelle ligne la designe et porte le bon
+   * resultat. Six mois plus tard, l'historique dit qu'il y a eu une erreur
+   * et qui l'a corrigee — un UPDATE en place aurait efface l'incident.
+   *
+   * La ceinture est remise d'aplomb dans les deux sens : une reussite
+   * corrigee en echec la fait redescendre. C'est precisement ce qu'un simple
+   * changement de statut ne faisait pas, et qui laissait un membre porter un
+   * grade que son historique disait rate.
+   */
+  correctGradeSession(input: {
+    sessionId: string
+    passed: boolean
+    reason: string
+    actorId?: string
+    actorName?: string
+  }): { id: string } {
+    const original = this.sql
+      .exec<{
+        id: string; member_id: string; status: string; corrects_id: string | null
+        from_grade_id: string | null; to_grade_id: string | null; scheduled_date: string
+      }>(
+        `SELECT id, member_id, status, corrects_id, from_grade_id, to_grade_id, scheduled_date
+           FROM grade_sessions WHERE id = ?`, input.sessionId,
+      ).one()
+
+    // On ne corrige que ce qui a ete juge. Un passage en attente se juge, il
+    // ne se corrige pas.
+    if (original.status !== 'passed' && original.status !== 'failed') {
+      throw new Error('Ce passage n a pas encore ete juge : il n y a rien a corriger')
+    }
+
+    // Une correction n'est pas une deuxieme chance de changer d'avis. Elle
+    // repare une erreur de saisie, et une seule fois — sinon la ceinture
+    // finit par dependre de l'ordre des clics.
+    const already = this.sql.exec<{ id: string }>(
+      'SELECT id FROM grade_sessions WHERE corrects_id = ?', input.sessionId,
+    ).toArray()[0]
+    if (already) throw new Error('Ce resultat a deja ete corrige une fois')
+
+    if (original.corrects_id) {
+      throw new Error('Une correction ne se corrige pas : reprenez le passage d origine')
+    }
+
+    const member = this.sql
+      .exec<{ grade_id: string | null; name: string }>(
+        'SELECT grade_id, name FROM members WHERE id = ?', original.member_id,
+      ).one()
+
+    if (input.passed === (original.status === 'passed')) {
+      throw new Error('Ce resultat est deja celui-la')
+    }
+
+    // Garde-fou sur la ceinture.
+    //
+    // Redescendre un grade n'est sur que si RIEN n'a bouge depuis. Si le
+    // membre a passe un autre grade entre-temps, sa ceinture actuelle n'est
+    // plus celle que ce passage avait posee, et la rabaisser effacerait un
+    // resultat legitime. Mieux vaut refuser et le dire.
+    if (original.status === 'passed' && member.grade_id !== original.to_grade_id) {
+      throw new Error(
+        `La ceinture de ${member.name} a change depuis ce passage : corrigez d abord le plus recent`,
+      )
+    }
+
+    const id = crypto.randomUUID()
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO grade_sessions
+           (id, member_id, from_grade_id, to_grade_id, scheduled_date, status,
+            decided_at, decided_by, corrects_id, correction_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ${NOW}, ?, ?, ?)`,
+        id, original.member_id, original.from_grade_id, original.to_grade_id,
+        // Meme date que l'original : la correction repare la saisie, elle ne
+        // deplace pas le passage. L'anciennete du membre ne doit pas bouger.
+        original.scheduled_date,
+        input.passed ? 'passed' : 'failed',
+        input.actorId ?? null, original.id, input.reason,
+      )
+
+      // La ceinture reprend sa place : au niveau vise si le passage est
+      // finalement reussi, a celui d'ou il partait sinon.
+      this.sql.exec(
+        'UPDATE members SET grade_id = ? WHERE id = ?',
+        input.passed ? original.to_grade_id : original.from_grade_id,
+        original.member_id,
+      )
+
+      this.sql.exec(
+        `INSERT INTO audit_logs (action, entity, entity_id, entity_name, detail, actor_id, actor_name)
+         VALUES ('grade_session_correct', 'grade_session', ?, ?, ?, ?, ?)`,
+        original.id, member.name,
+        `${original.status} -> ${input.passed ? 'passed' : 'failed'} : ${input.reason}`,
+        input.actorId ?? null, input.actorName ?? null,
+      )
+    })
+
+    return { id }
   }
 
   /** Repartition des membres par niveau, pour le graphique du tableau de bord. */

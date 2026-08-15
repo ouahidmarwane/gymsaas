@@ -693,6 +693,30 @@ export const api = {
       }
 
       /**
+       * Correction d'un resultat mal saisi.
+       *
+       * Reserve aux responsables, comme l'annulation d'un encaissement : le
+       * comptoir juge les passages, il ne reecrit pas l'historique. Un motif
+       * est exige — c'est lui qui, dans six mois, expliquera l'ecart entre
+       * les deux lignes.
+       */
+      const gradeCorrect = path.match(/^\/api\/grades\/sessions\/([^/]+)\/correction$/)
+      if (gradeCorrect && method === 'POST') {
+        atLeast(principal, 'admin', true)
+        const body = await readJson(request)
+        if (typeof body.passed !== 'boolean') return fail(400, 'passed doit etre vrai ou faux')
+        const reason = str(body.reason, 'reason', 300).trim()
+        if (reason.length < 3) return fail(400, 'Indiquez le motif de la correction')
+        const { id } = await clubOf(env, principal).correctGradeSession({
+          sessionId: gradeCorrect[1]!,
+          passed: body.passed,
+          reason,
+          actorId: principal.userId, actorName: principal.name,
+        })
+        return json({ id }, { status: 201 })
+      }
+
+      /**
        * Qui peut etre convoque a la main.
        *
        * Distincte de la liste des eligibles : celle-ci n'applique pas la
