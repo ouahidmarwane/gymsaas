@@ -118,15 +118,33 @@ function mount(): Layer | null {
   if (typeof document === 'undefined') return null
   if (layer?.canvas.isConnected) return layer
 
+  /*
+    La mise en page est posee EN LIGNE, pas seulement par la classe.
+
+    Un canvas cree en JS mesure 300x150 par defaut, dans le flux. Si la
+    feuille de style n'est pas encore la — ou si quelqu'un renomme la classe
+    un jour — le dessin se retrouve compresse dans cette petite boite et les
+    coordonnees de fenetre ne correspondent plus a l'espace du canvas. La
+    classe reste pour ce qui est thematique (la lueur, sa couleur) ; la
+    geometrie, elle, ne depend de rien.
+
+    Deux dimensionnements sont necessaires et ne font pas la meme chose :
+    le CSS (100%) donne la taille d'AFFICHAGE, canvas.width/height donnent la
+    RESOLUTION de dessin. Il en manque un, ça compresse ou ça floute.
+  */
   const canvas = document.createElement('canvas')
   canvas.id = 'gf-fx'
   canvas.className = 'gf-fx-canvas'
   canvas.setAttribute('aria-hidden', 'true')
+  canvas.style.cssText =
+    'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:900'
 
   const glow = document.createElement('div')
   glow.id = 'gf-glow'
   glow.className = 'gf-fx-glow'
   glow.setAttribute('aria-hidden', 'true')
+  glow.style.cssText =
+    'position:fixed;inset:0;pointer-events:none;z-index:899;opacity:0'
 
   // appendChild plutot que append : les types Workers du projet redefinissent
   // `append`, et TypeScript refuse alors un Node dans un contexte navigateur.
@@ -143,16 +161,20 @@ function mount(): Layer | null {
 }
 
 /**
- * Le canvas est dimensionne en pixels physiques et remis a l'echelle.
- * En pixels CSS, un confetti de deux pixels est une bouillie sur un ecran
- * a haute densite.
+ * Resolution de dessin, distincte de la taille d'affichage.
+ *
+ * L'affichage vient du CSS en ligne (100 % / 100 %) et suit la fenetre tout
+ * seul. Ici on ne regle que le magasin de pixels : sans lui, un confetti de
+ * deux pixels est une bouillie sur un ecran a haute densite.
+ *
+ * Le `setTransform` vient APRES l'affectation de width/height : redimensionner
+ * un canvas remet son contexte a zero, transformation comprise. Dans l'autre
+ * ordre, l'echelle serait perdue a chaque redimensionnement.
  */
 function size(l: Layer) {
   const dpr = Math.min(window.devicePixelRatio || 1, 2)
   l.canvas.width = Math.floor(window.innerWidth * dpr)
   l.canvas.height = Math.floor(window.innerHeight * dpr)
-  l.canvas.style.width = `${window.innerWidth}px`
-  l.canvas.style.height = `${window.innerHeight}px`
   l.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 }
 
@@ -172,10 +194,37 @@ let halo = '#2f6bff'
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min)
 
+/**
+ * Rayon d'un anneau a un instant donne.
+ *
+ * Extrait pour etre verifiable sans navigateur, parce que c'est exactement
+ * ici que ça a casse : `ctx.arc` leve IndexSizeError sur un rayon negatif,
+ * l'exception sortait de la boucle, et l'ecran gardait une image figee. Le
+ * plancher a zero est l'invariant, pas un detail d'affichage.
+ */
+export function ringRadius(life: number, max: number): number {
+  return Math.max(0, 10 + (life / max) * 130)
+}
+
 function step() {
   const l = layer
   if (!l) { frame = null; return }
 
+  try {
+    draw(l)
+  } catch (e) {
+    // Une exception ici tuait la boucle et laissait la derniere image
+    // peinte a l'ecran, indefiniment. Un effet decoratif n'a pas le droit
+    // de laisser des debris sur l'interface : on efface, on vide, on
+    // s'arrete proprement, et on laisse la trace en console pour la suite.
+    console.error('[celebrate] rendu interrompu', e)
+    particles = []
+    frame = null
+    l.ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+  }
+}
+
+function draw(l: Layer) {
   l.ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
 
   for (const p of particles) {
@@ -183,8 +232,16 @@ function step() {
     const t = p.life / p.max
 
     if (p.kind === 'ring') {
-      // L'anneau s'ouvre et s'efface : il marque l'origine sans la masquer.
-      const radius = 10 + t * 130
+      // Le second anneau part en retard : sa vie est negative au depart, il
+      // n'a donc rien a dessiner tant qu'elle ne l'est plus.
+      //
+      // Sans ce garde, son rayon valait 10 + (-0,167 x 130) = -11,7 a la
+      // premiere image, et ctx.arc leve IndexSizeError sur un rayon negatif.
+      // L'exception sortait de step() avant le requestAnimationFrame du bas :
+      // la boucle mourait a la frame 1, les particules restaient groupees a
+      // l'origine, et plus rien ne les effacait. Un amas fige.
+      if (p.life < 0) continue
+      const radius = ringRadius(p.life, p.max)
       l.ctx.save()
       l.ctx.globalAlpha = Math.max(0, 1 - t) * 0.55
       l.ctx.strokeStyle = p.color
