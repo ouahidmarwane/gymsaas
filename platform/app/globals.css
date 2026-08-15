@@ -5812,6 +5812,137 @@ html[data-theme='light'] .row-menu {
 }
 @media (prefers-reduced-motion: reduce) { .row-menu { animation: none; } }
 
+/* ─── Passage de grade ──────────────────────────────────────────
+   Tout l'accent passe par --gold, la couleur du club. Aucun bleu ni vert
+   ecrit en dur : les deux ecrans d'origine en portaient, et c'est
+   precisement ce qui les empechait de suivre l'habillage.
+   Seule exception plus bas : la pastille de ceinture, qui garde sa vraie
+   couleur parce qu'elle represente une donnee, pas un accent. */
+
+.grade-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.grade-kpi { display: flex; align-items: center; gap: 14px; }
+.grade-kpi-icon {
+  width: 42px; height: 42px; border-radius: 14px; flex: none;
+  display: grid; place-items: center;
+  /* Teinte derivee de l'accent : elle suit le club sans jamais etre ecrite.
+     color-mix garde la lisibilite en clair comme en sombre, la ou une
+     rgba() figee disparaissait sur fond clair. */
+  background: color-mix(in srgb, var(--gold) 16%, transparent);
+  color: var(--gold);
+}
+.grade-kpi-value {
+  font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em;
+  color: var(--text); font-variant-numeric: tabular-nums;
+}
+.grade-kpi-label { font-size: 0.78rem; color: var(--muted); }
+
+.grade-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 0.7rem 0.95rem; border-radius: 16px;
+  background: var(--overlay-soft); border: 1px solid var(--hairline);
+}
+.grade-list {
+  display: flex; flex-direction: column; gap: 6px; margin-top: 14px;
+  max-height: 360px; overflow: auto;
+}
+
+.grade-progress {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px;
+}
+.grade-arrow { color: var(--muted); font-size: 0.8rem; }
+
+/* La pastille de ceinture. Le point porte la vraie couleur du grade ; le
+   texte reste au jeton du theme, sinon un blanc casse disparaitrait en mode
+   clair et un noir en mode sombre. */
+.grade-belt {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 0.15rem 0.55rem; border-radius: 999px;
+  background: var(--overlay); border: 1px solid var(--hairline);
+  color: var(--text);
+  font-size: 0.7rem; font-weight: 700; white-space: nowrap;
+}
+.grade-belt-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  /* Un liseré : une ceinture blanche sur fond clair, ou noire sur fond
+     sombre, serait invisible sans lui. */
+  box-shadow: inset 0 0 0 1px var(--overlay-strong);
+}
+
+.grade-count {
+  flex: none; padding: 0.2rem 0.6rem; border-radius: 999px;
+  font-size: 0.68rem; font-weight: 700; white-space: nowrap;
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+  color: var(--gold);
+  border: 1px solid color-mix(in srgb, var(--gold) 34%, transparent);
+}
+/* Le retard est un avertissement, pas un accent : il garde l'ambre, qui veut
+   dire la meme chose sur tous les ecrans de la plateforme. */
+.grade-count.late {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.34);
+}
+html:not([data-theme='light']) .grade-count.late { color: #fbbf24; }
+
+.grade-btn {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  padding: 0.35rem 0.8rem; border-radius: 999px; cursor: pointer;
+  background: var(--overlay); border: 1px solid var(--hairline);
+  color: var(--text); font-size: 0.75rem; font-weight: 700;
+  transition: background 0.15s, border-color 0.15s;
+}
+.grade-btn:hover:not(:disabled) { background: var(--overlay-strong); }
+.grade-btn:disabled { opacity: 0.45; cursor: default; }
+/* Le bouton d'action porte la couleur du club. */
+.grade-btn.primary {
+  background: var(--gold); border-color: transparent; color: #fff;
+}
+.grade-btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+
+.grade-date-row {
+  display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap;
+}
+.grade-offgrid {
+  padding: 0.2rem 0.6rem; border-radius: 999px;
+  font-size: 0.68rem; font-weight: 700;
+  background: color-mix(in srgb, var(--gold) 14%, transparent);
+  color: var(--gold);
+}
+
+.grade-select { width: auto; min-width: 9rem; font-size: 0.78rem; padding: 0.3rem 0.6rem; }
+
+.grade-blocked { border-color: rgba(245, 158, 11, 0.3); }
+/* Ambre soutenu en clair, pale en sombre : le meme jaune se perd sur un fond
+   blanc et brule sur un fond noir. */
+.grade-warn { color: #b45309; }
+html:not([data-theme='light']) .grade-warn { color: #f59e0b; }
+
+.grade-dist { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.grade-dist-row { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; }
+.grade-dist-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex: none;
+  box-shadow: inset 0 0 0 1px var(--overlay-strong);
+}
+.grade-dist-label {
+  flex: 0 0 7rem; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.grade-dist-track {
+  flex: 1; height: 8px; border-radius: 999px; background: var(--overlay);
+  overflow: hidden;
+}
+.grade-dist-fill { display: block; height: 100%; border-radius: 999px; }
+.grade-dist-count { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 640px) {
+  .grade-row { gap: 8px; }
+  .grade-dist-label { flex-basis: 5rem; }
+}
+
 /* ─── Celebration ───────────────────────────────────────────────
    Une seule couche, posee dans <body>, au-dessus de tout y compris des
    modales (z 500). Rien n'y est cliquable : l'effet ne doit jamais retarder

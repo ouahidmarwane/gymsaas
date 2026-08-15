@@ -645,19 +645,46 @@ export const api = {
         const club = clubOf(env, principal)
         const { hasGrading } = await club.capabilities()
         if (!hasGrading) return fail(409, 'Aucune discipline gradee dans ce club')
-        const [sessions, eligible] = await Promise.all([
-          club.listGradeSessions(),
-          club.eligibleForGrading(),
-        ])
-        return json({ sessions, eligible })
+
+        // Le jour vient du serveur, jamais du navigateur : une machine mal
+        // reglee decalerait l'eligibilite de tout un club.
+        const today = new Date().toISOString().slice(0, 10)
+        const wanted = url.searchParams.get('disciplineId')
+        return json(await club.gradeOverview({
+          today,
+          // Session hors-cycle : une date explicite prend le pas sur la grille.
+          date: dateOnly(url.searchParams.get('date'), 'date'),
+          disciplineId: wanted && wanted !== 'all' ? wanted : null,
+        }))
       }
+
+      /** Mois d'ancrage de la cadence trimestrielle. */
+      if (path === '/api/grades/settings' && method === 'PUT') {
+        atLeast(principal, 'admin', true)
+        const body = await readJson(request)
+        const month = Number(body.anchorMonth)
+        if (!Number.isInteger(month) || month < 1 || month > 12) {
+          return fail(400, 'Mois d ancrage invalide : de 1 a 12')
+        }
+        await clubOf(env, principal).setGradeAnchorMonth(month, {
+          id: principal.userId, name: principal.name,
+        })
+        return json({ anchorMonth: month })
+      }
+
 
       if (path === '/api/grades/sessions' && method === 'POST') {
         atLeast(principal, 'staff', true)
         const body = await readJson(request)
         const { id } = await clubOf(env, principal).createGradeSession({
           memberId: str(body.memberId, 'memberId', 60),
-          scheduledDate: str(body.scheduledDate, 'scheduledDate', 10),
+          // Une vraie date de calendrier, pas seulement dix caracteres : le
+          // format seul accepterait le 31 fevrier.
+          scheduledDate: dateOnly(body.scheduledDate, 'scheduledDate')
+            ?? str(body.scheduledDate, 'scheduledDate', 10),
+          // Le choix de l'instructeur, verifie cote base contre l'echelle de
+          // la discipline du membre.
+          toGradeId: optional(body.toGradeId, 60),
           actorId: principal.userId, actorName: principal.name,
         })
         return json({ id }, { status: 201 })

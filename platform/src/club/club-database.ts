@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 import { MIGRATIONS, LATEST_VERSION } from './schema'
+import { CYCLE_MONTHS, anchorMonthOf, nextGradeDate } from './grade-cycle'
 import type { Env } from '../env'
 
 // Base de donnees d'un club : un Durable Object SQLite par club.
@@ -1154,9 +1155,10 @@ export class ClubDatabase extends DurableObject<Env> {
   listGradeSessions(status?: string) {
     const where = status ? 'WHERE g.status = ?' : ''
     const params = status ? [status] : []
-    return this.sql.exec(
-      `SELECT g.*, m.name AS member_name, m.phone,
-              f.label AS from_label, t.label AS to_label, t.color AS to_color
+    return this.sql.exec<Record<string, SqlStorageValue>>(
+      `SELECT g.*, m.name AS member_name, m.phone, m.discipline_id,
+              f.label AS from_label, f.color AS from_color,
+              t.label AS to_label,   t.color AS to_color
          FROM grade_sessions g
          JOIN members m ON m.id = g.member_id
          LEFT JOIN grade_levels f ON f.id = g.from_grade_id
@@ -1168,28 +1170,125 @@ export class ClubDatabase extends DurableObject<Env> {
     ).toArray()
   }
 
-  /** Membres eligibles : gradables, abonnement a jour, pas deja convoques. */
-  eligibleForGrading() {
-    return this.sql.exec(
-      `SELECT m.id, m.name, m.grade_id,
-              g.label AS current_label, g.rank AS current_rank, m.discipline_id
+  /**
+   * Membres presentables a une session, et ceux que l'abonnement bloque.
+   *
+   * L'anciennete se mesure A LA DATE DE LA SESSION, jamais aujourd'hui.
+   * Quelqu'un qui atteint ses trois mois l'avant-veille du passage doit
+   * apparaitre maintenant : c'est aujourd'hui qu'on prepare la liste, pas le
+   * jour J. Mesuree au present, elle l'aurait ecarte a tort pendant tout le
+   * trimestre, et personne n'aurait compris pourquoi.
+   *
+   * Deux chemins vers l'anciennete, et c'est la que l'ancienne version etait
+   * incomplete — elle ne regardait que la date d'inscription :
+   *
+   *   sans grade      : inscrit depuis au moins trois mois ;
+   *   deja grade      : dernier passage decide il y a au moins trois mois.
+   *
+   * Le repli sur `join_date` n'est pas un ornement. Un club qui reprend son
+   * fichier papier saisit des membres AVEC leur ceinture et SANS passage
+   * enregistre : leur dernier passage vaut NULL, « NULL <= date » vaut NULL,
+   * et sans ce repli ils seraient inelligibles a vie.
+   *
+   * Les abonnements expires ne sont pas caches, ils sont marques : un membre
+   * qui a fait ses trois mois et dont l'abonnement vient d'expirer doit se
+   * voir, avec un bouton pour le regulariser.
+   */
+  gradeCandidates(opts: { sessionDate: string; disciplineId?: string | null } = { sessionDate: '' }) {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (opts.disciplineId) {
+      conditions.push('m.discipline_id = ?')
+      params.push(opts.disciplineId)
+    }
+    const extra = conditions.length ? ` AND ${conditions.join(' AND ')}` : ''
+
+    return this.sql.exec<{
+      id: string; name: string; grade_id: string | null
+      current_label: string | null; current_color: string | null; current_rank: number | null
+      discipline_id: string | null; discipline_name: string | null
+      sub_expiry: string | null; sub_ok: number
+      next_label: string | null; next_id: string | null; next_color: string | null
+    }>(
+      `SELECT m.id, m.name, m.grade_id, m.sub_expiry,
+              g.label AS current_label, g.color AS current_color, g.rank AS current_rank,
+              m.discipline_id, d.name AS discipline_name,
+              (m.sub_expiry IS NULL OR m.sub_expiry >= ?1) AS sub_ok,
+              n.id    AS next_id,
+              n.label AS next_label,
+              n.color AS next_color
          FROM members m
          JOIN disciplines d ON d.id = m.discipline_id AND d.has_grading = 1
          LEFT JOIN grade_levels g ON g.id = m.grade_id
+         -- Le niveau immediatement au-dessus, dans l'echelle de SA discipline.
+         LEFT JOIN grade_levels n
+                ON n.discipline_id = m.discipline_id
+               AND n.rank = (
+                     SELECT MIN(rank) FROM grade_levels
+                      WHERE discipline_id = m.discipline_id
+                        AND rank > COALESCE(g.rank, -1)
+                   )
         WHERE m.status = 'active'
-          AND (m.sub_expiry IS NULL OR m.sub_expiry >= date('now'))
-          AND m.join_date <= date('now','-3 months')
+          AND COALESCE(
+                (SELECT MAX(s.scheduled_date) FROM grade_sessions s
+                  WHERE s.member_id = m.id AND s.status IN ('passed','failed')),
+                m.join_date
+              ) <= date(?1, '-${CYCLE_MONTHS} months')
+          -- Deja convoque : on ne convoque pas deux fois. Une convocation en
+          -- attente, meme pour une autre date, tient la place.
           AND NOT EXISTS (
             SELECT 1 FROM grade_sessions s
              WHERE s.member_id = m.id AND s.status = 'pending'
-          )
-        ORDER BY m.name
-        LIMIT 200`,
+          )${extra}
+        ORDER BY sub_ok DESC, m.name
+        LIMIT 300`,
+      opts.sessionDate, ...params,
     ).toArray()
   }
 
+  /** Le mois d'ancrage du club, valide, avec son defaut. */
+  gradeAnchorMonth(): number {
+    return anchorMonthOf(this.getSetting('grades:anchorMonth'))
+  }
+
+  setGradeAnchorMonth(month: number, actor: { id?: string; name?: string }): void {
+    const clean = anchorMonthOf(month)
+    this.setSetting('grades:anchorMonth', clean)
+    this.sql.exec(
+      `INSERT INTO audit_logs (action, entity, entity_id, detail, actor_id, actor_name)
+       VALUES ('grade_anchor_set', 'setting', 'grades:anchorMonth', ?, ?, ?)`,
+      String(clean), actor.id ?? null, actor.name ?? null,
+    )
+  }
+
+  /**
+   * Toutes les echelles graduees du club, rangees par discipline.
+   *
+   * Livrees avec la vue d'ensemble plutot que par une route dediee : elles
+   * changent une fois par an, et l'instructeur en a besoin des qu'il ouvre le
+   * choix de la ceinture visee. Un aller-retour a ce moment-la ferait
+   * attendre pour une donnee qu'on avait deja.
+   */
+  gradeLadders(): Record<string, Array<{ id: string; label: string; color: string | null; rank: number }>> {
+    const rows = this.sql.exec<{ id: string; label: string; color: string | null; rank: number; discipline_id: string }>(
+      `SELECT l.id, l.label, l.color, l.rank, l.discipline_id
+         FROM grade_levels l
+         JOIN disciplines d ON d.id = l.discipline_id AND d.has_grading = 1
+        ORDER BY l.discipline_id, l.rank`,
+    ).toArray()
+
+    const out: Record<string, Array<{ id: string; label: string; color: string | null; rank: number }>> = {}
+    for (const r of rows) {
+      (out[r.discipline_id] ??= []).push({ id: r.id, label: r.label, color: r.color, rank: r.rank })
+    }
+    return out
+  }
+
   createGradeSession(input: {
-    memberId: string; scheduledDate: string; actorId?: string; actorName?: string
+    memberId: string; scheduledDate: string
+    /** Choix de l'instructeur. Absent, la suivante de l'echelle s'applique. */
+    toGradeId?: string | null
+    actorId?: string; actorName?: string
   }): { id: string } {
     const id = crypto.randomUUID()
     const member = this.sql
@@ -1197,7 +1296,7 @@ export class ClubDatabase extends DurableObject<Env> {
         'SELECT grade_id, discipline_id, name FROM members WHERE id = ?', input.memberId,
       ).one()
 
-    // Le niveau vise est le suivant sur l'echelle de SA discipline.
+    // Le niveau vise par defaut est le suivant sur l'echelle de SA discipline.
     const next = this.sql.exec<{ id: string }>(
       `SELECT id FROM grade_levels
         WHERE discipline_id = ?
@@ -1206,11 +1305,27 @@ export class ClubDatabase extends DurableObject<Env> {
       member.discipline_id, member.grade_id,
     ).toArray()[0]
 
+    // Un choix explicite l'emporte, mais seulement s'il appartient a l'echelle
+    // de la discipline du membre : sans cette verification, un identifiant
+    // envoye a la main ferait passer un judoka a une ceinture de karate.
+    let target = next?.id ?? null
+    if (input.toGradeId) {
+      const ok = this.sql.exec<{ id: string }>(
+        'SELECT id FROM grade_levels WHERE id = ? AND discipline_id = ?',
+        input.toGradeId, member.discipline_id,
+      ).toArray()[0]
+      if (!ok) throw new Error('Ce niveau n appartient pas a la discipline du membre')
+      target = ok.id
+    }
+
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
         `INSERT INTO grade_sessions (id, member_id, from_grade_id, to_grade_id, scheduled_date)
          VALUES (?, ?, ?, ?, ?)`,
-        id, input.memberId, member.grade_id, next?.id ?? null, input.scheduledDate,
+        // La ceinture actuelle est FIGEE ici : elle raconte d'ou partait le
+        // membre le jour de la convocation. Relue plus tard depuis sa fiche,
+        // elle aurait deja avance et la ligne d'historique serait fausse.
+        id, input.memberId, member.grade_id, target, input.scheduledDate,
       )
       this.sql.exec(
         `INSERT INTO audit_logs (action, entity, entity_id, entity_name, actor_id, actor_name)
@@ -1252,15 +1367,78 @@ export class ClubDatabase extends DurableObject<Env> {
     })
   }
 
+  /**
+   * Tout ce que l'ecran des passages affiche, en un appel.
+   *
+   * La prochaine date, l'eligibilite et le taux sont DEDUITS ici, jamais
+   * stockes : ils dependent du jour ou l'on regarde. Les calculer dans le
+   * navigateur aurait duplique la regle des trois mois de part et d'autre du
+   * reseau, et les deux copies auraient fini par diverger.
+   */
+  gradeOverview(opts: { today: string; date?: string | null; disciplineId?: string | null }): {
+    anchorMonth: number
+    nextSessionDate: string
+    sessionDate: string
+    sessions: Array<Record<string, unknown>>
+    eligible: Array<Record<string, unknown>>
+    blocked: Array<Record<string, unknown>>
+    distribution: Array<{ label: string; color: string | null; count: number }>
+    disciplines: Array<Record<string, unknown>>
+    ladders: Record<string, Array<{ id: string; label: string; color: string | null; rank: number }>>
+    stats: { pending: number; passed: number; failed: number; successRate: number | null }
+  } {
+    const anchorMonth = this.gradeAnchorMonth()
+    const nextSessionDate = nextGradeDate(anchorMonth, opts.today)
+    // Une date fournie prend le pas : c'est la session hors-cycle.
+    const sessionDate = opts.date ?? nextSessionDate
+
+    const candidates = this.gradeCandidates({ sessionDate, disciplineId: opts.disciplineId })
+    const sessions = this.listGradeSessions()
+    const filtered = opts.disciplineId
+      ? sessions.filter(s => s.discipline_id === opts.disciplineId)
+      : sessions
+
+    const passed = filtered.filter(s => s.status === 'passed').length
+    const failed = filtered.filter(s => s.status === 'failed').length
+    const decided = passed + failed
+
+    return {
+      anchorMonth,
+      nextSessionDate,
+      sessionDate,
+      sessions: filtered,
+      eligible: candidates.filter(c => c.sub_ok === 1),
+      blocked: candidates.filter(c => c.sub_ok !== 1),
+      distribution: this.gradeDistribution(opts.disciplineId),
+      disciplines: this.sql.exec(
+        `SELECT id, name FROM disciplines
+          WHERE has_grading = 1 AND is_active = 1 ORDER BY name`,
+      ).toArray(),
+      ladders: this.gradeLadders(),
+      stats: {
+        pending: filtered.filter(s => s.status === 'pending').length,
+        passed,
+        failed,
+        // Aucun resultat, aucun taux : « 0 % » se lirait comme un echec
+        // complet alors que rien n'a encore eu lieu.
+        successRate: decided > 0 ? Math.round((passed / decided) * 100) : null,
+      },
+    }
+  }
+
   /** Repartition des membres par niveau, pour le graphique du tableau de bord. */
-  gradeDistribution(): Array<{ label: string; color: string | null; count: number }> {
+  gradeDistribution(disciplineId?: string | null): Array<{ label: string; color: string | null; count: number }> {
+    const where = disciplineId ? 'WHERE g.discipline_id = ?' : ''
+    const params = disciplineId ? [disciplineId] : []
     return this.sql.exec<{ label: string; color: string | null; count: number }>(
       `SELECT g.label, g.color, COUNT(m.id) AS count
          FROM grade_levels g
          LEFT JOIN members m ON m.grade_id = g.id AND m.status = 'active'
+         ${where}
         GROUP BY g.id
         HAVING count > 0
         ORDER BY g.rank`,
+      ...params,
     ).toArray()
   }
 
