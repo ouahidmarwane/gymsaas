@@ -62,8 +62,11 @@ export const PAGE_CARDS = {
     revenue_chart:  panel('Recettes', 'Graphiques'),
     branch_split:   panel('Repartition par salle', 'Graphiques'),
   },
+  // « Progression des grades » quitte ce catalogue : la page en a maintenant
+  // une version qui suit le filtre discipline. La garder ici aurait laisse
+  // deux graphiques du meme nom sur le meme ecran, disant des choses
+  // differentes des qu'une discipline est selectionnee.
   grades: {
-    grade_progress:  panel('Progression des grades', 'Graphiques', true),
     upcoming_grades: panel('Passages a venir', 'Listes', true),
     members_active:  stat('Membres actifs', 'Chiffres'),
   },
@@ -135,10 +138,20 @@ const DEFAULTS: Record<PageKey, CardPlacement[]> = {
     { id: 'revenue_chart',  x: 0, y: 1, w: 12, h: 3, visible: false },
     { id: 'branch_split',   x: 0, y: 1, w: 6, h: 3, visible: false },
   ],
+  // L'ecran des passages ne demarre plus avec un bandeau de cartes.
+  //
+  // Il portait « Membres actifs » et « Progression des grades ». La seconde
+  // fait desormais doublon avec la section de la page, qui sait filtrer par
+  // discipline ; et les trois vrais chiffres de cet ecran — prochaine
+  // session, convoques, taux — sont dans la page, calcules a la date de
+  // session. Deux bandeaux de chiffres l'un sur l'autre, dont un vide la
+  // moitie du temps, repoussaient le calendrier hors de l'ecran.
+  //
+  // Les cartes restent au catalogue : un exploitant qui les veut peut les
+  // reposer depuis le mode modification.
   grades: [
-    { id: 'members_active',  x: 0, y: 0, w: 4, h: 1, visible: true },
-    { id: 'grade_progress',  x: 4, y: 0, w: 8, h: 3, visible: true },
-    { id: 'upcoming_grades', x: 0, y: 3, w: 6, h: 3, visible: false },
+    { id: 'members_active',  x: 0, y: 0, w: 4, h: 1, visible: false },
+    { id: 'upcoming_grades', x: 0, y: 1, w: 6, h: 3, visible: false },
   ],
   championships: [
     { id: 'members_active', x: 0, y: 0, w: 4, h: 1, visible: true },

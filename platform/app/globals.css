@@ -5921,6 +5921,92 @@ html:not([data-theme='light']) .grade-count.late { color: #fbbf24; }
 .grade-warn { color: #b45309; }
 html:not([data-theme='light']) .grade-warn { color: #f59e0b; }
 
+/* ── Calendrier des passages ──
+   Accent du club sur les jours de cycle et le jour choisi ; vert et rouge de
+   la plateforme sur les resultats, parce que reussi et echoue veulent dire la
+   meme chose partout. */
+.gcal { margin-top: 16px; }
+.gcal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 12px;
+}
+.gcal-title {
+  font-size: 0.9rem; font-weight: 700; color: var(--text);
+  text-transform: capitalize;
+}
+.gcal-nav {
+  width: 30px; height: 30px; border-radius: 10px; cursor: pointer;
+  display: grid; place-items: center;
+  background: var(--overlay); border: 1px solid var(--hairline); color: var(--text);
+  transition: background 0.15s;
+}
+.gcal-nav:hover { background: var(--overlay-strong); }
+
+.gcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.gcal-weekday {
+  text-align: center; padding: 4px 0;
+  font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--muted); text-transform: uppercase;
+}
+
+.gcal-cell {
+  position: relative;
+  aspect-ratio: 1; min-height: 38px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px; padding: 2px;
+  border-radius: 10px; cursor: pointer;
+  background: var(--overlay-soft); border: 1px solid transparent;
+  color: var(--text); font-size: 0.78rem;
+  transition: background 0.14s, border-color 0.14s;
+}
+.gcal-cell:hover { background: var(--overlay); }
+.gcal-cell.empty { background: none; cursor: default; }
+
+/* Jour de la grille trimestrielle : la couleur du club, en fond leger. */
+.gcal-cell.cycle {
+  background: color-mix(in srgb, var(--gold) 13%, transparent);
+  border-color: color-mix(in srgb, var(--gold) 30%, transparent);
+  font-weight: 700;
+}
+/* Aujourd'hui : un simple cerne, pour ne pas rivaliser avec la selection. */
+.gcal-cell.today { border-color: var(--overlay-strong); }
+/* Le jour choisi l'emporte sur tout le reste. */
+.gcal-cell.selected {
+  background: var(--gold); border-color: transparent; color: #fff; font-weight: 800;
+}
+.gcal-cell:focus-visible {
+  outline: 2px solid var(--gold); outline-offset: 2px;
+}
+
+.gcal-num { line-height: 1; font-variant-numeric: tabular-nums; }
+.gcal-dots { display: flex; align-items: center; gap: 2px; }
+.gcal-dot {
+  width: 5px; height: 5px; border-radius: 50%; display: inline-block;
+}
+.gcal-dot.pending { background: var(--gold); }
+.gcal-dot.passed  { background: #16a34a; }
+.gcal-dot.failed  { background: #dc2626; }
+/* Sur la case selectionnee, les pastilles se posent sur l'accent : elles
+   passent en blanc, sinon la pastille « convoque » disparait dans le fond. */
+.gcal-cell.selected .gcal-dot { background: rgba(255, 255, 255, 0.9); }
+.gcal-more { font-size: 0.55rem; font-weight: 700; color: var(--muted); }
+.gcal-cell.selected .gcal-more { color: rgba(255, 255, 255, 0.9); }
+
+.gcal-legend {
+  display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px;
+  font-size: 0.7rem; color: var(--muted);
+}
+.gcal-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.gcal-key {
+  width: 10px; height: 10px; border-radius: 3px; display: inline-block;
+  background: color-mix(in srgb, var(--gold) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 30%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gcal-cell, .gcal-nav { transition: none; }
+}
+
 .grade-dist { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .grade-dist-row { display: flex; align-items: center; gap: 10px; font-size: 0.8rem; }
 .grade-dist-dot {

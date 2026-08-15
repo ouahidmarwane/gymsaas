@@ -9,6 +9,7 @@ import { api, ApiError, type Me } from '@/lib/client'
 import PageState from '@/components/PageState'
 import EditablePage from '@/components/EditablePage'
 import SlidingTabs from '@/components/SlidingTabs'
+import GradeCalendar from '@/components/GradeCalendar'
 
 /*
   Ecran unique des passages de grade.
@@ -73,6 +74,9 @@ interface Overview {
   ladders: Record<string, Level[]>
   stats: { pending: number; passed: number; failed: number; successRate: number | null }
 }
+
+const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+                'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre']
 
 const day = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString('fr-FR')
 const longDay = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00`)
@@ -208,6 +212,31 @@ export default function GradesPage() {
           </div>
         </section>
       </div>
+
+      {/* ── Calendrier ──
+          Il remplace le bandeau de cartes : les jours de cycle, les
+          convocations posees et leurs resultats, sur le meme quadrillage.
+          Cliquer un jour choisit la date de session — c'est le meme reglage
+          que le champ date plus bas, en plus lisible. */}
+      {data && (
+        <section className="dz-card">
+          <div className="dz-card-head">
+            <h2 className="dz-card-title">Calendrier des passages</h2>
+            <span className="dz-card-note">
+              cycle de 3 mois · ancré en {MONTHS[data.anchorMonth - 1]}
+            </span>
+          </div>
+          <GradeCalendar
+            anchorMonth={data.anchorMonth}
+            selected={sessionDate.slice(0, 10)}
+            today={new Date().toISOString().slice(0, 10)}
+            sessions={data.sessions.map(s => ({
+              date: s.scheduled_date, status: s.status, name: s.member_name,
+            }))}
+            onPick={d => setDate(d)}
+          />
+        </section>
+      )}
 
       {/* ── Passages programmés ── */}
       <section className="dz-card">
