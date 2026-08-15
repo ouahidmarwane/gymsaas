@@ -5839,6 +5839,14 @@ html[data-theme='light'] .row-menu {
   color: var(--text); font-variant-numeric: tabular-nums;
 }
 .grade-kpi-label { font-size: 0.78rem; color: var(--muted); }
+/* Le rappel des convocations posees sur une autre date. Cliquable : il mene
+   la ou elles se trouvent, plutot que de laisser chercher. */
+.grade-kpi-extra {
+  margin-top: 4px; padding: 0; cursor: pointer;
+  background: none; border: 0; border-bottom: 1px dashed currentColor;
+  color: var(--gold); font-size: 0.72rem; font-weight: 700;
+}
+.grade-kpi-extra:hover { filter: brightness(1.15); }
 
 .grade-row {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;

@@ -210,6 +210,22 @@ export default function GradesPage() {
             <div className="grade-kpi-label">
               {data ? `convoqués pour le ${day(sessionDate)}` : 'Convoqués'}
             </div>
+            {/* Sans cette ligne, la tuile pouvait afficher « 0 convoqués »
+                pendant que la section juste en dessous en listait un : la
+                convocation existait, mais pour une autre date. Deux chiffres
+                qui se contredisent a l'ecran, et rien pour l'expliquer. */}
+            {data && data.stats.pending > data.stats.pendingForSession && (
+              <button className="grade-kpi-extra"
+                      title="Afficher la date de ce passage"
+                      onClick={() => {
+                        const other = data.sessions.find(
+                          s => s.status === 'pending'
+                            && s.scheduled_date.slice(0, 10) !== sessionDate.slice(0, 10))
+                        if (other) setDate(other.scheduled_date.slice(0, 10))
+                      }}>
+                + {data.stats.pending - data.stats.pendingForSession} sur une autre date
+              </button>
+            )}
           </div>
         </section>
 
