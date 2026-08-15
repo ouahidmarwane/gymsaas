@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
 import { api, ApiError } from '@/lib/client'
+import { useScrollLock } from '@/lib/scroll-lock'
 
 /**
  * Creation d'un club depuis le tableau de bord plateforme.
@@ -13,6 +14,8 @@ import { api, ApiError } from '@/lib/client'
 export default function CreateClubModal({
   onClose, onCreated,
 }: { onClose: () => void; onCreated: (orgId: string) => void }) {
+  useScrollLock()
+
   const [clubName, setClubName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)

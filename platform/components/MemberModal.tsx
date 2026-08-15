@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { X, Camera, Trash2 } from 'lucide-react'
 import { api, upload, ApiError } from '@/lib/client'
 import { type MemberRow, photoUrl } from '@/lib/member-status'
+import { useScrollLock } from '@/lib/scroll-lock'
 
 interface Branch { id: string; name: string }
 interface Discipline { id: string; name: string }
@@ -24,6 +25,8 @@ export default function MemberModal({
   onClose: () => void
   onSaved: () => void | Promise<void>
 }) {
+  useScrollLock()
+
   const editing = member !== null
   const today = new Date().toISOString().slice(0, 10)
 

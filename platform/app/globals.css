@@ -516,14 +516,21 @@ html:not([data-theme='light']) .member-row .text-red-600 {
     letter-spacing: -0.02em;
   }
 
+  /*
+    Barres de defilement.
+    Elles etaient bleues, en dur, partout : sur un habillage vert ou beige,
+    deux traits bleu vif encadraient l'ecran et se voyaient plus que le
+    contenu. Une barre de defilement est un outil, pas un accent — elle prend
+    le jeton de voile de l'habillage et s'affirme un peu au survol.
+  */
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--blue) transparent;
+    scrollbar-color: var(--overlay-strong) transparent;
   }
 
   *::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
   }
 
   *::-webkit-scrollbar-track {
@@ -531,11 +538,19 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   }
 
   *::-webkit-scrollbar-thumb {
-    background: rgba(77,140,255,0.35);
+    background: var(--overlay-strong);
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
+    background-clip: padding-box;
+  }
+
+  /* Aucun coin plein a l'intersection des deux barres. */
+  *::-webkit-scrollbar-corner { background: transparent; }
 }
 
 @layer components {
@@ -3996,6 +4011,12 @@ input, textarea, select {
   flex: 1;
   min-height: 100vh;
   padding: 88px 32px 32px;
+  /* Une page ne defile pas lateralement : c'est toujours un element trop
+     large qui deborde, jamais une intention. Les tableaux ont leur propre
+     zone de defilement. `clip` plutot que `hidden` : `hidden` ferait de
+     .app-main un conteneur de defilement et casserait les positions
+     collantes qu'il contient. */
+  overflow-x: clip;
 }
 
 /* Topbar always visible, sidebar always a drawer */
@@ -6008,6 +6029,22 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 }
 @media (prefers-reduced-motion: reduce) {
   .docview, .docview-overlay { animation: none; }
+}
+
+/* La barre de la modale, plus discrete encore que celle de la page : elle
+   court le long d'un bord arrondi, a deux centimetres du texte. Elle ne se
+   montre franchement qu'au survol de la carte. */
+.compta-modal { scrollbar-color: var(--overlay) transparent; }
+.compta-modal::-webkit-scrollbar { width: 6px; }
+.compta-modal::-webkit-scrollbar-thumb {
+  background: var(--overlay);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+.compta-modal:hover { scrollbar-color: var(--overlay-strong) transparent; }
+.compta-modal:hover::-webkit-scrollbar-thumb {
+  background: var(--overlay-strong);
+  background-clip: padding-box;
 }
 
 /* Le halo qui derive et l'entree de la modale sont du decor : ils sont les

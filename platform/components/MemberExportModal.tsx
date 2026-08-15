@@ -7,6 +7,7 @@ import {
   SUB_LABEL, INS_LABEL,
 } from '@/lib/member-status'
 import { toCsv, download } from '@/lib/csv'
+import { useScrollLock } from '@/lib/scroll-lock'
 
 interface Branch { id: string; name: string }
 interface Discipline { id: string; name: string }
@@ -43,6 +44,8 @@ export default function MemberExportModal({
   disciplines: Discipline[]
   onClose: () => void
 }) {
+  useScrollLock()
+
   const [sub, setSub] = useState<string>('all')
   const [ins, setIns] = useState<string>('all')
   const [branch, setBranch] = useState('all')

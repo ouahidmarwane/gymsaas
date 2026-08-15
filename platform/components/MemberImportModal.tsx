@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react'
 import { X, Upload, CheckCircle2, TriangleAlert, ShieldCheck } from 'lucide-react'
 import { api, ApiError } from '@/lib/client'
+import { useScrollLock } from '@/lib/scroll-lock'
 import {
   parseCsv, checkCsvFile, looksBinary, safeCell, CsvError, MAX_CSV_ROWS, toCsv, download,
 } from '@/lib/csv'
@@ -80,6 +81,8 @@ export default function MemberImportModal({
   onDone: (created: number) => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
+  useScrollLock()
+
   const [fileName, setFileName] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Draft[] | null>(null)
   const [problem, setProblem] = useState<string | null>(null)

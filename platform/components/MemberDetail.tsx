@@ -6,6 +6,7 @@ import {
   X, IdCard, Eye, Upload, Trash2, Pencil, MessageCircle, Camera, Phone, Maximize2,
 } from 'lucide-react'
 import { api, upload, ApiError } from '@/lib/client'
+import { useScrollLock } from '@/lib/scroll-lock'
 import {
   type MemberRow, subStatus, insStatus, daysUntil, photoUrl,
   SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
@@ -42,6 +43,8 @@ export default function MemberDetail({
   onEdit: () => void
   onChanged: () => void | Promise<void>
 }) {
+  useScrollLock()
+
   const sub = subStatus(member)
   const ins = insStatus(member)
   const left = daysUntil(member.sub_expiry)
@@ -453,6 +456,8 @@ function DocViewer({ src, title, onClose }: {
 }) {
   const [blob, setBlob] = useState<{ url: string; type: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useScrollLock()
 
   useEffect(() => {
     let url: string | null = null
