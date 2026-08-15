@@ -5812,6 +5812,103 @@ html[data-theme='light'] .row-menu {
 }
 @media (prefers-reduced-motion: reduce) { .row-menu { animation: none; } }
 
+/* ─── Celebration ───────────────────────────────────────────────
+   Une seule couche, posee dans <body>, au-dessus de tout y compris des
+   modales (z 500). Rien n'y est cliquable : l'effet ne doit jamais retarder
+   le geste suivant. */
+.gf-fx-canvas,
+.gf-fx-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 900;
+}
+
+/* La lueur des bords. La couleur vient de l'accent du theme : aucune valeur
+   ecrite ici, elle suit l'habillage toute seule. --fx-neon est la variante
+   eclaircie posee par le script quand l'accent est trop sombre pour rayonner. */
+.gf-fx-glow {
+  opacity: 0;
+  box-shadow: inset 0 0 130px 10px var(--fx-neon, var(--gold));
+}
+
+/*
+  UNE pulsation, jamais une boucle.
+  Un neon qui clignote en fort contraste peut declencher une crise chez une
+  personne photosensible : le seuil est de trois eclats par seconde. Une
+  montee, une descente, et c'est fini.
+*/
+.gf-fx-glow.on { animation: fxGlow 780ms ease-out 1 both; }
+@keyframes fxGlow {
+  0%   { opacity: 0; }
+  28%  { opacity: 0.8; }
+  100% { opacity: 0; }
+}
+
+.gf-fx-check,
+.gf-fx-amount {
+  position: fixed;
+  pointer-events: none;
+  z-index: 901;
+  /* Centre sur le point d'origine : les coordonnees recues sont celles du
+     bouton, pas celles du coin de l'etiquette. */
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.gf-fx-check {
+  display: grid;
+  place-items: center;
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  background: var(--float-bg);
+  border: 1px solid var(--fx-neon, var(--gold));
+  box-shadow: 0 0 22px -4px var(--fx-neon, var(--gold));
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 700;
+  animation: fxCheck 1400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes fxCheck {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  18%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  78%  { opacity: 1; transform: translate(-50%, -60%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -75%) scale(0.96); }
+}
+
+.gf-fx-amount {
+  color: var(--positive);
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 18px var(--fx-neon, var(--gold));
+  animation: fxAmount 1100ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* Le montant part au-dessus du ✓ pour ne pas se poser dessus. */
+@keyframes fxAmount {
+  0%   { opacity: 0; transform: translate(-50%, calc(-50% - 26px)) scale(0.9); }
+  20%  { opacity: 1; transform: translate(-50%, calc(-50% - 34px)) scale(1); }
+  70%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, calc(-50% - 26px - var(--rise, 46px))) scale(1); }
+}
+
+/*
+  Moins de mouvement : le script n'emet deja aucune particule et n'allume pas
+  la lueur. Restent le ✓ et le montant, qui se contentent d'apparaitre.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .gf-fx-glow, .gf-fx-glow.on { animation: none; opacity: 0; }
+  .gf-fx-check { animation: fxFadeHold 1600ms ease both; }
+  .gf-fx-amount { animation: fxFadeHold 1600ms ease both; }
+  @keyframes fxFadeHold {
+    0%   { opacity: 0; }
+    10%  { opacity: 1; }
+    80%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+}
+
 /* ─── Fiche membre ──────────────────────────────────────────────
    Tout est bati sur les jetons de surface : la fiche suit les cinq
    habillages sans une seule regle par theme. */

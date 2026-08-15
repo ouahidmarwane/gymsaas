@@ -6,6 +6,7 @@ import { api, upload, ApiError } from '@/lib/client'
 import { type MemberRow, photoUrl } from '@/lib/member-status'
 import { useScrollLock } from '@/lib/scroll-lock'
 import { useModalMotion } from '@/lib/modal-motion'
+import { celebrate, readNeon } from '@/lib/celebrate'
 
 interface Branch { id: string; name: string }
 interface Discipline { id: string; name: string }
@@ -58,6 +59,8 @@ export default function MemberModal({
   const [photoGone, setPhotoGone] = useState(false)
   const [savedId, setSavedId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  /** Mesure pour l'origine de la celebration, tant que la modale est la. */
+  const submitRef = useRef<HTMLButtonElement>(null)
 
   // L'URL d'objet est liberee : sans cela, chaque essai de photo garde son
   // fichier en memoire jusqu'au rechargement de la page.
@@ -121,6 +124,9 @@ export default function MemberModal({
       insExpiry: isInsured ? insExpiry : null,
     }
 
+    // Origine de la celebration, mesuree pendant que la modale est encore la.
+    let origin: { x: number; y: number } | null = null
+
     try {
       // `savedId` couvre le cas ou la fiche est passee mais pas la photo :
       // sans lui, un second clic sur « Ajouter » creerait un doublon.
@@ -129,6 +135,15 @@ export default function MemberModal({
       else {
         id = (await api.post<{ id: string }>('/api/members', payload)).id
         setSavedId(id)
+
+        // Le rectangle se prend ICI, pas plus tard.
+        //
+        // `onSaved()` ferme la modale : le bouton quitte le document, et
+        // getBoundingClientRect ne rend plus que des zeros. Les confettis
+        // partiraient du coin superieur gauche de l'ecran. On mesure tant
+        // que le bouton existe, on declenche apres.
+        const r = submitRef.current?.getBoundingClientRect()
+        if (r && r.width > 0) origin = { x: r.left + r.width / 2, y: r.top }
       }
 
       // La photo suit l'enregistrement, jamais l'inverse : un envoi qui
@@ -146,6 +161,22 @@ export default function MemberModal({
         }
       }
       await onSaved()
+
+      // Apres la confirmation du serveur, jamais avant : une celebration
+      // optimiste feterait un membre que la base a refuse. Et apres
+      // `onSaved()`, donc au-dessus de la liste deja rafraichie — ce que
+      // permettent les coordonnees mises de cote plus haut.
+      //
+      // La couleur est relue maintenant, pas au chargement du module : un
+      // club qui vient de changer sa teinte doit voir la nouvelle.
+      if (origin) {
+        celebrate({
+          x: origin.x, y: origin.y,
+          label: 'Membre ajouté',
+          neon: true,
+          neonColor: readNeon(),
+        })
+      }
     } catch (e) {
       setProblem(e instanceof ApiError ? e.message : 'Enregistrement impossible')
       setBusy(false)
@@ -271,7 +302,7 @@ export default function MemberModal({
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
             <button type="button" className="btn-ghost" style={{ flex: 1 }}
                     onClick={dismiss} disabled={busy}>Annuler</button>
-            <button type="submit" className="btn-dark" disabled={busy}
+            <button ref={submitRef} type="submit" className="btn-dark" disabled={busy}
                     style={{ flex: 1, background: 'var(--gold)', borderColor: 'transparent' }}>
               {busy ? 'Enregistrement…' : editing ? 'Enregistrer' : 'Ajouter'}
             </button>
