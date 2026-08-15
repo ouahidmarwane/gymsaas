@@ -114,3 +114,60 @@ test('la vue d ensemble rend a chaque club sa propre couleur', async () => {
   assert.equal(b.theme.accent, '#c2410c')
   assert.notEqual(a.theme.accent, b.theme.accent)
 })
+
+test('un club change son propre habillage, sans passer par la plateforme', async () => {
+  // Le reglage vit desormais dans la configuration du club. Le serveur
+  // l'acceptait deja — c'etait l'interface qui le reservait a la plateforme.
+  // Ce test verrouille le fait qu'il continue de l'accepter.
+  const s = uniq()
+  const owner = client()
+  assert.equal((await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Habillage', slug: `skin-${s}`, name: 'Proprietaire',
+    email: `skin-${s}@example.ma`, password: 'motdepasse-solide-sk',
+  })).status, 201)
+
+  const res = await owner.call('PUT', '/api/branding', {
+    theme: { accent: '#16a34a', skin: 'sport', mode: 'system' },
+  })
+  assert.equal(res.status, 200, JSON.stringify(res.data))
+
+  const me = await owner.call('GET', '/api/me')
+  assert.equal(me.data.branding.theme.skin, 'sport')
+  assert.equal(me.data.branding.theme.accent, '#16a34a')
+
+  // Les cinq habillages de la plateforme, tous acceptes cote club : le
+  // client n'a pas un sous-ensemble.
+  for (const skin of ['sombre', 'clair', 'chaleureux', 'sport', 'tatami']) {
+    const r = await owner.call('PUT', '/api/branding', {
+      theme: { accent: '#2f6bff', skin, mode: 'system' },
+    })
+    assert.equal(r.status, 200, `habillage refuse au club : ${skin}`)
+  }
+})
+
+test('le comptoir ne change pas l habillage du club', async () => {
+  const s = uniq()
+  const owner = client()
+  assert.equal((await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Roles', slug: `roles-${s}`, name: 'Proprietaire',
+    email: `roles-${s}@example.ma`, password: 'motdepasse-solide-ro',
+  })).status, 201)
+
+  const staffEmail = `staff-sk-${s}@example.ma`
+  const invited = await owner.call('POST', '/api/staff', {
+    name: 'Comptoir', email: staffEmail, password: 'motdepasse-solide-st', role: 'staff',
+  })
+  if (invited.status !== 201) return
+
+  const staff = client()
+  assert.equal((await staff.call('POST', '/api/auth/login', {
+    email: staffEmail, password: 'motdepasse-solide-st',
+  })).status, 200)
+
+  // L'habillage engage tout le club : ce n'est pas une preference
+  // personnelle, et le comptoir n'a pas a en decider pour les autres.
+  const res = await staff.call('PUT', '/api/branding', {
+    theme: { accent: '#ef4444', skin: 'tatami', mode: 'system' },
+  })
+  assert.equal(res.status, 403, `statut inattendu : ${res.status}`)
+})

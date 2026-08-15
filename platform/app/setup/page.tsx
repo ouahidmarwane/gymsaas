@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Building2, Dumbbell, Plus, Trash2 } from 'lucide-react'
-import { api, ApiError } from '@/lib/client'
+import { Building2, Dumbbell, Palette, Plus, Trash2 } from 'lucide-react'
+import { api, ApiError, type Me } from '@/lib/client'
+import ThemePicker from '@/components/ThemePicker'
 
 interface Branch { id: string; name: string; is_active: number }
 interface Grade { id: string; rank: number; label: string }
@@ -25,6 +26,7 @@ const NO_LADDER = 'Aucune — sport non grade'
 export default function SetupPage() {
   const [branches, setBranches] = useState<Branch[] | null>(null)
   const [disciplines, setDisciplines] = useState<Discipline[] | null>(null)
+  const [me, setMe] = useState<Me | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -33,13 +35,22 @@ export default function SetupPage() {
   const [ladder, setLadder] = useState<keyof typeof LADDERS>(NO_LADDER)
 
   async function reload() {
-    const [b, d] = await Promise.all([
+    const [b, d, meData] = await Promise.all([
       api.get<{ branches: Branch[] }>('/api/branches'),
       api.get<{ disciplines: Discipline[] }>('/api/disciplines'),
+      api.get<Me>('/api/me'),
     ])
     setBranches(b.branches)
     setDisciplines(d.disciplines)
+    setMe(meData)
   }
+
+  // Changer l'habillage engage tout le club, pas seulement celui qui clique :
+  // c'est un reglage d'organisation. Reserve donc aux responsables, comme le
+  // serveur le fait deja sur PUT /api/branding.
+  const canBrand = me
+    ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin'].includes(me.org?.role ?? ''))
+    : false
 
   useEffect(() => {
     reload().catch(e => setError(e instanceof ApiError ? e.message : 'Chargement impossible'))
@@ -77,6 +88,27 @@ export default function SetupPage() {
           }}>{error}</p>
         )}
       </div>
+
+      {/* Apparence.
+          Les memes cinq habillages que le compte plateforme, et le meme
+          composant : la liste n'existe qu'a un seul endroit. Le serveur
+          acceptait deja l'ecriture par un administrateur de club — seule
+          l'interface la reservait a la plateforme. */}
+      {canBrand && (
+        <section className="dz-card">
+          <div className="dz-card-head">
+            <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+              <Palette size={17} strokeWidth={2.1} style={{ color: 'var(--gold)' }} /> Apparence
+            </h2>
+          </div>
+          <p className="dz-card-note" style={{ marginTop: 8, marginBottom: 16 }}>
+            L&apos;habillage s&apos;applique à tout le club : chaque membre de votre équipe
+            verra la plateforme ainsi. Le choix prend effet immédiatement, et se change
+            d&apos;un clic.
+          </p>
+          <ThemePicker initial={me?.branding ?? null} />
+        </section>
+      )}
 
       {/* Salles ------------------------------------------------------- */}
       <section className="dz-card">
