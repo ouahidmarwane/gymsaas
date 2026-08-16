@@ -2240,12 +2240,12 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 
 .compta-modal-overlay.is-closing .compta-modal,
 .compta-modal-overlay.is-closing .compta-expand-modal,
-.docview-overlay.is-closing .docview {
+.docview-layer.is-closing .docview {
   animation: modalFold 170ms ease both;
 }
 
 .compta-modal-overlay.is-closing,
-.docview-overlay.is-closing {
+.docview-layer.is-closing {
   animation: scrimOut 170ms ease forwards;
   /* Le fond ne se reclique pas pendant qu'il s'en va. */
   pointer-events: none;
@@ -2260,18 +2260,18 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   .compta-modal, .compta-expand-modal, .docview,
   .compta-modal-overlay.is-closing .compta-modal,
   .compta-modal-overlay.is-closing .compta-expand-modal,
-  .docview-overlay.is-closing .docview {
+  .docview-layer.is-closing .docview {
     filter: none;
     transform: none;
     animation: scrimIn 120ms ease both;
   }
   .compta-modal-overlay.is-closing .compta-modal,
   .compta-modal-overlay.is-closing .compta-expand-modal,
-  .docview-overlay.is-closing .docview { animation: scrimOut 120ms ease both; }
+  .docview-layer.is-closing .docview { animation: scrimOut 120ms ease both; }
 
-  .compta-modal-overlay, .docview-overlay { animation: scrimIn 120ms ease both; }
+  .compta-modal-overlay, .docview-layer { animation: scrimIn 120ms ease both; }
   .compta-modal-overlay.is-closing,
-  .docview-overlay.is-closing { animation: scrimOut 120ms ease forwards; }
+  .docview-layer.is-closing { animation: scrimOut 120ms ease forwards; }
 }
 
 .compta-modal {
@@ -6502,70 +6502,47 @@ html[data-theme='light'] .mdet-wash { opacity: 0.09; }
 }
 html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 
-/* Visionneuse de piece d'identite, au-dessus de la fiche.
-   Le flou porte sur ce qu'il y a derriere, y compris la fiche elle-meme :
-   le document devient la seule chose nette a l'ecran. */
-.docview-overlay {
-  position: fixed; inset: 0; z-index: 500;
+/*
+  Couche d'une fenetre flottante.
+
+  Elle ne sert qu'a centrer et a porter le rang : ni voile, ni capture de
+  clic. Un voile PAR fenetre assombrirait l'ecran deux fois des qu'on ouvre
+  la piece d'identite et l'agrandissement de la photo — et un bureau ne
+  s'assombrit pas quand on ouvre une fenetre.
+
+  Le rang vient du script : `zIndex` en ligne, tire de la pile partagee.
+*/
+.docview-layer {
+  position: fixed; inset: 0;
   display: grid; place-items: center; padding: 1.5rem;
-  /* Plus appuye que le voile ordinaire : celui-ci se pose par-dessus une
-     fiche deja ouverte, et le document doit rester la seule chose nette. */
-  background: var(--scrim);
-  backdrop-filter: blur(14px) saturate(1.2);
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
-  animation: scrimIn 260ms ease both;
-  transition: background 200ms ease, backdrop-filter 200ms ease;
+  pointer-events: none;
 }
+/* Seule la fenetre elle-meme se clique : le vide autour ne fait rien, ce qui
+   laisse atteindre ce qui se trouve derriere. */
+.docview-layer .docview { pointer-events: auto; }
 
 /*
-  Fenetre en arriere-plan : DERRIERE la fiche, pas transparente.
+  La fiche du membre devient une fenetre parmi les autres.
 
-  Premier essai : je baissais son opacite. Resultat detestable — la fenetre
-  se melangeait a la fiche, on lisait les deux l'une a travers l'autre et
-  plus rien n'etait net. Une fenetre d'arriere-plan n'est pas translucide,
-  elle est CACHEE par celle de devant.
+  Son voile cesse d'assombrir et de capter les clics : sinon il couvrirait
+  toute une visionneuse placee derriere, et le clic destine a la ramener
+  devant serait avale. Sa carte, elle, garde ses evenements — c'est la
+  fenetre.
 
-  Elle descend donc sous le voile de la fiche (z 200) et reste parfaitement
-  opaque. Ce qui l'assombrit, c'est le voile lui-meme qui passe par-dessus —
-  exactement ce qui arrive a une fenetre derriere une autre.
+  L'ombre remplace le voile pour la detacher du fond : sans lui, elle
+  flotterait sur la page sans limite visible.
 */
-.docview-overlay.behind {
-  z-index: 150;
+.compta-modal-overlay.stacked {
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   pointer-events: none;
 }
-/* Pas de `transform` ici : il appartient au script, qui compose le
-   deplacement et le plan dans une seule valeur. Deux sources pour la meme
-   propriete, et la derniere ecrase l'autre — la fenetre aurait cesse de se
-   deplacer des qu'elle passe en arriere-plan. */
-.docview-overlay.behind .docview {
+.compta-modal-overlay.stacked .compta-modal {
   pointer-events: auto;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--overlay-strong);
 }
 
-/*
-  Pendant que la fenetre est derriere, le voile de la fiche laisse passer les
-  clics — sa carte, elle, les garde.
-
-  Sans cela, la fenetre serait bel et bien derriere mais injoignable : le
-  voile de la fiche couvre tout l'ecran, et le clic destine a la ramener
-  devant aurait ferme la fiche a la place.
-
-  Consequence assumee : tant qu'une piece est ouverte, cliquer a cote ne
-  ferme plus la fiche. C'est le bon ordre — on referme la fenetre d'abord.
-*/
-body.gf-docview-behind .compta-modal-overlay { pointer-events: none; }
-body.gf-docview-behind .compta-modal { pointer-events: auto; }
-
-/* Le titre dit dans quel etat on est : une fenetre a demi transparente sans
-   explication passe pour un defaut d'affichage. */
-.docview-hint {
-  flex: none; padding: 0.1rem 0.5rem; border-radius: 999px;
-  font-size: 0.62rem; font-weight: 700; white-space: nowrap;
-  background: var(--overlay); color: var(--muted);
-}
 .docview {
   /* La boite epouse ce qu'elle montre. A largeur fixe, un portrait vertical
      flottait au milieu d'un demi-metre de vide, et une carte d'identite
@@ -6588,7 +6565,7 @@ body.gf-docview-behind .compta-modal { pointer-events: auto; }
   transition: opacity 200ms ease, box-shadow 200ms ease;
 }
 @media (prefers-reduced-motion: reduce) {
-  .docview, .docview-overlay { transition: none; }
+  .docview, .docview-layer { transition: none; }
 }
 /* La barre de titre est la poignee : c'est par elle qu'on deplace la
    fenetre, comme n'importe quelle fenetre. `touch-action: none` empeche le
@@ -6663,7 +6640,7 @@ body.gf-docview-behind .compta-modal { pointer-events: auto; }
   border: 0; border-radius: 10px; background: #fff;
 }
 @media (prefers-reduced-motion: reduce) {
-  .docview, .docview-overlay { animation: none; }
+  .docview, .docview-layer { animation: none; }
 }
 
 /* La barre de la modale, plus discrete encore que celle de la page : elle

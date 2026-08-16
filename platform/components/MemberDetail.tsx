@@ -9,6 +9,7 @@ import {
 import { api, upload, ApiError } from '@/lib/client'
 import { useScrollLock } from '@/lib/scroll-lock'
 import { useModalMotion } from '@/lib/modal-motion'
+import { useWindowZ, useRegisterWindow, useHasFloatingWindow } from '@/lib/window-stack'
 import {
   type MemberRow, subStatus, insStatus, daysUntil, photoUrl,
   SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
@@ -48,6 +49,16 @@ export default function MemberDetail({
   useScrollLock()
   const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
 
+  /**
+   * La fiche est une fenetre parmi les autres des qu'une visionneuse est
+   * ouverte : elle prend son rang dans la meme pile, et un clic dedans la
+   * ramene devant. Sans cela, elle serait toujours soit au-dessus soit
+   * en-dessous des visionneuses, et « cliquer a cote » y reviendrait
+   * fatalement — ce qui n'est pas un bureau, c'est une bascule.
+   */
+  const { z: sheetZ, raise: raiseSheet } = useWindowZ()
+  const floating = useHasFloatingWindow()
+
   const sub = subStatus(member)
   const ins = insStatus(member)
   const left = daysUntil(member.sub_expiry)
@@ -61,12 +72,20 @@ export default function MemberDetail({
   const color = AVATAR_COLORS[member.name.charCodeAt(0) % AVATAR_COLORS.length]!
 
   return (
-    <div className={`compta-modal-overlay mdet-overlay${overlayClass}`} onClick={dismiss}
-         role="dialog" aria-modal="true" aria-label={`Fiche de ${member.name}`}
+    <div className={`compta-modal-overlay mdet-overlay${overlayClass}${floating ? ' stacked' : ''}`}
+         /* Tant qu'aucune fenetre n'est ouverte, la fiche est une modale
+            ordinaire : le fond la ferme. Des qu'il y en a une, le fond cesse
+            de fermer — on referme la fenetre d'abord, et un clic a cote ne
+            doit pas emporter la fiche sous une piece d'identite ouverte. */
+         onClick={floating ? undefined : dismiss}
+         role="dialog" aria-modal={floating ? undefined : true}
+         aria-label={`Fiche de ${member.name}`}
          /* La teinte de la personne diffuse derriere la modale : deux fiches
             ouvertes l'une apres l'autre ne se ressemblent plus. */
-         style={{ '--mdet-tint': color } as React.CSSProperties}>
-      <div ref={cardRef} className="compta-modal mdet" onClick={e => e.stopPropagation()}
+         style={{ '--mdet-tint': color, zIndex: floating ? sheetZ : undefined } as React.CSSProperties}>
+      <div ref={cardRef} className="compta-modal mdet"
+           onClick={e => e.stopPropagation()}
+           onPointerDown={raiseSheet}
            style={photo ? ({ '--mdet-photo': `url("${photo}")` } as React.CSSProperties) : undefined}>
         {/* Hors du defilement : la croix reste sous la main quand on descend
             dans la fiche, et elle ne passe pas sous la barre. */}
@@ -466,34 +485,20 @@ function DocViewer({ src, title, onClose }: {
   /**
    * Une fenetre, pas une modale.
    *
-   * `front` dit si elle a le dessus. En arriere-plan elle reste visible mais
-   * en retrait, et surtout son fond cesse d'intercepter les clics : la fiche
-   * du membre redevient utilisable sans que la piece d'identite disparaisse.
-   * On consulte une carte nationale EN remplissant la fiche a cote — les
-   * deux doivent tenir a l'ecran en meme temps.
+   * Son rang vient de la pile partagee : elle passe devant quand on la
+   * clique, et les autres gardent leur ordre relatif. Deux visionneuses
+   * ouvertes — une piece d'identite et l'agrandissement de la photo — se
+   * rangent donc l'une par rapport a l'autre, et pas seulement par rapport
+   * a la fiche.
    */
-  const [front, setFront] = useState(true)
+  const { z, raise } = useWindowZ()
+  useRegisterWindow()
+
   const [pos, setPos] = useState({ x: 0, y: 0 })
   const drag = useRef<{ id: number; fromX: number; fromY: number; baseX: number; baseY: number } | null>(null)
 
   useScrollLock()
   const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
-
-  /**
-   * Quand la fenetre passe derriere, le voile de la fiche doit cesser
-   * d'intercepter les clics — sinon la fenetre est bien derriere, mais
-   * injoignable : le clic destine a la ramener devant fermerait la fiche.
-   *
-   * Une classe sur <body> parce que les deux composants sont freres : la
-   * fiche ne sait rien de la visionneuse, et lui faire remonter cet etat
-   * pour un reglage de pointeur serait un cablage disproportionne.
-   */
-  useEffect(() => {
-    const cls = 'gf-docview-behind'
-    if (front) document.body.classList.remove(cls)
-    else document.body.classList.add(cls)
-    return () => document.body.classList.remove(cls)
-  }, [front])
 
   /** Deplacement a la barre de titre, comme une fenetre. */
   function startDrag(e: React.PointerEvent<HTMLDivElement>) {
@@ -554,22 +559,13 @@ function DocViewer({ src, title, onClose }: {
   const isPdf = blob?.type.includes('pdf')
 
   return createPortal(
-    <div className={`docview-overlay${overlayClass}${front ? '' : ' behind'}`}
-         /* Le fond ne ferme pas : il met la fenetre en arriere-plan et rend
-            la fiche du membre utilisable. Une piece d'identite qu'on
-            consulte en remplissant la fiche a cote n'a aucune raison de
-            disparaitre au premier clic a cote.
-
-            `target === currentTarget` : seul un clic sur le fond LUI-MEME
-            compte. Un clic dans la fenetre remonte jusqu'ici, et sans ce
-            test il la renverrait derriere aussitot apres l'avoir ramenee. */
-         onPointerDown={e => { if (e.target === e.currentTarget) setFront(false) }}
+    /* La couche n'est qu'un repere de position : elle ne capte aucun clic,
+       elle n'a pas de voile. Un voile par fenetre assombrirait l'ecran deux
+       fois avec deux visionneuses ouvertes — et un bureau ne s'assombrit pas
+       quand on ouvre une fenetre. */
+    <div className={`docview-layer${overlayClass}`} style={{ zIndex: z }}
          role="dialog" aria-label={title}>
       <div ref={cardRef} className="docview"
-           // Deplacement et retrait composes ici, en une seule valeur : deux
-           // sources pour `transform` et la derniere ecrase l'autre.
-           // Aucune reduction d'echelle en arriere-plan : une fenetre
-           // derriere garde sa taille, c'est celle de devant qui la cache.
            style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
            /* En phase de remontee, et SANS stopPropagation.
               La version precedente utilisait onPointerDownCapture avec un
@@ -577,14 +573,13 @@ function DocViewer({ src, title, onClose }: {
               l'evenement de DESCENDRE jusqu'aux enfants — la barre de titre
               ne recevait donc jamais son onPointerDown, et la fenetre ne se
               deplacait pas. */
-           onPointerDown={() => setFront(true)}>
+           onPointerDown={raise}>
         <div className="docview-bar"
              onPointerDown={startDrag}
              /* Double-clic sur la barre : retour au centre, quand on l'a
                 perdue de vue en la poussant trop loin. */
              onDoubleClick={() => setPos({ x: 0, y: 0 })}>
           <span className="docview-title">{title}</span>
-          {!front && <span className="docview-hint">arrière-plan</span>}
           {/* Echap ferme aussi : c'est la croix au clavier, pas un clic a
               cote. Le reste ne ferme rien. */}
           <button className="mdet-hero-btn" onClick={dismiss} aria-label="Fermer">
