@@ -21,6 +21,20 @@ const nextConfig: NextConfig = {
 
 // Rend les bindings Cloudflare (D1, R2, Durable Objects) disponibles sous
 // `next dev`, sans quoi getCloudflareContext serait vide en developpement.
-initOpenNextCloudflareForDev()
+//
+// GARDE-FOU : cet appel demarre un proxy wrangler des le chargement de la
+// configuration — donc AUSSI pendant `next build`, ou il n'a rien a faire.
+// Ce proxy exige desormais un acces a l'API Cloudflare pour les bindings
+// distants : un jeton expire, un compte sans sous-domaine workers.dev ou une
+// machine hors ligne suffisent a faire echouer la construction, avec une
+// erreur d'API qui ne dit rien du code. La construction ne doit dependre
+// d'aucun reseau.
+//
+// `next build` pose NODE_ENV=production, `next dev` pose development : la
+// distinction est exacte. Ce projet ne se sert de toute facon pas de
+// `next dev` (PASSATION §9), l'appel reste pour qui voudrait l'essayer.
+if (process.env.NODE_ENV === 'development') {
+  initOpenNextCloudflareForDev()
+}
 
 export default nextConfig

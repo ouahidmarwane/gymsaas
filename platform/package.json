@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "opennextjs-cloudflare build && wrangler dev --port 8787",
+    "dev": "opennextjs-cloudflare build && wrangler dev --port 8787 --local",
     "dev:ui": "next dev --port 3000",
     "build": "next build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
