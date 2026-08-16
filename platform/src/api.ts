@@ -1092,17 +1092,23 @@ export const api = {
       // Sert le logo. Le prefixe impose empeche de detourner cette route
       // vers les photos ou passeports des membres.
       /**
-       * Banniere du club, posee par la plateforme.
+       * Banniere du tableau de bord.
        *
-       * Reservee a l'exploitant : c'est une piece d'identite visuelle qu'on
-       * installe pour le client, comme la disposition des ecrans. Un club qui
-       * pourrait la remplacer casserait sa propre en-tete sans recours.
+       * Ouverte aux administrateurs du club, comme le logo. Elle etait
+       * reservee a la plateforme au motif qu'un club casserait sa propre
+       * en-tete : l'argument ne tient pas, puisqu'il peut deja remplacer son
+       * logo et changer toutes ses couleurs. Une image qu'on remplace en deux
+       * clics et qu'on retire d'un troisieme n'a pas besoin d'un tuteur.
+       *
+       * L'exploitant garde le droit d'en poser une pour son client, via le
+       * mode support — d'ou `atLeast(..., true)`, qui exige une portee en
+       * ecriture explicite plutot qu'une simple visite.
        *
        * Meme prefixe R2 que le logo, donc le meme proxy la sert et la meme
        * garde de cle s'applique — aucune surface nouvelle a securiser.
        */
       if (path === '/api/branding/banner' && (method === 'PUT' || method === 'DELETE')) {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)
 
         const previous = await env.CONTROL.prepare(

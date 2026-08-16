@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Building2, Dumbbell, Palette, Plus, Trash2 } from 'lucide-react'
 import { api, ApiError, type Me } from '@/lib/client'
 import ThemePicker from '@/components/ThemePicker'
+import BannerPicker from '@/components/BannerPicker'
 
 interface Branch { id: string; name: string; is_active: number }
 interface Grade { id: string; rank: number; label: string }
@@ -107,6 +108,18 @@ export default function SetupPage() {
             d&apos;un clic.
           </p>
           <ThemePicker initial={me?.branding ?? null} />
+
+          <div style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--hairline)' }}>
+            <h3 style={{ fontSize: '0.86rem', fontWeight: 700, marginBottom: 4 }}>
+              Bannière du tableau de bord
+            </h3>
+            <p className="dz-card-note" style={{ marginBottom: 14 }}>
+              L&apos;image en tête de votre tableau de bord. Une photo de la salle,
+              de l&apos;équipe, ou rien du tout.
+            </p>
+            <BannerPicker initial={me?.branding ?? null}
+                          onSaved={b => setMe(m => (m ? { ...m, branding: b } : m))} />
+          </div>
         </section>
       )}
 

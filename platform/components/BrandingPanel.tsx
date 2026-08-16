@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { Palette, Upload } from 'lucide-react'
 import { api, ApiError, type Branding } from '@/lib/client'
 import ThemePicker from '@/components/ThemePicker'
+import BannerPicker from '@/components/BannerPicker'
 
 /**
  * Panneau de marque de la plateforme.
@@ -17,8 +18,6 @@ export default function BrandingPanel({
   initial, onSaved,
 }: { initial: Branding | null; onSaved: (b: Branding) => void }) {
   const fileRef = useRef<HTMLInputElement>(null)
-  const bannerRef = useRef<HTMLInputElement>(null)
-  const [bannerUrl, setBannerUrl] = useState(initial?.bannerUrl ?? null)
   const [name, setName] = useState(initial?.name ?? '')
   const [logoUrl, setLogoUrl] = useState(initial?.logoUrl ?? null)
   const [busy, setBusy] = useState(false)
@@ -41,27 +40,6 @@ export default function BrandingPanel({
       onSaved(result); setSaved(true)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Enregistrement impossible')
-    } finally { setBusy(false) }
-  }
-
-  async function uploadBanner(file: File) {
-    if (file.size > 4 * 1024 * 1024) { setError('Bannière trop volumineuse : 4 Mo maximum'); return }
-    setBusy(true); setError(null)
-    try {
-      const res = await fetch('/api/branding/banner', {
-        method: 'PUT', credentials: 'same-origin',
-        headers: { 'Content-Type': file.type }, body: file,
-      })
-      if (!res.ok) {
-        const payload: unknown = await res.json().catch(() => null)
-        throw new ApiError(res.status, typeof payload === 'object' && payload && 'error' in payload
-          ? String((payload as { error: unknown }).error) : 'Envoi impossible')
-      }
-      const saved = await res.json() as { bannerUrl: string }
-      setBannerUrl(saved.bannerUrl)
-      onSaved(await api.get<Branding>('/api/branding'))
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Envoi impossible')
     } finally { setBusy(false) }
   }
 
@@ -134,46 +112,15 @@ export default function BrandingPanel({
 
       </div>
 
-      {/* Banniere du tableau de bord. Posee par la plateforme : c'est une
-          piece d'identite visuelle qu'on installe pour le client. */}
+      {/* Banniere : le meme composant que dans la configuration du club, pour
+          la meme raison que l'habillage — une seule definition des regles
+          d'envoi. La plateforme la pose desormais pour depanner, pas parce
+          qu'elle serait seule a en avoir le droit. */}
       <fieldset style={{ border: 'none', margin: '22px 0 0', padding: 0 }}>
         <legend style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)', marginBottom: 10 }}>
           Bannière du tableau de bord
         </legend>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <div style={{
-            width: 220, height: 76, borderRadius: 14, overflow: 'hidden', flex: 'none',
-            border: '1px solid var(--card-border)', background: 'var(--overlay-soft)',
-            display: 'grid', placeItems: 'center',
-          }}>
-            {bannerUrl
-              ? <img src={bannerUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              : <span className="dz-card-note" style={{ fontSize: '0.7rem' }}>Aucune bannière</span>}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <input ref={bannerRef} type="file" className="sr-only"
-                   accept="image/png,image/jpeg,image/webp"
-                   onChange={e => { const f = e.target.files?.[0]; if (f) uploadBanner(f) }} />
-            <span style={{ display: 'flex', gap: 8 }}>
-              <button className="btn-ghost" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}
-                      onClick={() => bannerRef.current?.click()} disabled={busy}>
-                <Upload size={14} strokeWidth={2.2} /> {bannerUrl ? 'Remplacer' : 'Choisir'}
-              </button>
-              {bannerUrl && (
-                <button className="gf-mini-btn" data-tone="danger" disabled={busy}
-                        onClick={async () => {
-                          setBusy(true)
-                          try { await api.del('/api/branding/banner'); setBannerUrl(null) }
-                          finally { setBusy(false) }
-                        }}>Retirer</button>
-              )}
-            </span>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', maxWidth: '34ch' }}>
-              Image large, 4 Mo maximum. Sans bannière, le dégradé de la couleur du club
-              tient lieu de fond.
-            </span>
-          </div>
-        </div>
+        <BannerPicker initial={initial} onSaved={onSaved} />
       </fieldset>
 
       {/* Habillage et couleur : le meme composant que dans la configuration

@@ -145,6 +145,82 @@ test('un club change son propre habillage, sans passer par la plateforme', async
   }
 })
 
+test('un club pose et retire sa propre banniere', async () => {
+  // Elle etait reservee a la plateforme. L'argument — « un club casserait sa
+  // propre en-tete » — ne tenait pas : il peut deja remplacer son logo et
+  // changer toutes ses couleurs.
+  const s = uniq()
+  const owner = client()
+  assert.equal((await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Banniere', slug: `bann-${s}`, name: 'Proprietaire',
+    email: `bann-${s}@example.ma`, password: 'motdepasse-solide-ba',
+  })).status, 201)
+
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64')
+
+  const put = await fetch(`${BASE}/api/branding/banner`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/png', Cookie: owner.cookie ?? '' },
+    body: PNG,
+  })
+  assert.equal(put.status, 200, `envoi refuse : ${put.status}`)
+
+  const me = await owner.call('GET', '/api/me')
+  assert.ok(me.data.branding.bannerUrl, 'la banniere doit apparaitre dans la marque')
+
+  assert.equal((await owner.call('DELETE', '/api/branding/banner')).status, 200)
+  const after = await owner.call('GET', '/api/me')
+  assert.equal(after.data.branding.bannerUrl, null, 'et disparaitre au retrait')
+})
+
+test('un format non image est refuse pour la banniere', async () => {
+  const s = uniq()
+  const owner = client()
+  assert.equal((await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Format', slug: `fmt-${s}`, name: 'Proprietaire',
+    email: `fmt-${s}@example.ma`, password: 'motdepasse-solide-fm',
+  })).status, 201)
+
+  // Un SVG porte du script et sera affiche en pleine largeur sur le tableau
+  // de bord : c'est precisement ce qu'on ne veut pas servir depuis notre
+  // propre origine.
+  const res = await fetch(`${BASE}/api/branding/banner`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/svg+xml', Cookie: owner.cookie ?? '' },
+    body: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+  })
+  assert.ok(res.status >= 400, `SVG accepte, statut ${res.status}`)
+})
+
+test('le comptoir ne pose pas de banniere', async () => {
+  const s = uniq()
+  const owner = client()
+  assert.equal((await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Bann Roles', slug: `bnr-${s}`, name: 'Proprietaire',
+    email: `bnr-${s}@example.ma`, password: 'motdepasse-solide-br',
+  })).status, 201)
+
+  const staffEmail = `staff-bn-${s}@example.ma`
+  if ((await owner.call('POST', '/api/staff', {
+    name: 'Comptoir', email: staffEmail, password: 'motdepasse-solide-st', role: 'staff',
+  })).status !== 201) return
+
+  const staff = client()
+  assert.equal((await staff.call('POST', '/api/auth/login', {
+    email: staffEmail, password: 'motdepasse-solide-st',
+  })).status, 200)
+
+  // Comme l'habillage : l'en-tete engage tout le club.
+  const res = await fetch(`${BASE}/api/branding/banner`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/png', Cookie: staff.cookie ?? '' },
+    body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
+  })
+  assert.equal(res.status, 403, `statut inattendu : ${res.status}`)
+})
+
 test('le comptoir ne change pas l habillage du club', async () => {
   const s = uniq()
   const owner = client()
