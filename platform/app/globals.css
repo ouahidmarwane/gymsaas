@@ -2222,12 +2222,20 @@ html:not([data-theme='light']) .member-row .text-red-600 {
    premiere image avant le depart : sans lui la carte apparait nette et a sa
    taille pendant une image, puis saute au flou. */
 .compta-modal,
-.compta-expand-modal,
-.docview {
+.compta-expand-modal {
   /* L'echelle se resserre sur une courbe qui freine en fin de course ;
      l'opacite et le flou suivent en `ease`, sans quoi la nettete arrive
      avant que la carte ait fini de se poser. */
   animation: modalGrow 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* La visionneuse : meme entree, mais `backwards` et non `both`.
+   Avec `both`, la derniere image-cle — `transform: none` — reste appliquee
+   apres la fin, et une animation l'emporte sur le style en ligne : la
+   fenetre aurait refuse de se deplacer, sans la moindre erreur pour le
+   dire. `backwards` ne retient que l'etat AVANT le depart. */
+.docview {
+  animation: modalGrow 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 .compta-modal-overlay.is-closing .compta-modal,
@@ -6506,6 +6514,43 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   backdrop-filter: blur(14px) saturate(1.2);
   -webkit-backdrop-filter: blur(14px) saturate(1.2);
   animation: scrimIn 260ms ease both;
+  transition: background 200ms ease, backdrop-filter 200ms ease;
+}
+
+/*
+  Fenetre en arriere-plan.
+
+  Le voile disparait ET cesse d'intercepter les clics : la fiche du membre
+  redevient entierement utilisable pendant que la piece d'identite reste a
+  l'ecran. C'est tout l'interet — on recopie un numero de carte DANS la
+  fiche, les deux doivent coexister.
+
+  La fenetre, elle, garde ses evenements : c'est ce qui permet de la
+  reprendre d'un clic. Elle recule visuellement, elle ne s'efface pas.
+*/
+.docview-overlay.behind {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  pointer-events: none;
+}
+/* Pas de `transform` ici : il appartient au script, qui compose le
+   deplacement et le retrait dans une seule valeur. Deux sources pour la meme
+   propriete, et la derniere ecrase l'autre — la fenetre aurait cesse de se
+   deplacer des qu'elle passe en arriere-plan. */
+.docview-overlay.behind .docview {
+  pointer-events: auto;
+  opacity: 0.62;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+.docview-overlay.behind .docview:hover { opacity: 0.85; }
+
+/* Le titre dit dans quel etat on est : une fenetre a demi transparente sans
+   explication passe pour un defaut d'affichage. */
+.docview-hint {
+  flex: none; padding: 0.1rem 0.5rem; border-radius: 999px;
+  font-size: 0.62rem; font-weight: 700; white-space: nowrap;
+  background: var(--overlay); color: var(--muted);
 }
 .docview {
   /* La boite epouse ce qu'elle montre. A largeur fixe, un portrait vertical
@@ -6520,14 +6565,29 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   border: 1px solid var(--overlay-strong);
   border-radius: 20px; overflow: hidden;
   box-shadow: 0 40px 90px rgba(0, 0, 0, 0.6);
-  /* L'animation vient de la regle partagee, plus haut. Une seconde
-     declaration ici la ferait diverger au premier reglage. */
+  /* L'animation d'entree vient de la regle partagee, plus haut. Une seconde
+     declaration ici la ferait diverger au premier reglage.
+     Le retrait en arriere-plan se transitionne separement : il n'a pas lieu
+     a l'ouverture mais a chaque changement de plan. */
+  /* `transform` n'est PAS transitionne : il porte le deplacement a la
+     souris, et une transition ferait trainer la fenetre derriere le curseur. */
+  transition: opacity 200ms ease, box-shadow 200ms ease;
 }
+@media (prefers-reduced-motion: reduce) {
+  .docview, .docview-overlay { transition: none; }
+}
+/* La barre de titre est la poignee : c'est par elle qu'on deplace la
+   fenetre, comme n'importe quelle fenetre. `touch-action: none` empeche le
+   navigateur de s'emparer du geste pour faire defiler la page. */
 .docview-bar {
-  display: flex; align-items: center; gap: 1rem;
+  display: flex; align-items: center; gap: 0.7rem;
   padding: 0.85rem 0.9rem 0.85rem 1.2rem;
   border-bottom: 1px solid var(--hairline);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
+.docview-bar:active { cursor: grabbing; }
 .docview-title {
   flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 700;
   /* Borne la contribution du titre a la largeur : sans elle, un nom long

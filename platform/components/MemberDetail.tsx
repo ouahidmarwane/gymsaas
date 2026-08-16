@@ -463,8 +463,59 @@ function DocViewer({ src, title, onClose }: {
   const [blob, setBlob] = useState<{ url: string; type: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  /**
+   * Une fenetre, pas une modale.
+   *
+   * `front` dit si elle a le dessus. En arriere-plan elle reste visible mais
+   * en retrait, et surtout son fond cesse d'intercepter les clics : la fiche
+   * du membre redevient utilisable sans que la piece d'identite disparaisse.
+   * On consulte une carte nationale EN remplissant la fiche a cote — les
+   * deux doivent tenir a l'ecran en meme temps.
+   */
+  const [front, setFront] = useState(true)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const drag = useRef<{ id: number; fromX: number; fromY: number; baseX: number; baseY: number } | null>(null)
+
   useScrollLock()
   const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
+
+  /** Deplacement a la barre de titre, comme une fenetre. */
+  function startDrag(e: React.PointerEvent<HTMLDivElement>) {
+    // Pas de deplacement depuis la croix : on veut fermer, pas trainer.
+    if ((e.target as Element).closest('button')) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = {
+      id: e.pointerId, fromX: e.clientX, fromY: e.clientY, baseX: pos.x, baseY: pos.y,
+    }
+  }
+
+  useEffect(() => {
+    function move(e: PointerEvent) {
+      const d = drag.current
+      if (!d || d.id !== e.pointerId) return
+      // Borne : la barre de titre doit rester attrapable. Poussee hors de
+      // l'ecran, la fenetre ne se recupere plus qu'au rechargement.
+      const limitX = window.innerWidth / 2
+      const limitY = window.innerHeight / 2
+      setPos({
+        x: Math.max(-limitX, Math.min(limitX, d.baseX + (e.clientX - d.fromX))),
+        y: Math.max(-limitY, Math.min(limitY, d.baseY + (e.clientY - d.fromY))),
+      })
+    }
+    function up(e: PointerEvent) {
+      if (drag.current?.id === e.pointerId) drag.current = null
+    }
+    // Sur window : relacher le doigt hors de la barre doit terminer le geste,
+    // pas laisser la fenetre collee au curseur.
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+  }, [])
 
   useEffect(() => {
     let url: string | null = null
@@ -487,12 +538,29 @@ function DocViewer({ src, title, onClose }: {
   const isPdf = blob?.type.includes('pdf')
 
   return createPortal(
-    // Echap est gere par useModalMotion, avec la meme animation que la croix.
-    <div className={`docview-overlay${overlayClass}`} onClick={dismiss}
-         role="dialog" aria-modal="true" aria-label={title}>
-      <div ref={cardRef} className="docview" onClick={e => e.stopPropagation()}>
-        <div className="docview-bar">
+    <div className={`docview-overlay${overlayClass}${front ? '' : ' behind'}`}
+         /* Le fond ne ferme pas : il met la fenetre en arriere-plan et rend
+            la fiche du membre utilisable. Une piece d'identite qu'on
+            consulte en remplissant la fiche a cote n'a aucune raison de
+            disparaitre au premier clic a cote. */
+         onPointerDown={() => setFront(false)}
+         role="dialog" aria-label={title}>
+      <div ref={cardRef} className="docview"
+           // Deplacement et retrait composes ici, en une seule valeur : deux
+           // sources pour `transform` et la derniere ecrase l'autre.
+           style={{ transform: `translate(${pos.x}px, ${pos.y}px) scale(${front ? 1 : 0.97})` }}
+           /* En capture : ramener la fenetre au premier plan doit se produire
+              avant que le fond ne la renvoie derriere. */
+           onPointerDownCapture={e => { e.stopPropagation(); setFront(true) }}>
+        <div className="docview-bar"
+             onPointerDown={startDrag}
+             /* Double-clic sur la barre : retour au centre, quand on l'a
+                perdue de vue en la poussant trop loin. */
+             onDoubleClick={() => setPos({ x: 0, y: 0 })}>
           <span className="docview-title">{title}</span>
+          {!front && <span className="docview-hint">arrière-plan</span>}
+          {/* Echap ferme aussi : c'est la croix au clavier, pas un clic a
+              cote. Le reste ne ferme rien. */}
           <button className="mdet-hero-btn" onClick={dismiss} aria-label="Fermer">
             <X size={15} strokeWidth={2.4} />
           </button>
