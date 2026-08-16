@@ -1194,14 +1194,27 @@ export const api = {
           })
         }
 
-        // Lire sa disposition est le droit de tout le club — c'est ce qui
-        // dessine ses ecrans. La modifier appartient a la plateforme seule :
-        // le bouton n'est propose qu'a l'exploitant, et une route ouverte
-        // derriere un bouton cache ne serait pas une regle, juste un decor.
+        /*
+          Lire sa disposition est le droit de tout le club — c'est ce qui
+          dessine ses ecrans.
+
+          L'ECRIRE : le tableau de bord appartient au club, le reste a la
+          plateforme.
+
+          Tout etait ferme au motif qu'un club casserait ses propres ecrans.
+          L'argument ne tient pas pour le tableau de bord : il ne porte que
+          des cartes de lecture, la disposition se remet a zero d'un clic, et
+          le responsable qui l'ouvre chaque matin sait mieux que nous ce
+          qu'il veut voir en premier. Il tient encore pour les autres pages,
+          dont les cartes commandent des gestes.
+
+          La verification est ici, pas dans le bouton. Une route ouverte
+          derriere un bouton cache n'est pas une regle, juste un decor.
+        */
         if (method === 'PUT' || method === 'DELETE') {
           atLeast(principal, 'admin', true)
-          if (!principal.isPlatformAdmin) {
-            throw new HttpError(403, 'La disposition des ecrans est geree par la plateforme')
+          if (page !== 'dashboard' && !principal.isPlatformAdmin) {
+            throw new HttpError(403, 'Cet ecran est dispose par la plateforme')
           }
         }
 

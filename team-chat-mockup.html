@@ -1,0 +1,184 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GymFlow — Messagerie d'équipe (maquette)</title>
+<style>
+  :root{
+    --gold:#4C7DF0;                 /* = accent du club (--gold) — bleu ici pour la démo */
+    --bg:#0b0d12; --panel:#151822; --panel2:#10131b; --line:#242a37;
+    --ink:#e7e9f0; --muted:#8b90a0; --mut2:#6b7180;
+  }
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);height:100%;display:flex;flex-direction:column}
+  .top{padding:10px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+  .top b{color:var(--ink);font-weight:650;font-size:14px}
+  .badge-mock{margin-left:auto;font-size:11px;color:var(--mut2);border:1px solid var(--line);border-radius:20px;padding:3px 10px}
+
+  .app{flex:1;display:flex;min-height:0}
+  /* colonne des espaces */
+  .rail{width:250px;flex:none;border-right:1px solid var(--line);background:var(--panel2);display:flex;flex-direction:column;padding:14px 10px;gap:4px;overflow:auto}
+  .club{padding:8px 10px 12px;display:flex;align-items:center;gap:10px}
+  .club .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--gold),#8b5cf6);display:grid;place-items:center;font-weight:700;font-size:13px;color:#fff}
+  .club .n{font-weight:650;font-size:14px}.club .s{font-size:11px;color:var(--muted)}
+  .sec{font-size:11px;color:var(--mut2);text-transform:uppercase;letter-spacing:.05em;margin:12px 10px 4px}
+  .chan{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:9px;cursor:pointer;color:var(--muted);font-size:14px;border:1px solid transparent}
+  .chan:hover{background:#181c26}
+  .chan.on{background:color-mix(in srgb,var(--gold) 16%,transparent);color:var(--ink);border-color:color-mix(in srgb,var(--gold) 35%,transparent)}
+  .chan .i{width:20px;text-align:center}
+  .chan .dot{margin-left:auto;width:8px;height:8px;border-radius:50%;background:var(--gold)}
+  .lock{margin:auto 10px 6px;font-size:11px;color:var(--mut2);display:flex;gap:6px;align-items:flex-start;line-height:1.4}
+
+  /* zone conversation */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .head{padding:12px 20px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px}
+  .head h2{margin:0;font-size:15px;font-weight:650}
+  .head .sub{font-size:12px;color:var(--muted)}
+  .who{margin-left:auto;display:flex;align-items:center}
+  .who .av{width:26px;height:26px;border-radius:50%;margin-left:-8px;border:2px solid var(--panel);display:grid;place-items:center;font-size:11px;font-weight:600;color:#fff}
+  .who .more{font-size:12px;color:var(--muted);margin-left:8px}
+
+  .feed{flex:1;overflow:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px}
+  .msg{display:flex;gap:11px}
+  .av{width:34px;height:34px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;color:#fff}
+  .msg .body{min-width:0}
+  .msg .line1{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .msg .name{font-weight:650;font-size:14px}
+  .role{font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px;letter-spacing:.02em}
+  .r-owner{background:#3b2f14;color:#e6b34a}
+  .r-admin{background:#1e2b45;color:#7fa8f0}
+  .r-recep{background:#173a2a;color:#4fd39f}
+  .r-super{background:color-mix(in srgb,var(--gold) 22%,transparent);color:#a9c2ff}
+  .msg .t{font-size:11px;color:var(--mut2)}
+  .msg .text{margin-top:3px;font-size:14px;line-height:1.5;color:#d7dae3}
+  .mention{color:var(--gold);background:color-mix(in srgb,var(--gold) 15%,transparent);border-radius:5px;padding:0 3px;font-weight:600}
+  .super-wrap{background:color-mix(in srgb,var(--gold) 8%,transparent);border:1px solid color-mix(in srgb,var(--gold) 22%,transparent);border-radius:12px;padding:12px 14px}
+  .react{margin-top:8px;display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:20px;padding:3px 9px;cursor:pointer}
+  .react:hover{border-color:var(--gold)}
+
+  /* annonces */
+  .ann{border-radius:14px;border:1px solid var(--line);background:var(--panel);padding:16px 18px}
+  .ann .h{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+  .ann .tag{font-size:11px;font-weight:700;color:var(--gold);letter-spacing:.04em}
+  .ann .t{font-size:11px;color:var(--mut2);margin-left:auto}
+  .ann .txt{font-size:14px;line-height:1.55;color:#d7dae3}
+
+  .composer{border-top:1px solid var(--line);padding:14px 20px;display:flex;gap:10px;align-items:center}
+  .composer input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;color:var(--ink);font:inherit;font-size:14px;padding:12px 14px;outline:none}
+  .composer input:focus{border-color:var(--gold)}
+  .composer button{border:0;background:var(--gold);color:#fff;font:inherit;font-weight:600;font-size:14px;padding:12px 18px;border-radius:12px;cursor:pointer}
+  .readonly{border-top:1px solid var(--line);padding:14px 20px;font-size:13px;color:var(--mut2);text-align:center}
+</style>
+
+<div class="top">
+  <b>GymFlow</b> · Messagerie
+  <span class="badge-mock">Maquette — non fonctionnelle</span>
+</div>
+
+<div class="app">
+  <div class="rail">
+    <div class="club">
+      <div class="logo">SR</div>
+      <div><div class="n">Salle Rachad</div><div class="s">Ton équipe</div></div>
+    </div>
+    <div class="sec">Espace privé</div>
+    <div class="chan on" data-view="team"><span class="i">💬</span> Équipe</div>
+    <div class="sec">World</div>
+    <div class="chan" data-view="ann"><span class="i">📣</span> Annonces <span class="dot"></span></div>
+    <div class="lock">🔒 <span>L'espace équipe est privé à ta salle. Aucun autre club ne le voit.</span></div>
+  </div>
+
+  <div class="main">
+    <!-- ÉQUIPE -->
+    <div id="team" class="main" style="display:flex;flex:1;min-height:0">
+      <div class="head">
+        <div><h2># Équipe · Salle Rachad</h2><div class="sub">Gérant, admin, réception — et le support GymFlow</div></div>
+        <div class="who">
+          <div class="av" style="background:#c2410c">R</div>
+          <div class="av" style="background:#7c3aed">S</div>
+          <div class="av" style="background:#0e7490">Y</div>
+          <div class="more">4 membres</div>
+        </div>
+      </div>
+      <div class="feed" id="feed">
+        <div class="msg">
+          <div class="av" style="background:#0e7490">Y</div>
+          <div class="body">
+            <div class="line1"><span class="name">Youssef</span><span class="role r-recep">Réception</span><span class="t">09:12</span></div>
+            <div class="text">Le tapis 3 fait un bruit bizarre — je préviens la maintenance ?</div>
+          </div>
+        </div>
+        <div class="msg">
+          <div class="av" style="background:#7c3aed">S</div>
+          <div class="body">
+            <div class="line1"><span class="name">Salma</span><span class="role r-admin">Admin</span><span class="t">09:14</span></div>
+            <div class="text"><span class="mention">@Youssef</span> oui, et note-le dans le registre. <span class="mention">@Rachid</span> on a le budget pour une révision ?</div>
+          </div>
+        </div>
+        <div class="msg">
+          <div class="av" style="background:#c2410c">R</div>
+          <div class="body">
+            <div class="line1"><span class="name">Rachid</span><span class="role r-owner">Gérant</span><span class="t">09:20</span></div>
+            <div class="text">Oui, appelle le technicien 👍</div>
+          </div>
+        </div>
+        <div class="msg">
+          <div class="av" style="background:var(--gold)">G</div>
+          <div class="body" style="flex:1">
+            <div class="line1"><span class="name">GymFlow</span><span class="role r-super">Support</span><span class="t">10:02</span></div>
+            <div class="super-wrap" style="margin-top:5px">
+              <div class="text" style="margin:0">Pensez à mettre à jour vos tarifs avant septembre — la nouvelle grille est dispo dans Réglages. Un souci ? Répondez ici.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <input id="inp" placeholder="Écris à ton équipe…  (@ pour mentionner)">
+        <button id="send">Envoyer</button>
+      </div>
+    </div>
+
+    <!-- ANNONCES -->
+    <div id="ann" class="main" style="display:none;flex:1;min-height:0">
+      <div class="head">
+        <div><h2>📣 Annonces</h2><div class="sub">Diffusées par GymFlow à tous les clubs · lecture seule</div></div>
+      </div>
+      <div class="feed">
+        <div class="ann">
+          <div class="h"><div class="av" style="background:var(--gold);width:26px;height:26px;font-size:11px">G</div><span class="tag">GYMFLOW</span><span class="t">Hier</span></div>
+          <div class="txt">🎉 Nouvelle fonctionnalité : le <b>suivi de progression des membres</b> (poids, mensurations, records) arrive en octobre. On vous montrera ça.</div>
+          <div class="react">❤️ 24</div>
+        </div>
+        <div class="ann">
+          <div class="h"><div class="av" style="background:var(--gold);width:26px;height:26px;font-size:11px">G</div><span class="tag">GYMFLOW</span><span class="t">Il y a 3 j</span></div>
+          <div class="txt">🛠️ Maintenance planifiée dimanche 2h–4h. Le service pourra être brièvement indisponible.</div>
+          <div class="react">👍 11</div>
+        </div>
+      </div>
+      <div class="readonly">Seul le superadmin GymFlow publie ici. Les clubs lisent et réagissent.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // bascule d'espace
+  document.querySelectorAll('.chan').forEach(c=>c.onclick=()=>{
+    document.querySelectorAll('.chan').forEach(x=>x.classList.remove('on'));
+    c.classList.add('on');
+    const v=c.dataset.view;
+    document.getElementById('team').style.display = v==='team'?'flex':'none';
+    document.getElementById('ann').style.display  = v==='ann' ?'flex':'none';
+  });
+  // envoi local (maquette)
+  const inp=document.getElementById('inp'), feed=document.getElementById('feed');
+  function send(){
+    const v=inp.value.trim(); if(!v) return;
+    const html=v.replace(/@(\w+)/g,'<span class="mention">@$1</span>');
+    const el=document.createElement('div'); el.className='msg';
+    el.innerHTML='<div class="av" style="background:#3b6">M</div><div class="body">'+
+      '<div class="line1"><span class="name">Moi</span><span class="role r-recep">Réception</span><span class="t">maintenant</span></div>'+
+      '<div class="text">'+html+'</div></div>';
+    feed.appendChild(el); feed.scrollTop=feed.scrollHeight; inp.value='';
+  }
+  document.getElementById('send').onclick=send;
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter')send();});
+</script>

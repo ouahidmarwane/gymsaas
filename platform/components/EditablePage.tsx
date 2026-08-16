@@ -55,13 +55,24 @@ export default function EditablePage({
 
   useEffect(() => { load() }, [load])
 
-  // La disposition des ecrans appartient a la plateforme, pas aux clubs.
-  // Un proprietaire qui deplace ses cartes cree une variante que le support
-  // devra comprendre a chaque intervention ; et l'apparence du produit se
-  // pilote depuis un seul endroit. Le serveur applique la meme regle : cacher
-  // le bouton sans fermer la route ne serait qu'un decor.
-  const canEdit = me?.isPlatformAdmin === true
-    && (me.scope.mode !== 'support' || me.scope.canWrite)
+  /*
+    Le TABLEAU DE BORD appartient au club ; les autres ecrans a la plateforme.
+
+    La distinction n'est pas administrative, elle tient a ce que portent les
+    cartes. Celles du tableau de bord se lisent : des chiffres, des courbes,
+    une liste de rappels. Les ranger autrement ne change rien a ce que
+    l'application sait faire, la disposition se remet a zero d'un clic, et le
+    responsable qui l'ouvre chaque matin sait mieux que nous ce qu'il veut
+    voir en premier. Les cartes des autres ecrans commandent des gestes : la
+    reserve d'origine y reste valable.
+
+    Le serveur applique exactement la meme regle. Cacher le bouton sans
+    fermer la route ne serait qu'un decor.
+  */
+  const isDashboard = page === 'dashboard'
+  const clubManager = ['owner', 'admin'].includes(me?.org?.role ?? '')
+  const canEdit = (me?.isPlatformAdmin === true || (isDashboard && clubManager))
+    && (me?.scope.mode !== 'support' || me.scope.canWrite)
 
   async function save() {
     if (!draft) return

@@ -5,15 +5,22 @@
 // reconstruite a partir du catalogue de l'ecran vise.
 //
 // Lire sa disposition est le droit du club — c'est ce qui dessine ses
-// ecrans. L'ECRIRE appartient a la plateforme : les tests passent donc par
-// un exploitant entre en mode support, et verifient qu'un proprietaire de
-// club est refuse.
+// ecrans. L'ECRIRE se partage : le TABLEAU DE BORD appartient au club, dont
+// les cartes se lisent ; les autres ecrans restent a la plateforme, parce
+// que leurs cartes commandent des gestes. Les tests tiennent les deux cotes
+// de cette ligne, et verifient que le comptoir n'est d'aucun.
 //
 //   npm run dev      (dans un autre terminal)
 //   node --test test/layout.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { BASE, client, createOperator, uniq, waitReady } from './helpers.mjs'
+
+// Ecrans disposes par la plateforme. Ecrits ici plutot qu'importes de
+// src/club/layout.ts : ce test parle en HTTP, il ne doit rien savoir des
+// modules du Worker. Si un ecran s'ajoute et n'est pas liste, le test ne
+// devient pas faux — il couvre simplement un cas de moins.
+const PLATFORM_PAGES = ['members', 'comptabilite', 'grades']
 
 // ownerA/ownerB lisent ; writerA/writerB ecrivent depuis le support.
 let ownerA, ownerB, writerA, writerB
@@ -68,19 +75,62 @@ test('un club recoit une disposition par defaut', async () => {
   assert.ok(res.data.cards.growth_chart.maxW >= res.data.cards.growth_chart.minW)
 })
 
-test('un proprietaire de club ne peut pas modifier la disposition', async () => {
-  // Le bouton n'est propose qu'a la plateforme. Une route laissee ouverte
-  // derriere un bouton cache ne serait pas une regle, juste un decor.
+test('un proprietaire range son tableau de bord', async () => {
+  // Le tableau de bord appartient au club. Ses cartes se LISENT — chiffres,
+  // courbes, rappels — les ranger autrement ne change rien a ce que
+  // l'application sait faire, et celui qui l'ouvre chaque matin sait mieux
+  // que nous ce qu'il veut voir en premier.
   const put = await ownerA.call('PUT', '/api/layout/dashboard', {
-    layout: [{ id: 'members_total', x: 0, y: 0, w: 3, h: 1, visible: true }],
+    layout: [{ id: 'revenue_month', x: 0, y: 0, w: 3, h: 1, visible: true }],
   })
-  assert.equal(put.status, 403, JSON.stringify(put.data))
+  assert.equal(put.status, 200, JSON.stringify(put.data))
 
-  const del = await ownerA.call('DELETE', '/api/layout/dashboard')
-  assert.equal(del.status, 403, JSON.stringify(del.data))
+  const back = await ownerA.call('GET', '/api/layout/dashboard')
+  assert.equal(back.data.layout[0].id, 'revenue_month', 'le rangement doit tenir')
 
-  // Mais il continue de lire la sienne, sinon ses ecrans ne s'afficheraient plus.
-  assert.equal((await ownerA.call('GET', '/api/layout/dashboard')).status, 200)
+  // Et il peut revenir en arriere : c'est ce qui rend le geste sans risque.
+  assert.equal((await ownerA.call('DELETE', '/api/layout/dashboard')).status, 200)
+})
+
+test('un proprietaire ne dispose que le tableau de bord', async () => {
+  // Les cartes des autres ecrans commandent des gestes, pas seulement des
+  // lectures : la reserve d'origine y reste valable. La verification est au
+  // serveur — une route laissee ouverte derriere un bouton cache ne serait
+  // pas une regle, juste un decor.
+  for (const other of PLATFORM_PAGES) {
+    const put = await ownerA.call('PUT', `/api/layout/${other}`, {
+      layout: [{ id: 'members_total', x: 0, y: 0, w: 3, h: 1, visible: true }],
+    })
+    assert.equal(put.status, 403, `${other} accepte a tort : ${JSON.stringify(put.data)}`)
+    assert.equal((await ownerA.call('DELETE', `/api/layout/${other}`)).status, 403, other)
+
+    // Mais il continue de la lire, sinon l'ecran ne s'afficherait plus.
+    assert.equal((await ownerA.call('GET', `/api/layout/${other}`)).status, 200, other)
+  }
+})
+
+test('le comptoir ne range pas le tableau de bord', async () => {
+  // Meme frontiere que l'habillage : la disposition engage tout le club.
+  const s = uniq()
+  const owner = client()
+  assert.equal((await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Dispo', slug: `dispo-${s}`, name: 'Proprietaire',
+    email: `dispo-${s}@example.ma`, password: 'motdepasse-solide-dp',
+  })).status, 201)
+
+  const staffEmail = `staff-dp-${s}@example.ma`
+  if ((await owner.call('POST', '/api/staff', {
+    name: 'Comptoir', email: staffEmail, password: 'motdepasse-solide-st', role: 'staff',
+  })).status !== 201) return
+
+  const staff = client()
+  assert.equal((await staff.call('POST', '/api/auth/login', {
+    email: staffEmail, password: 'motdepasse-solide-st',
+  })).status, 200)
+
+  assert.equal((await staff.call('PUT', '/api/layout/dashboard', {
+    layout: [{ id: 'members_total', x: 0, y: 0, w: 3, h: 1, visible: true }],
+  })).status, 403)
 })
 
 test('une disposition personnalisee est conservee', async () => {
