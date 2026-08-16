@@ -7,6 +7,8 @@
 //   node --test test/screens.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { BASE, client, control, page, uniq } from './helpers.mjs'
 
 let owner, operator, clubId
@@ -83,6 +85,48 @@ test('le fond du splash suit le theme, il n est jamais ecrit en dur', async () =
   const css = await fetch(`${BASE}/login`).then(r => r.text())
   assert.ok(!/\.welcome-splash\s*\{[^}]*background(-color)?:\s*#/.test(css),
     'le splash porte une couleur de fond ecrite en dur')
+})
+
+test('la bulle du splash et sa lentille se deplacent en sens exactement inverses', () => {
+  // La bulle traverse le mot ; la copie deformee enfermee dedans doit
+  // reculer d'autant, sinon les lettres defilent a l'interieur du verre au
+  // lieu d'y rester. Les deux valeurs sont dans deux blocs distincts de la
+  // feuille : rien n'empeche d'en regler une et d'oublier l'autre, et le
+  // resultat ne se voit qu'a l'oeil, pendant deux secondes, une fois par
+  // connexion. C'est exactement ce qu'un test doit tenir.
+  const css = readFileSync(fileURLToPath(new URL('../app/globals.css', import.meta.url)), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+
+  const frames = name => {
+    const m = css.match(new RegExp(`@keyframes\\s+${name}\\s*\\{([\\s\\S]*?)\\n\\}`))
+    assert.ok(m, `@keyframes ${name} introuvable`)
+    return [...m[1].matchAll(/translateX\((-?[\d.]+)%\)/g)].map(x => Number(x[1]))
+  }
+  const travel = frames('welcomeBlobTravel')
+  const shift = frames('welcomeLensShift')
+
+  assert.equal(travel.length, 2)
+  assert.deepEqual(shift, travel.map(v => -v),
+    'la lentille doit annuler le deplacement de la bulle, image par image')
+
+  // Meme duree, meme retard, meme courbe : deux deplacements opposes qui ne
+  // partagent pas leur cadence ne s'annulent qu'aux deux extremites.
+  const anim = selector => {
+    const m = css.match(new RegExp(`\\${selector}\\s*\\{([\\s\\S]*?)\\n\\}`))
+    assert.ok(m, `${selector} introuvable`)
+    const a = m[1].match(/animation:\s*([^;]+);/)
+    assert.ok(a, `${selector} sans animation`)
+    return a[1].replace(/\s+/g, ' ').trim()
+  }
+  for (const [selector, keyframes] of [['.welcome-blob-track', 'welcomeBlobTravel'],
+                                       ['.welcome-lens-shift', 'welcomeLensShift']]) {
+    const value = anim(selector)
+    assert.ok(value.startsWith(keyframes), `${selector} ne joue pas ${keyframes}`)
+    assert.ok(value.includes('var(--welcome-draw)'), `${selector} n est pas cale sur la duree du trace`)
+    assert.ok(value.includes('var(--welcome-delay)'), `${selector} n est pas cale sur le retard du trace`)
+    assert.ok(value.includes('cubic-bezier(0.42, 0, 0.2, 1)'),
+      `${selector} n a pas la courbe du trace : la bulle ne suivrait pas la pointe du stylo`)
+  }
 })
 
 test('l ecran des championnats a bien disparu', async () => {

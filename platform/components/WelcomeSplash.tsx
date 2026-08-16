@@ -160,39 +160,68 @@ export default function WelcomeSplash() {
          // Decoratif : rien a annoncer, et le lecteur d'ecran ne doit pas
          // s'arreter sur un mot dessine.
          aria-hidden="true">
-      <svg viewBox="0 0 1023 280">
-        <defs>
-          <linearGradient id="rainbow" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="#31c48d" />
-            <stop offset="0.18" stopColor="#a7d129" />
-            <stop offset="0.34" stopColor="#f6c026" />
-            <stop offset="0.5" stopColor="#f97316" />
-            <stop offset="0.64" stopColor="#ef4444" />
-            <stop offset="0.78" stopColor="#ec4899" />
-            <stop offset="0.9" stopColor="#c026d3" />
-            <stop offset="1" stopColor="#6366f1" />
-          </linearGradient>
-        </defs>
+      <div className="welcome-stage">
+        <svg className="welcome-word" viewBox="0 0 1023 280">
+          <defs>
+            <linearGradient id="rainbow" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#31c48d" />
+              <stop offset="0.18" stopColor="#a7d129" />
+              <stop offset="0.34" stopColor="#f6c026" />
+              <stop offset="0.5" stopColor="#f97316" />
+              <stop offset="0.64" stopColor="#ef4444" />
+              <stop offset="0.78" stopColor="#ec4899" />
+              <stop offset="0.9" stopColor="#c026d3" />
+              <stop offset="1" stopColor="#6366f1" />
+            </linearGradient>
+
+            {/*
+              La deformation du verre. Un bruit fractal deplace le trace
+              pixel par pixel : c'est ce qu'on voit a travers une goutte, et
+              c'est la seule facon d'obtenir une VRAIE refraction — un flou,
+              meme fort, ne courbe rien, il estompe.
+
+              Le filtre ne sert qu'a la copie enfermee dans la bulle. Le mot
+              du dessous reste droit : la difference entre les deux est
+              precisement ce qui donne le relief.
+            */}
+            <filter id="welcome-liquid" x="-25%" y="-25%" width="150%" height="150%"
+                    colorInterpolationFilters="sRGB">
+              <feTurbulence type="fractalNoise" baseFrequency="0.007 0.019"
+                            numOctaves={2} seed={7} result="noise" />
+              <feDisplacementMap in="SourceGraphic" in2="noise" scale={28}
+                                 xChannelSelector="R" yChannelSelector="G" />
+            </filter>
+          </defs>
+          <path className={`welcome-path${erasing ? ' erase' : ''}`} pathLength="1"
+                d={WORD} />
+        </svg>
+
         {/*
-          Glitch : deux copies decalees du meme trace, l'une cyan l'autre
-          magenta, en fusion « screen ». C'est la aberration chromatique d'un
-          signal qui saute — pas un filtre pose par-dessus.
+          La bulle de verre liquide. Elle suit la pointe du stylo : meme
+          duree, meme retard, meme courbe que le trace, donc elle avance avec
+          l'ecriture de la premiere lettre a la derniere.
 
-          Elles portent le MEME dessin et la MEME animation de trace que la
-          ligne principale : le glitch suit donc la pointe du stylo, de la
-          premiere lettre a la derniere, au lieu de scintiller sur un mot
-          deja ecrit.
+          Trois couches, et chacune fait un travail que les autres ne peuvent
+          pas faire : la lentille montre les lettres deformees, le fond floute
+          ce qui reste visible autour d'elles, la peau pose l'eclat et les
+          franges de couleur du bord.
         */}
-        <g className="welcome-glitch a" aria-hidden="true">
-          <path className={`welcome-ghost${erasing ? ' erase' : ''}`} pathLength="1" d={WORD} />
-        </g>
-        <g className="welcome-glitch b" aria-hidden="true">
-          <path className={`welcome-ghost${erasing ? ' erase' : ''}`} pathLength="1" d={WORD} />
-        </g>
-
-        <path className={`welcome-path${erasing ? ' erase' : ''}`} pathLength="1"
-              d={WORD} />
-      </svg>
+        <span className="welcome-blob-track">
+          <span className="welcome-blob">
+            <span className="welcome-lens">
+              {/* Deplacement inverse exact de celui de la bulle : la copie
+                  reste calee sur le mot pendant que la lentille passe
+                  dessus. Sans cela, les lettres glisseraient dans la bulle. */}
+              <span className="welcome-lens-shift">
+                <svg className="welcome-word-copy" viewBox="0 0 1023 280">
+                  <path className={`welcome-path${erasing ? ' erase' : ''}`} pathLength="1"
+                        d={WORD} filter="url(#welcome-liquid)" />
+                </svg>
+              </span>
+            </span>
+          </span>
+        </span>
+      </div>
     </div>
   )
 }
