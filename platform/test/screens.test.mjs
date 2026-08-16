@@ -87,6 +87,27 @@ test('le fond du splash suit le theme, il n est jamais ecrit en dur', async () =
     'le splash porte une couleur de fond ecrite en dur')
 })
 
+test('un bouton desactive se voit, et son survol ne l anime pas', () => {
+  // Le defaut se presente toujours comme « le bouton est casse ». « Ajouter »
+  // une salle reste inerte tant que le champ est vide — c'est correct — mais
+  // sans etat desactive il gardait sa couleur pleine, et :hover l'eclaircit
+  // meme desactive : le bouton avait l'air vivant et ne repondait pas.
+  //
+  // Ces trois classes portent presque tous les boutons de l'application, donc
+  // l'oubli valait partout a la fois.
+  const css = readFileSync(fileURLToPath(new URL('../app/globals.css', import.meta.url)), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+
+  for (const cls of ['btn-dark', 'btn-gold', 'btn-ghost']) {
+    assert.match(css, new RegExp(`\\.${cls}:disabled`), `${cls} n a pas d etat desactive`)
+    // Chaque :hover doit s'exclure lui-meme sur un bouton desactive.
+    for (const m of css.matchAll(new RegExp(`\\.${cls}:hover([^{,]*)`, 'g'))) {
+      assert.ok(m[1].includes(':not(:disabled)'),
+        `un survol de .${cls} s applique encore a un bouton desactive`)
+    }
+  }
+})
+
 test('la bulle du splash et sa lentille se deplacent en sens exactement inverses', () => {
   // La bulle traverse le mot ; la copie deformee enfermee dedans doit
   // reculer d'autant, sinon les lettres defilent a l'interieur du verre au

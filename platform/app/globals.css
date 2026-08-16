@@ -199,7 +199,7 @@ html[data-theme='light'] .btn-ghost {
   color: #1e40af !important;
   border-color: rgba(56,98,214,0.16) !important;
 }
-html[data-theme='light'] .btn-ghost:hover {
+html[data-theme='light'] .btn-ghost:hover:not(:disabled) {
   background: rgba(56,98,214,0.14) !important;
 }
 html[data-theme='light'] .btn-dark {
@@ -207,7 +207,7 @@ html[data-theme='light'] .btn-dark {
   border-color: #1e3a8a !important;
   color: #ffffff !important;
 }
-html[data-theme='light'] .btn-dark:hover { background-color: #1e40af !important; }
+html[data-theme='light'] .btn-dark:hover:not(:disabled) { background-color: #1e40af !important; }
 html[data-theme='light'] .btn-gold { color: #111827 !important; }
 
 /* ── Inputs ── */
@@ -587,12 +587,12 @@ html:not([data-theme='light']) .member-row .text-red-600 {
     box-shadow: 0 18px 44px rgba(47,107,255,0.22);
   }
 
-  .btn-gold:hover {
+  .btn-gold:hover:not(:disabled) {
     transform: translateY(-1px) scale(1.01);
     box-shadow: 0 16px 40px rgba(47,107,255,0.32);
   }
 
-  .btn-gold:active {
+  .btn-gold:active:not(:disabled) {
     transform: scale(0.97);
   }
 
@@ -603,7 +603,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
     border-color: rgba(56, 98, 214, 0.18);
   }
 
-  .btn-ghost:hover {
+  .btn-ghost:hover:not(:disabled) {
     background-color: rgba(56, 98, 214, 0.14);
   }
 
@@ -614,8 +614,33 @@ html:not([data-theme='light']) .member-row .text-red-600 {
     border: 1px solid #1e3a8a;
   }
 
-  .btn-dark:hover {
+  .btn-dark:hover:not(:disabled) {
     background-color: #1e40af;
+  }
+
+  /*
+    UN BOUTON DESACTIVE DOIT SE VOIR.
+    Ces trois classes portent la quasi-totalite des boutons de
+    l'application, et aucune n'avait d'etat desactive. « Ajouter » une
+    salle reste inerte tant que le champ est vide — ce qui est juste — mais
+    il s'affichait en couleur pleine, et son survol l'eclaircissait encore,
+    puisque :hover s'applique aussi a un bouton desactive. On cliquait donc
+    sur un bouton qui avait l'air vivant, rien ne se passait, et rien ne
+    disait pourquoi. Le defaut se lit comme « le bouton est casse ».
+
+    Les couleurs restent celles du theme : seules l'opacite et le curseur
+    changent, donc la regle vaut pour les cinq habillages et pour un accent
+    de club quelconque.
+  */
+  .btn-dark:disabled,
+  .btn-gold:disabled,
+  .btn-ghost:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    /* Sans cela, le survol continue de deplacer et d'eclaircir le bouton. */
+    transform: none;
+    box-shadow: none;
+    filter: grayscale(0.35);
   }
 
   .input {
