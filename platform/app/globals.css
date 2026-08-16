@@ -6430,6 +6430,107 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   .welcome-rain { display: none; }
 }
 
+/* ─── Échelle de grades ─────────────────────────────────────────
+   Aucune couleur écrite en dur, sauf les pastilles de niveau : une ceinture
+   verte est verte dans les cinq habillages, parce que c'est une donnée et
+   non une décoration. Tout le reste suit --gold et les variables de fond. */
+.ladder-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ladder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0.4rem 0.55rem;
+  border-radius: 12px;
+  background: var(--overlay-soft);
+  border: 1px solid var(--hairline);
+}
+/* Le rang n'est pas saisi : c'est la position dans la liste. L'afficher en
+   lecture seule dit d'où il vient sans laisser le contredire. */
+.ladder-rank {
+  width: 22px;
+  flex: none;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--gold);
+}
+.ladder-label { flex: 1 1 160px; min-width: 120px; padding: 0.35rem 0.7rem; font-size: 0.84rem; }
+.ladder-swatches { display: flex; gap: 4px; flex-wrap: wrap; }
+.ladder-swatch {
+  width: 17px; height: 17px; border-radius: 50%;
+  border: 1px solid var(--hairline);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.ladder-swatch:hover { transform: scale(1.15); }
+/* Le choix se marque par un anneau dans l'accent du club, pas par la couleur
+   de la pastille — sinon la sélection serait invisible sur la pastille
+   presque blanche. */
+.ladder-swatch.on {
+  box-shadow: 0 0 0 2px var(--card-bg), 0 0 0 4px var(--gold);
+}
+.ladder-swatch:focus-visible,
+.ladder-row .gf-hide:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+.ladder-actions { display: flex; gap: 2px; margin-left: auto; }
+.ladder-actions .gf-hide:disabled { opacity: 0.3; cursor: not-allowed; }
+.ladder-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.ladder-add .input-dark { flex: 1 1 200px; min-width: 160px; padding: 0.45rem 0.8rem; font-size: 0.83rem; }
+
+/* Avec / sans grade : deux réponses, montrées toutes les deux. */
+.graded-choice {
+  display: flex;
+  gap: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 3px;
+  background: var(--overlay-soft);
+}
+.graded-choice label {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+/* Le bouton radio reste dans le document — il porte le focus clavier et
+   l'état pour les lecteurs d'écran — mais ne se voit pas : c'est la pilule
+   qui le représente. `display: none` l'aurait retiré de la navigation. */
+.graded-choice input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.graded-choice label:hover { color: var(--text); }
+.graded-choice label:has(input:checked) {
+  background: var(--gold);
+  color: #fff;
+}
+.graded-choice label:has(input:focus-visible) {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
 /* ─── Celebration ───────────────────────────────────────────────
    Une seule couche, posee dans <body>, au-dessus de tout y compris des
    modales (z 500). Rien n'y est cliquable : l'effet ne doit jamais retarder

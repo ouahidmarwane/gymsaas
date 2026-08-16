@@ -196,22 +196,65 @@ export class ClubDatabase extends DurableObject<Env> {
   }
 
   /** Remplace l'echelle de grades d'une discipline. */
+  /**
+   * Remplace l'echelle d'une discipline.
+   *
+   * LES IDENTIFIANTS SONT PRESERVES, et c'est tout l'enjeu. La version
+   * precedente effacait la table puis reinserait avec de nouveaux UUID : le
+   * commentaire affirmait que les membres gardaient leur grade, la realite
+   * etait l'inverse — `members.grade_id` et l'historique des passages
+   * referencent ces lignes en ON DELETE SET NULL, donc renommer une seule
+   * ceinture remettait TOUT le club a « sans grade ». Inoffensif tant que
+   * l'echelle n'etait posee qu'a la creation ; destructeur des qu'un ecran
+   * permet de la modifier.
+   *
+   * Un niveau presente avec son id est mis a jour et garde ses membres. Un
+   * niveau absent de la nouvelle liste disparait — la, oui, ses membres
+   * passent a NULL, et c'est bien ce qu'on demande en le supprimant.
+   *
+   * Les rangs passent par des valeurs negatives temporaires : `UNIQUE
+   * (discipline_id, rank)` refuserait un simple echange de deux niveaux,
+   * puisque le premier prendrait un rang encore occupe par le second.
+   */
   setGradeLadder(
     disciplineId: string,
-    grades: Array<{ label: string; labelAr?: string | null; color?: string | null }>,
+    grades: Array<{ id?: string | null; label: string; labelAr?: string | null; color?: string | null }>,
   ): void {
     this.ctx.storage.transactionSync(() => {
-      // Les membres conservent leur grade_id : on ne supprime que les
-      // niveaux devenus orphelins, la colonne passant alors a NULL via la
-      // contrainte ON DELETE SET NULL.
-      this.sql.exec('DELETE FROM grade_levels WHERE discipline_id = ?', disciplineId)
-      grades.forEach((g, index) => {
-        this.sql.exec(
-          `INSERT INTO grade_levels (id, discipline_id, rank, label, label_ar, color)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          crypto.randomUUID(), disciplineId, index, g.label, g.labelAr ?? null, g.color ?? null,
-        )
+      const existing = new Set(
+        this.sql.exec<{ id: string }>(
+          'SELECT id FROM grade_levels WHERE discipline_id = ?', disciplineId,
+        ).toArray().map(r => r.id),
+      )
+
+      // Un id inconnu — ou vole a une autre discipline — est traite comme un
+      // niveau neuf plutot que d'ecrire a cote.
+      const keep = grades.map(g => (g.id && existing.has(g.id) ? g.id : null))
+
+      for (const id of existing) {
+        if (!keep.includes(id)) this.sql.exec('DELETE FROM grade_levels WHERE id = ?', id)
+      }
+
+      keep.forEach((id, index) => {
+        if (id) this.sql.exec('UPDATE grade_levels SET rank = ? WHERE id = ?', -1 - index, id)
       })
+
+      grades.forEach((g, index) => {
+        const id = keep[index]
+        if (id) {
+          this.sql.exec(
+            'UPDATE grade_levels SET rank = ?, label = ?, label_ar = ?, color = ? WHERE id = ?',
+            index, g.label, g.labelAr ?? null, g.color ?? null, id,
+          )
+        } else {
+          this.sql.exec(
+            `INSERT INTO grade_levels (id, discipline_id, rank, label, label_ar, color)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            crypto.randomUUID(), disciplineId, index, g.label, g.labelAr ?? null, g.color ?? null,
+          )
+        }
+      })
+
       this.sql.exec(
         'UPDATE disciplines SET has_grading = ? WHERE id = ?',
         grades.length ? 1 : 0, disciplineId,

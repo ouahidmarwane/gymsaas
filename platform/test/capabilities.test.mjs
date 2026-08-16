@@ -77,6 +77,143 @@ test('ajouter une echelle ouvre l ecran, la retirer le referme', async () => {
   assert.equal((await boxe.call('GET', '/api/grades')).status, 409)
 })
 
+test('renommer un niveau ne fait pas perdre son grade au membre', async () => {
+  // LA regression que l'editeur d'echelle rendrait quotidienne. L'ancienne
+  // ecriture effacait la table des niveaux et la reinserait avec de nouveaux
+  // identifiants : members.grade_id est en ON DELETE SET NULL, donc corriger
+  // une faute de frappe dans « Ceinture blanche » remettait tout le club a
+  // « sans grade ». Le defaut se serait vu des semaines plus tard, sur des
+  // donnees qu'on ne peut pas reconstituer.
+  const s = uniq()
+  const club = client()
+  assert.equal((await club.call('POST', '/api/auth/signup', {
+    clubName: 'Club Echelle', slug: `echelle-${s}`, name: 'Proprietaire',
+    email: `echelle-${s}@example.ma`, password: 'motdepasse-solide-ec',
+  })).status, 201)
+
+  const disc = await club.call('POST', '/api/disciplines', {
+    name: 'Karate', grades: [{ label: 'Blanche' }, { label: 'Jaune' }],
+  })
+  assert.equal(disc.status, 201, JSON.stringify(disc.data))
+  const disciplineId = disc.data.id
+
+  const read = () => club.call('GET', '/api/disciplines')
+    .then(r => r.data.disciplines.find(d => d.id === disciplineId).grades)
+
+  const levels = await read()
+  assert.equal(levels.length, 2)
+
+  const member = await club.call('POST', '/api/members', {
+    name: `Amine ${s}`, phone: `0641${s.slice(0, 6)}`, disciplineId,
+  })
+  assert.equal(member.status, 201, JSON.stringify(member.data))
+
+  // La creation n'accepte pas de grade — seule la modification le pose.
+  assert.equal((await club.call('PATCH', `/api/members/${member.data.id}`, {
+    gradeId: levels[0].id,
+  })).status, 200)
+
+  // Renommer le premier niveau, en renvoyant son identifiant.
+  assert.equal((await club.call('PUT', `/api/disciplines/${disciplineId}/grades`, {
+    grades: [
+      { id: levels[0].id, label: 'Ceinture blanche', color: '#f8fafc' },
+      { id: levels[1].id, label: 'Jaune' },
+    ],
+  })).status, 200)
+
+  const renamed = await read()
+  assert.equal(renamed[0].id, levels[0].id, 'l identifiant doit survivre au renommage')
+  assert.equal(renamed[0].label, 'Ceinture blanche')
+
+  const row = (await club.call('GET', '/api/members')).data
+    .members.find(m => m.id === member.data.id)
+  assert.ok(row, 'le membre doit toujours exister')
+  assert.equal(row.grade_id, levels[0].id,
+    'le membre doit garder exactement le niveau qu il portait')
+  assert.equal(row.grade_label, 'Ceinture blanche', 'et voir le nouveau libelle')
+})
+
+test('inverser deux niveaux respecte l unicite du rang', async () => {
+  // UNIQUE (discipline_id, rank) : un echange naif fait collisionner les deux
+  // lignes a mi-chemin. On verifie l'ORDRE obtenu, pas seulement l'absence
+  // d'erreur — une transaction annulee en silence laisserait l'ancien ordre.
+  const s = uniq()
+  const club = client()
+  assert.equal((await club.call('POST', '/api/auth/signup', {
+    clubName: 'Club Ordre', slug: `ordre-${s}`, name: 'Proprietaire',
+    email: `ordre-${s}@example.ma`, password: 'motdepasse-solide-or',
+  })).status, 201)
+
+  const disc = await club.call('POST', '/api/disciplines', {
+    name: 'Judo', grades: [{ label: 'A' }, { label: 'B' }, { label: 'C' }],
+  })
+  const id = disc.data.id
+  const read = () => club.call('GET', '/api/disciplines')
+    .then(r => r.data.disciplines.find(d => d.id === id).grades)
+
+  const before = await read()
+  assert.equal((await club.call('PUT', `/api/disciplines/${id}/grades`, {
+    grades: [
+      { id: before[1].id, label: 'B' },
+      { id: before[0].id, label: 'A' },
+      { id: before[2].id, label: 'C' },
+    ],
+  })).status, 200)
+
+  const after = await read()
+  assert.deepEqual(after.map(g => g.label), ['B', 'A', 'C'])
+  assert.deepEqual(after.map(g => g.id), [before[1].id, before[0].id, before[2].id],
+    'les identifiants suivent leur niveau, ils ne sont pas reattribues')
+})
+
+test('un niveau retire disparait, et lui seul', async () => {
+  const s = uniq()
+  const club = client()
+  assert.equal((await club.call('POST', '/api/auth/signup', {
+    clubName: 'Club Retrait', slug: `retrait-${s}`, name: 'Proprietaire',
+    email: `retrait-${s}@example.ma`, password: 'motdepasse-solide-re',
+  })).status, 201)
+
+  const disc = await club.call('POST', '/api/disciplines', {
+    name: 'Taekwondo', grades: [{ label: 'X' }, { label: 'Y' }],
+  })
+  const id = disc.data.id
+  const read = () => club.call('GET', '/api/disciplines')
+    .then(r => r.data.disciplines.find(d => d.id === id).grades)
+
+  const before = await read()
+  assert.equal((await club.call('PUT', `/api/disciplines/${id}/grades`, {
+    grades: [{ id: before[1].id, label: 'Y' }],
+  })).status, 200)
+
+  assert.deepEqual((await read()).map(g => g.id), [before[1].id])
+})
+
+test('un sport declare avec grades demarre sans niveau, et ouvre l ecran', async () => {
+  // La creation ne pose plus d'echelle toute faite : le club coche
+  // « avec grades » puis saisit la sienne. La capacite doit donc suivre le
+  // drapeau, pas le nombre de niveaux — sinon l'ecran resterait ferme et on
+  // n'aurait nulle part ou saisir l'echelle.
+  const s = uniq()
+  const club = client()
+  assert.equal((await club.call('POST', '/api/auth/signup', {
+    clubName: 'Club Vide', slug: `vide-${s}`, name: 'Proprietaire',
+    email: `vide-${s}@example.ma`, password: 'motdepasse-solide-vd',
+  })).status, 201)
+
+  const disc = await club.call('POST', '/api/disciplines', {
+    name: 'Boxe francaise', hasGrading: true,
+  })
+  assert.equal(disc.status, 201, JSON.stringify(disc.data))
+
+  const listed = (await club.call('GET', '/api/disciplines')).data
+    .disciplines.find(d => d.id === disc.data.id)
+  assert.equal(listed.has_grading, 1)
+  assert.equal(listed.grades.length, 0, 'aucune echelle imposee a la creation')
+
+  assert.equal((await club.call('GET', '/api/me')).data.capabilities.hasGrading, true)
+})
+
 test('un club neuf n a aucune capacite mais reste configurable', async () => {
   const s = uniq()
   const fresh = client()

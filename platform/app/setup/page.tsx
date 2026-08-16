@@ -6,24 +6,23 @@ import { api, ApiError, type Me } from '@/lib/client'
 import ThemePicker from '@/components/ThemePicker'
 import BannerPicker from '@/components/BannerPicker'
 import LogoPicker from '@/components/LogoPicker'
+import LadderEditor from '@/components/LadderEditor'
 
 interface Branch { id: string; name: string; is_active: number }
-interface Grade { id: string; rank: number; label: string }
+interface Grade { id: string; rank: number; label: string; color?: string | null }
 interface Discipline { id: string; name: string; has_grading: number; grades: Grade[] }
 
-// Echelles proposees : le club choisit la sienne ou part de zero. Rien n'est
-// impose — un club de boxe n'a pas de grades du tout.
-// « Aucune » vient en premier ET sert de defaut : un club qui tape « Boxe »
-// sans toucher au menu ne doit pas repartir avec sept ceintures de karate.
-// Le sport gradé est un choix, pas une supposition.
-const LADDERS: Record<string, string[]> = {
-  'Aucune — sport non grade': [],
-  'Ceintures de karate': ['Blanche', 'Jaune', 'Orange', 'Verte', 'Bleue', 'Marron', 'Noire'],
-  'Kyu / dan de judo': ['6e kyu', '5e kyu', '4e kyu', '3e kyu', '2e kyu', '1er kyu', '1er dan'],
-  'Geup de taekwondo': ['10e geup', '9e geup', '8e geup', '7e geup', '6e geup', '5e geup', '1er dan'],
-}
+/*
+  Plus de liste d'echelles toutes faites.
 
-const NO_LADDER = 'Aucune — sport non grade'
+  Elles imposaient les ceintures d'un autre club — karate, judo, taekwondo —
+  et c'etait le SEUL moment ou une echelle pouvait etre posee : une fois le
+  sport cree, plus rien ne permettait d'y toucher. Un club qui enseigne
+  autre chose repartait avec des niveaux qui ne sont pas les siens.
+
+  Une seule question a la creation : ce sport a-t-il des grades ? Si oui,
+  l'echelle se saisit ensuite, niveau par niveau, dans la liste au-dessus.
+*/
 
 export default function SetupPage() {
   const [branches, setBranches] = useState<Branch[] | null>(null)
@@ -34,7 +33,7 @@ export default function SetupPage() {
 
   const [branchName, setBranchName] = useState('')
   const [sportName, setSportName] = useState('')
-  const [ladder, setLadder] = useState<keyof typeof LADDERS>(NO_LADDER)
+  const [sportGraded, setSportGraded] = useState(false)
 
   async function reload() {
     const [b, d, meData] = await Promise.all([
@@ -228,15 +227,15 @@ export default function SetupPage() {
                   <Trash2 size={14} strokeWidth={2.2} />
                 </button>
               </div>
-              {d.grades.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-                  {d.grades.map(g => (
-                    <span key={g.id} className="grade-chip"
-                          style={{ padding: '0.15rem 0.6rem', borderRadius: 999, fontSize: '0.68rem', fontWeight: 700 }}>
-                      {g.label}
-                    </span>
-                  ))}
-                </div>
+              {/* L'echelle se modifie ici, sur place. Les pastilles en
+                  lecture seule ne disaient que ce qu'on avait choisi le jour
+                  de la creation, sans moyen d'y revenir. */}
+              {d.has_grading === 1 && (
+                <LadderEditor
+                  disciplineId={d.id}
+                  initial={d.grades.map(g => ({ id: g.id, label: g.label, color: g.color ?? null }))}
+                  onSaved={reload}
+                />
               )}
             </li>
           ))}
@@ -250,9 +249,11 @@ export default function SetupPage() {
           onSubmit={e => {
             e.preventDefault()
             if (!sportName.trim()) return
-            const grades = LADDERS[ladder]!.map(label => ({ label }))
-            run(() => api.post('/api/disciplines', { name: sportName.trim(), grades }))
-              .then(ok => { if (ok) { setSportName(''); setLadder(NO_LADDER) } })
+            // Aucun niveau impose : le serveur retient `hasGrading`, et
+            // l'echelle se saisit ensuite dans la liste au-dessus.
+            run(() => api.post('/api/disciplines', {
+              name: sportName.trim(), hasGrading: sportGraded,
+            })).then(ok => { if (ok) { setSportName(''); setSportGraded(false) } })
           }}
         >
           <input
@@ -263,21 +264,30 @@ export default function SetupPage() {
             onChange={e => setSportName(e.target.value)}
             maxLength={80}
           />
-          <select
-            className="members-filter-select"
-            value={ladder}
-            onChange={e => setLadder(e.target.value as keyof typeof LADDERS)}
-            aria-label="Echelle de grades"
-          >
-            {Object.keys(LADDERS).map(k => <option key={k} value={k}>{k}</option>)}
-          </select>
+          {/* Deux boutons radio plutot qu'un menu : il n'y a que deux
+              reponses, et les montrer toutes les deux evite d'ouvrir une
+              liste pour decouvrir qu'elle n'en contient pas d'autre. */}
+          <fieldset className="graded-choice">
+            <legend className="sr-only">Ce sport a-t-il des grades ?</legend>
+            <label>
+              <input type="radio" name="graded" checked={!sportGraded}
+                     onChange={() => setSportGraded(false)} />
+              <span>Sans grade</span>
+            </label>
+            <label>
+              <input type="radio" name="graded" checked={sportGraded}
+                     onChange={() => setSportGraded(true)} />
+              <span>Avec grades</span>
+            </label>
+          </fieldset>
           <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
                   disabled={busy || !sportName.trim()}>
             <Plus size={15} strokeWidth={2.4} /> Ajouter
           </button>
         </form>
         <p className="dz-card-note" style={{ marginTop: 10 }}>
-          L&apos;echelle sert de point de depart : elle appartient a votre club et reste modifiable.
+          Un sport gradué démarre sans niveau : vous les saisissez ensuite, dans
+          l&apos;ordre, sous son nom. L&apos;échelle appartient à votre club.
         </p>
       </section>
     </div>

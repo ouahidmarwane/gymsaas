@@ -440,7 +440,9 @@ function imageExtension(contentType: string): string {
 
 const MAX_GRADES = 40
 
-function parseGrades(v: unknown): Array<{ label: string; labelAr: string | null; color: string | null }> {
+function parseGrades(
+  v: unknown,
+): Array<{ id: string | null; label: string; labelAr: string | null; color: string | null }> {
   if (v === undefined || v === null) return []
   if (!Array.isArray(v)) throw new HttpError(400, 'grades doit etre une liste')
   if (v.length > MAX_GRADES) throw new HttpError(400, `grades : ${MAX_GRADES} niveaux maximum`)
@@ -448,6 +450,11 @@ function parseGrades(v: unknown): Array<{ label: string; labelAr: string | null;
     if (!g || typeof g !== 'object') throw new HttpError(400, `grades[${i}] invalide`)
     const row = g as Record<string, unknown>
     return {
+      // L'identifiant d'un niveau existant, quand l'ecran le renvoie : c'est
+      // lui qui permet de renommer une ceinture sans faire perdre son grade
+      // a tous les membres qui la portent. Le Durable Object verifie qu'il
+      // appartient bien a la discipline visee.
+      id: optional(row.id, 64),
       label: str(row.label, `grades[${i}].label`, 60),
       labelAr: optional(row.labelAr, 60),
       color: optional(row.color, 30),
