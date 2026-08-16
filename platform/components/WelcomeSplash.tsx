@@ -21,11 +21,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * ou Echap la saute a tout moment.
  */
 
-/** Durees de la maquette, en millisecondes. */
-const DRAW = 2200
-const HOLD = 750
-const ERASE = Math.round(DRAW * 0.6)   // 1320 : l'effacement est plus vif
-const FADE = 150
+/**
+ * Durees, en millisecondes. SOURCE UNIQUE : la feuille de style les recoit
+ * en variables, posees ici. Elles etaient ecrites des deux cotes et auraient
+ * diverge au premier reglage — les minuteurs auraient lance l'effacement
+ * avant la fin du trace, ou attendu dans le vide apres.
+ */
+const DELAY = 150            // retard du trace, laisse le mot apparaitre d'abord
+const DRAW = 1700            // ecriture
+const HOLD = 300             // temps de lecture, une fois le mot fini
+const ERASE = Math.round(DRAW * 0.6)   // 1020 : l'effacement est plus vif
+const EXIT = 600             // fondu du splash lui-meme
+const TAIL = 100             // marge avant demontage
 
 /** Pose par la page de connexion, consomme ici. */
 export const JUST_LOGGED_IN = 'justLoggedIn'
@@ -50,7 +57,7 @@ export default function WelcomeSplash() {
   const skip = useCallback(() => {
     clear()
     setHiding(true)
-    timers.current.push(setTimeout(() => setPlaying(false), 800))
+    timers.current.push(setTimeout(() => setPlaying(false), EXIT))
   }, [clear])
 
   /**
@@ -80,10 +87,17 @@ export default function WelcomeSplash() {
     setErasing(false)
     setHiding(false)
     setPlaying(true)
-    timers.current.push(setTimeout(() => setErasing(true), DRAW + HOLD))
-    timers.current.push(setTimeout(() => setHiding(true), DRAW + HOLD + ERASE))
+    // DELAY compte.
+    //
+    // Les minuteurs partaient a `DRAW + HOLD`, sans tenir compte du retard du
+    // trace : l'effacement commencait donc 150 ms trop tot, et la pause
+    // annoncee a 750 ms n'en durait que 600. Maintenant HOLD veut dire ce
+    // qu'il dit — le temps entre la fin du mot et le debut de l'effacement.
+    const drawn = DELAY + DRAW
+    timers.current.push(setTimeout(() => setErasing(true), drawn + HOLD))
+    timers.current.push(setTimeout(() => setHiding(true), drawn + HOLD + ERASE))
     // Le demontage attend la fin du fondu du splash lui-meme.
-    timers.current.push(setTimeout(() => setPlaying(false), DRAW + HOLD + ERASE + 800 + FADE))
+    timers.current.push(setTimeout(() => setPlaying(false), drawn + HOLD + ERASE + EXIT + TAIL))
   }, [clear])
 
   const start = useCallback(() => { whenThemeReady(begin) }, [whenThemeReady, begin])
@@ -128,6 +142,13 @@ export default function WelcomeSplash() {
   return (
     <div className={`welcome-splash${hiding ? ' hide' : ''}`}
          onClick={skip}
+         // La feuille de style lit ces durees : un seul endroit ou les regler.
+         style={{
+           '--welcome-delay': `${DELAY}ms`,
+           '--welcome-draw': `${DRAW}ms`,
+           '--welcome-erase': `${ERASE}ms`,
+           '--welcome-exit': `${EXIT}ms`,
+         } as React.CSSProperties}
          // Decoratif : rien a annoncer, et le lecteur d'ecran ne doit pas
          // s'arreter sur un mot dessine.
          aria-hidden="true">

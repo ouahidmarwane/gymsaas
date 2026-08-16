@@ -6145,6 +6145,14 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
    dégradés, et l'on verrait un ressaut au moment où il s'efface — le flash
    qu'on cherche justement à éviter. */
 .welcome-splash {
+  /* Valeurs de repli : le composant pose les vraies en ligne. Les ecrire aux
+     deux endroits les aurait fait diverger au premier reglage, et les
+     minuteurs se seraient decales du trace. */
+  --welcome-delay: 150ms;
+  --welcome-draw: 1700ms;
+  --welcome-erase: 1020ms;
+  --welcome-exit: 600ms;
+
   position: fixed;
   inset: 0;
   z-index: 9999;
@@ -6155,7 +6163,7 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   background-attachment: fixed;
   /* Le clic saute l'animation : il faut donc qu'il arrive jusqu'ici. */
   cursor: pointer;
-  transition: opacity 0.8s ease, visibility 0.8s ease;
+  transition: opacity var(--welcome-exit) ease, visibility var(--welcome-exit) ease;
 }
 .welcome-splash.hide {
   opacity: 0;
@@ -6172,8 +6180,9 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   overflow: visible;
   opacity: 0;
   transform-origin: center;
-  animation: welcomeIn 0.6s ease forwards;
-  transition: transform 0.8s cubic-bezier(0.5, 0, 0.2, 1), opacity 0.8s ease;
+  animation: welcomeIn 0.45s ease forwards;
+  transition: transform var(--welcome-exit) cubic-bezier(0.5, 0, 0.2, 1),
+              opacity var(--welcome-exit) ease;
 }
 .welcome-splash.hide svg { transform: scale(1.05); opacity: 0; }
 @keyframes welcomeIn { to { opacity: 1; } }
@@ -6188,13 +6197,14 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   stroke-linejoin: round;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  animation: welcomeDraw 2200ms cubic-bezier(0.42, 0, 0.2, 1) 0.15s forwards;
+  animation: welcomeDraw var(--welcome-draw) cubic-bezier(0.42, 0, 0.2, 1)
+             var(--welcome-delay) forwards;
 }
 @keyframes welcomeDraw { to { stroke-dashoffset: 0; } }
 
 /* Sortie : effacement lettre par lettre, dans le sens de l'ecriture. */
 .welcome-path.erase {
-  animation: welcomeErase 1320ms cubic-bezier(0.5, 0, 0.5, 1) forwards;
+  animation: welcomeErase var(--welcome-erase) cubic-bezier(0.5, 0, 0.5, 1) forwards;
 }
 @keyframes welcomeErase {
   from { stroke-dashoffset: 0; }
