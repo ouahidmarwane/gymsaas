@@ -6217,16 +6217,14 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
 }
 .welcome-splash.hide .welcome-stage { transform: scale(1.05); opacity: 0; }
 
-.welcome-word,
-.welcome-word-copy {
+.welcome-word {
   display: block;
   width: 100%;
   height: auto;
   overflow: visible;
   /* Mise au point : le flou part fort et se resorbe au rythme du trace —
      l'ecriture se precise a mesure qu'elle avance, au lieu d'arriver nette
-     d'un coup. La copie de la lentille suit la meme, sinon la bulle
-     montrerait un mot net sur un mot flou. */
+     d'un coup. */
   animation: welcomeFocus var(--welcome-draw) cubic-bezier(0.16, 1, 0.3, 1)
                           var(--welcome-delay) forwards;
 }
@@ -6272,87 +6270,100 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
 }
 
 /*
-  ── La bulle de verre liquide ──
+  ── La pluie de gouttes ──
 
-  Une goutte qui glisse sur le mot et courbe les lettres qu'elle recouvre.
-  Elle avance exactement au rythme du stylo : meme duree, meme retard, meme
-  courbe d'acceleration que `welcomeDraw`. Elle nait donc sur la premiere
-  lettre et sort par la derniere, sans minuteur a synchroniser a la main.
+  Des bulles de verre montent depuis le bas, marquent leur point haut, puis
+  retombent.
 
-  La refraction n'est PAS un flou. Un flou estompe, il ne courbe rien, et on
-  y voit un calque pose dessus plutot qu'une matiere. Ce qui donne le verre,
-  c'est la copie du mot deformee par `feDisplacementMap` a l'interieur de la
-  lentille : deux versions du meme trace, l'une droite, l'autre tordue, et
-  c'est l'ecart entre les deux qui se lit comme de l'epaisseur.
+  ELLES NE TOUCHENT PAS AU TRACE, et c'est le point. La version precedente
+  promenait sur le mot une lentille contenant une COPIE du texte deformee par
+  un bruit fractal : les lettres vues au travers devenaient tremblees, et
+  l'ensemble se lisait comme une ecriture d'enfant la ou le mot doit rester
+  net et aligne. Ici le verre se contente de flouter ce qui passe derriere
+  lui — de la matiere, pas une deformation.
+
+  La montee DECELERE, la chute ACCELERE. C'est ce que fait une masse lancee
+  vers le haut, et c'est ce qui rend le mouvement lisible sans avoir a
+  l'expliquer ; deux courbes symetriques donneraient un va-et-vient
+  mecanique. L'inflexion est ecrite dans les images-cles elles-memes, via
+  `animation-timing-function`, parce qu'une seule courbe pour toute
+  l'animation ne peut pas dire deux choses differentes.
+
+  Tout se mesure en fractions de `--stage-w`, la largeur du mot : sur un
+  telephone la pluie se reduit avec lui, au lieu de gicler hors de l'ecran.
 */
-.welcome-blob-track {
+.welcome-rain {
   position: absolute;
-  inset: 0;
+  /* La zone de jeu deborde largement le mot : les gouttes naissent
+     au-dessous et y retombent. */
+  inset: -60% 0 -40%;
   pointer-events: none;
-  /* Les pourcentages d'une translation se comptent sur la largeur de
-     l'element : la piste fait la largeur du mot, donc 0 % = debut du mot et
-     100 % = fin. Le deplacement se lit sans calcul. */
-  animation: welcomeBlobTravel var(--welcome-draw) cubic-bezier(0.42, 0, 0.2, 1)
-             var(--welcome-delay) both;
-}
-@keyframes welcomeBlobTravel {
-  /* -12 % : la moitie de la largeur de la bulle, donc son CENTRE demarre sur
-     la premiere lettre, pas son bord gauche. */
-  from { transform: translateX(-12%); }
-  to   { transform: translateX(88%); }
 }
 
-/* L'apparition et la disparition de la goutte.
-   Elles ne passent JAMAIS par l'opacite d'un parent de la bulle : une
-   opacite inferieure a 1 sur un ancetre coupe le `backdrop-filter` — le
-   navigateur n'a alors plus d'arriere-plan a filtrer, et le verre devient un
-   simple aplat. Chaque couche se fond donc pour son compte, sur la meme
-   duree et le meme retard que le deplacement. */
-@keyframes welcomeBlobFade {
-  0%   { opacity: 0; }
-  7%   { opacity: 1; }
-  90%  { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-.welcome-blob {
+.welcome-drop {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 24%;
-  /* Le fond flou : ce qui reste visible autour des lettres, vu a travers le
-     verre. Le trace du dessous fait partie de l'arriere-plan, il est donc
-     floute lui aussi — d'ou le contraste avec la copie nette et deformee. */
-  background: rgba(255, 255, 255, 0.05);
-  /* Le liquide : la forme respire au lieu de rester un cercle. Le verre
-     lui-meme s'installe et se retire en meme temps que les autres couches —
-     par le filtre, pas par l'opacite, pour la raison dite plus haut. */
-  animation: welcomeBlobMorph 2.8s ease-in-out infinite,
-             welcomeBlobGlass var(--welcome-draw) linear var(--welcome-delay) both;
+  left: var(--x);
+  bottom: 34%;
+  width: calc(var(--stage-w) * var(--size));
+  height: calc(var(--stage-w) * var(--size));
+  /* Centree sur sa position, pas accrochee par son bord gauche. */
+  margin-left: calc(var(--stage-w) * var(--size) / -2);
+  will-change: transform;
+  animation:
+    welcomeDropArc   var(--dur) linear var(--lag) both,
+    welcomeDropGlass var(--dur) linear var(--lag) both,
+    welcomeDropMorph 3.2s ease-in-out infinite;
 }
-@keyframes welcomeBlobGlass {
+
+@keyframes welcomeDropArc {
   0% {
-    backdrop-filter: blur(0) saturate(100%) brightness(1);
-    -webkit-backdrop-filter: blur(0) saturate(100%) brightness(1);
-    box-shadow: none;
+    transform: translate3d(0, calc(var(--stage-w) * 0.34), 0) scale(0.45);
+    animation-timing-function: cubic-bezier(0.1, 0.62, 0.28, 1);
   }
-  7%, 90% {
-    backdrop-filter: blur(6px) saturate(180%) brightness(1.08);
-    -webkit-backdrop-filter: blur(6px) saturate(180%) brightness(1.08);
-    box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.32),
-      inset 8px 12px 26px rgba(255, 255, 255, 0.22),
-      inset -10px -14px 30px color-mix(in srgb, #c026d3 26%, transparent),
-      0 14px 44px rgba(0, 0, 0, 0.26);
+  52% {
+    transform: translate3d(var(--drift), calc(var(--stage-w) * var(--peak) * -1), 0) scale(1);
+    animation-timing-function: cubic-bezier(0.5, 0, 0.86, 0.42);
   }
   100% {
-    backdrop-filter: blur(0) saturate(100%) brightness(1);
-    -webkit-backdrop-filter: blur(0) saturate(100%) brightness(1);
+    transform: translate3d(calc(var(--drift) * 1.8), calc(var(--stage-w) * 0.38), 0) scale(0.55);
+  }
+}
+
+/*
+  Le verre s'installe et se retire par le FILTRE, jamais par l'opacite d'un
+  parent : une opacite inferieure a 1 sur un ancetre coupe le
+  `backdrop-filter`, le navigateur n'a plus d'arriere-plan a filtrer, et la
+  bulle devient un simple aplat blanchatre.
+*/
+@keyframes welcomeDropGlass {
+  0% {
+    /* Le corps part transparent avec le reste : sans cela une tache claire
+       flotte sous le mot avant que la goutte n'existe. */
+    background-color: rgba(255, 255, 255, 0);
+    backdrop-filter: blur(0) saturate(100%);
+    -webkit-backdrop-filter: blur(0) saturate(100%);
+    box-shadow: none;
+  }
+  14%, 78% {
+    background-color: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(5px) saturate(170%) brightness(1.06);
+    -webkit-backdrop-filter: blur(5px) saturate(170%) brightness(1.06);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.3),
+      inset 5px 8px 18px rgba(255, 255, 255, 0.22),
+      inset -6px -9px 20px color-mix(in srgb, var(--gold) 30%, transparent),
+      0 8px 26px rgba(0, 0, 0, 0.22);
+  }
+  100% {
+    background-color: rgba(255, 255, 255, 0);
+    backdrop-filter: blur(0) saturate(100%);
+    -webkit-backdrop-filter: blur(0) saturate(100%);
     box-shadow: none;
   }
 }
-@keyframes welcomeBlobMorph {
+
+/* Le liquide : la forme respire au lieu de rester un cercle. */
+@keyframes welcomeDropMorph {
   0%   { border-radius: 58% 42% 46% 54% / 52% 48% 52% 48%; }
   25%  { border-radius: 46% 54% 60% 40% / 44% 58% 42% 56%; }
   50%  { border-radius: 54% 46% 40% 60% / 58% 42% 58% 42%; }
@@ -6360,55 +6371,32 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   100% { border-radius: 58% 42% 46% 54% / 52% 48% 52% 48%; }
 }
 
-/* La peau : l'eclat et les franges du bord. Elles ne sont pas decoratives —
-   c'est a l'eclat speculaire qu'on reconnait une surface bombee, et aux
-   franges colorees qu'on reconnait du verre, ou la lumiere se separe.
-   La teinte du club passe par-dessus, tres faible : la bulle appartient a
-   l'habillage sans en devenir un aplat. */
-.welcome-blob::after {
+/* La peau : l'eclat speculaire fait la surface bombee, les franges colorees
+   font le verre — c'est au bord que la lumiere se separe. La teinte du club
+   passe par-dessus, discrete : la goutte appartient a l'habillage sans en
+   devenir un aplat. */
+.welcome-drop::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
   background:
-    radial-gradient(38% 30% at 30% 24%, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 70%),
-    radial-gradient(80% 80% at 78% 74%, color-mix(in srgb, #e879f9 50%, transparent), transparent 62%),
-    radial-gradient(80% 80% at 22% 78%, color-mix(in srgb, #38bdf8 42%, transparent), transparent 60%),
-    radial-gradient(100% 100% at 50% 50%, color-mix(in srgb, var(--gold) 16%, transparent), transparent 72%);
+    radial-gradient(40% 32% at 32% 24%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 72%),
+    radial-gradient(80% 80% at 76% 76%, color-mix(in srgb, #e879f9 42%, transparent), transparent 64%),
+    radial-gradient(80% 80% at 24% 78%, color-mix(in srgb, #38bdf8 36%, transparent), transparent 62%),
+    radial-gradient(100% 100% at 50% 50%, color-mix(in srgb, var(--gold) 22%, transparent), transparent 74%);
   mix-blend-mode: screen;
   pointer-events: none;
-  animation: welcomeBlobFade var(--welcome-draw) linear var(--welcome-delay) both;
+  animation: welcomeDropFade var(--dur) linear var(--lag) both;
+}
+@keyframes welcomeDropFade {
+  0%   { opacity: 0; }
+  14%  { opacity: 1; }
+  78%  { opacity: 1; }
+  100% { opacity: 0; }
 }
 
-.welcome-lens {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  border-radius: inherit;
-  /* Le verre concentre la lumiere : les lettres vues au travers sont plus
-     vives que les memes lettres a cote. */
-  filter: saturate(1.45) brightness(1.12);
-  animation: welcomeBlobFade var(--welcome-draw) linear var(--welcome-delay) both;
-}
-
-/* Deplacement inverse EXACT de celui de la piste — meme duree, meme retard,
-   meme courbe — donc les deux s'annulent a chaque instant et la copie reste
-   collee au mot pendant que la lentille passe dessus. Sans cela, les lettres
-   defileraient a l'interieur de la bulle. */
-.welcome-lens-shift {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: var(--stage-w);
-  animation: welcomeLensShift var(--welcome-draw) cubic-bezier(0.42, 0, 0.2, 1)
-             var(--welcome-delay) both;
-}
-@keyframes welcomeLensShift {
-  0%   { transform: translateX(12%); }
-  100% { transform: translateX(-88%); }
-}
-
-/* Moins de mouvement : ni trace, ni effacement, ni bulle — seulement un
+/* Moins de mouvement : ni trace, ni effacement, ni pluie — seulement un
    fondu du mot. Le splash s'en va toujours : c'est le composant qui pilote
    sa sortie. */
 @media (prefers-reduced-motion: reduce) {
@@ -6416,12 +6404,11 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   .welcome-path.erase { animation: none; }
   .welcome-splash.hide .welcome-stage { transform: none; }
   .welcome-splash.hide .welcome-word { animation: none; filter: none; }
-  /* Ni mise au point, ni goutte : une masse qui se deforme en traversant
-     l'ecran est precisement ce que cette preference ecarte. Elle disparait
-     entierement plutot que de rester figee au milieu du mot. */
-  .welcome-word,
-  .welcome-word-copy { animation: none; filter: none; }
-  .welcome-blob-track { display: none; }
+  /* Ni mise au point, ni gouttes : neuf masses qui montent et retombent sont
+     precisement ce que cette preference ecarte. Elles disparaissent
+     entierement plutot que de rester figees sur le mot. */
+  .welcome-word { animation: none; filter: none; }
+  .welcome-rain { display: none; }
 }
 
 /* ─── Celebration ───────────────────────────────────────────────

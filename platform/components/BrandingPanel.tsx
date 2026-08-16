@@ -1,10 +1,11 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import { Palette, Upload } from 'lucide-react'
+import { useState } from 'react'
+import { Palette } from 'lucide-react'
 import { api, ApiError, type Branding } from '@/lib/client'
 import ThemePicker from '@/components/ThemePicker'
 import BannerPicker from '@/components/BannerPicker'
+import LogoPicker from '@/components/LogoPicker'
 
 /**
  * Panneau de marque de la plateforme.
@@ -17,9 +18,7 @@ import BannerPicker from '@/components/BannerPicker'
 export default function BrandingPanel({
   initial, onSaved,
 }: { initial: Branding | null; onSaved: (b: Branding) => void }) {
-  const fileRef = useRef<HTMLInputElement>(null)
   const [name, setName] = useState(initial?.name ?? '')
-  const [logoUrl, setLogoUrl] = useState(initial?.logoUrl ?? null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -43,31 +42,6 @@ export default function BrandingPanel({
     } finally { setBusy(false) }
   }
 
-  async function upload(file: File) {
-    if (file.size > 2 * 1024 * 1024) { setError('Logo trop volumineux : 2 Mo maximum'); return }
-    setBusy(true); setError(null)
-    try {
-      const res = await fetch('/api/branding/logo', {
-        method: 'PUT',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': file.type },
-        body: file,
-      })
-      if (!res.ok) {
-        const payload: unknown = await res.json().catch(() => null)
-        const message = typeof payload === 'object' && payload !== null && 'error' in payload
-          ? String((payload as { error: unknown }).error)
-          : 'Envoi impossible'
-        throw new ApiError(res.status, message)
-      }
-      const refreshed = await api.get<Branding>('/api/branding')
-      setLogoUrl(refreshed.logoUrl)
-      onSaved(refreshed)
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Envoi impossible')
-    } finally { setBusy(false) }
-  }
-
   return (
     <section className="dz-card" aria-label="Apparence du club">
       <div className="dz-card-head">
@@ -80,37 +54,23 @@ export default function BrandingPanel({
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 22, alignItems: 'flex-end', marginTop: 18 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {logoUrl
-            ? <img src={logoUrl} alt="" width={48} height={48}
-                   style={{ borderRadius: '50%', objectFit: 'contain', background: 'var(--overlay)' }} />
-            : <span style={{
-                width: 48, height: 48, borderRadius: '50%', display: 'grid', placeItems: 'center',
-                // var(--gold) plutot qu'une copie locale de l'accent : la
-                // pastille suit ainsi le choix fait dans ThemePicker en
-                // direct, sans avoir a remonter l'etat.
-                background: 'var(--gold)', color: '#fff', fontWeight: 800, fontSize: '0.85rem',
-              }}>{(name || 'GF').slice(0, 2).toUpperCase()}</span>}
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="sr-only"
-            onChange={e => { const f = e.target.files?.[0]; if (f) upload(f) }}
-          />
-          <button className="btn-ghost" style={{ padding: '0.5rem 1rem', fontSize: '0.8rem' }}
-                  onClick={() => fileRef.current?.click()} disabled={busy}>
-            <Upload size={14} strokeWidth={2.2} /> Logo
-          </button>
-        </div>
-
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 200px', minWidth: 0 }}>
+      <div style={{ marginTop: 18 }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 360 }}>
           <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)' }}>Nom affiche</span>
           <input className="input-dark" value={name} onChange={e => setName(e.target.value)} maxLength={120} />
         </label>
-
       </div>
+
+      {/* Logo : le meme composant que la configuration du club, comme
+          l'habillage et la banniere. Ce panneau portait sa propre copie du
+          televersement — plafond, formats et messages ecrits une seconde
+          fois, donc voues a diverger de ce que le club, lui, aurait lu. */}
+      <fieldset style={{ border: 'none', margin: '22px 0 0', padding: 0 }}>
+        <legend style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--muted)', marginBottom: 10 }}>
+          Logo
+        </legend>
+        <LogoPicker initial={initial} name={name} onSaved={onSaved} />
+      </fieldset>
 
       {/* Banniere : le meme composant que dans la configuration du club, pour
           la meme raison que l'habillage — une seule definition des regles

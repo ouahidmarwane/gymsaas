@@ -175,6 +175,70 @@ test('un club pose et retire sa propre banniere', async () => {
   assert.equal(after.data.branding.bannerUrl, null, 'et disparaitre au retrait')
 })
 
+test('un club pose et retire son propre logo', async () => {
+  // Le serveur l'autorisait deja ; seul l'ecran manquait, le televersement
+  // n'existait que dans le panneau de la plateforme. Ce test tient la porte
+  // ouverte du bon cote : c'est le club qui possede son image.
+  const s = uniq()
+  const owner = client()
+  assert.equal((await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Logo', slug: `logo-${s}`, name: 'Proprietaire',
+    email: `logo-${s}@example.ma`, password: 'motdepasse-solide-lo',
+  })).status, 201)
+
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64')
+
+  assert.equal((await owner.call('GET', '/api/branding')).data.logoUrl, null)
+
+  const put = await fetch(`${BASE}/api/branding/logo`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/png', Cookie: owner.cookie ?? '' },
+    body: PNG,
+  })
+  assert.equal(put.status, 200, `envoi refuse : ${put.status}`)
+
+  const me = await owner.call('GET', '/api/me')
+  assert.ok(me.data.branding.logoUrl, 'le logo doit apparaitre dans la marque')
+
+  // Et il doit pouvoir revenir en arriere : un envoi qu'on ne peut pas
+  // defaire n'est pas un reglage.
+  assert.equal((await owner.call('DELETE', '/api/branding/logo')).status, 200)
+  assert.equal((await owner.call('GET', '/api/me')).data.branding.logoUrl, null,
+    'et disparaitre au retrait')
+})
+
+test('le comptoir ne change pas le logo du club', async () => {
+  // Meme frontiere que l'habillage et la banniere : l'image engage le club
+  // entier, elle n'appartient pas a qui tient la caisse.
+  const s = uniq()
+  const owner = client()
+  assert.equal((await owner.call('POST', '/api/auth/signup', {
+    clubName: 'Club Logo Roles', slug: `lgr-${s}`, name: 'Proprietaire',
+    email: `lgr-${s}@example.ma`, password: 'motdepasse-solide-lr',
+  })).status, 201)
+
+  const staffEmail = `staff-lg-${s}@example.ma`
+  if ((await owner.call('POST', '/api/staff', {
+    name: 'Comptoir', email: staffEmail, password: 'motdepasse-solide-st', role: 'staff',
+  })).status !== 201) return
+
+  const staff = client()
+  assert.equal((await staff.call('POST', '/api/auth/login', {
+    email: staffEmail, password: 'motdepasse-solide-st',
+  })).status, 200)
+
+  const put = await fetch(`${BASE}/api/branding/logo`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/png', Cookie: staff.cookie ?? '' },
+    body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
+  })
+  assert.equal(put.status, 403, `envoi accepte a tort : ${put.status}`)
+  assert.equal((await staff.call('DELETE', '/api/branding/logo')).status, 403,
+    'le retrait doit etre ferme aussi — sinon la porte n est fermee qu a moitie')
+})
+
 test('un format non image est refuse pour la banniere', async () => {
   const s = uniq()
   const owner = client()

@@ -997,6 +997,30 @@ export const api = {
       // l'identifiant du club, donc on ne peut ecraser ni le logo d'un autre
       // club ni un document membre. Un logo pese quelques kilo-octets, tres
       // loin de la limite de corps de requete d'un Worker.
+      /**
+       * Retrait du logo. Symetrique de la banniere, et pour la meme raison :
+       * un envoi qu'on ne peut pas defaire n'est pas un reglage, c'est un
+       * engagement. Sans logo, la pastille aux initiales reprend sa place.
+       */
+      if (path === '/api/branding/logo' && method === 'DELETE') {
+        atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        const previous = await env.CONTROL.prepare(
+          'SELECT logo_key FROM organizations WHERE id = ?',
+        ).bind(orgId).first<{ logo_key: string | null }>()
+
+        await env.CONTROL.prepare(
+          `UPDATE organizations SET logo_key = NULL,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?`,
+        ).bind(orgId).run()
+        if (previous?.logo_key) await env.MEDIA.delete(previous.logo_key).catch(() => {})
+
+        if (activeScope(principal).mode === 'support') {
+          await auditSupport(env, principal, 'support_write_logo', { removed: true }, ip)
+        }
+        return json({ ok: true })
+      }
+
       if (path === '/api/branding/logo' && method === 'PUT') {
         atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)

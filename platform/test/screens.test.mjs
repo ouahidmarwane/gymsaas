@@ -108,46 +108,54 @@ test('un bouton desactive se voit, et son survol ne l anime pas', () => {
   }
 })
 
-test('la bulle du splash et sa lentille se deplacent en sens exactement inverses', () => {
-  // La bulle traverse le mot ; la copie deformee enfermee dedans doit
-  // reculer d'autant, sinon les lettres defilent a l'interieur du verre au
-  // lieu d'y rester. Les deux valeurs sont dans deux blocs distincts de la
-  // feuille : rien n'empeche d'en regler une et d'oublier l'autre, et le
-  // resultat ne se voit qu'a l'oeil, pendant deux secondes, une fois par
-  // connexion. C'est exactement ce qu'un test doit tenir.
+test('les gouttes du splash ne deforment jamais le mot', () => {
+  // La regression a corriger, et elle etait visible a l'oeil : une lentille
+  // promenait sur le mot une COPIE du texte deformee par un bruit fractal.
+  // Les lettres vues au travers devenaient tremblees et l'ensemble se lisait
+  // comme une ecriture d'enfant. Le mot doit rester net et aligne ; le verre
+  // ne floute que son arriere-plan.
+  const tsx = readFileSync(fileURLToPath(new URL('../components/WelcomeSplash.tsx', import.meta.url)), 'utf8')
+  assert.ok(!tsx.includes('feDisplacementMap'),
+    'aucun deplacement de pixels ne doit toucher le trace')
+  assert.equal((tsx.match(/d=\{WORD\}/g) ?? []).length, 1,
+    'une seule copie du mot : une seconde signifie une lentille posee dessus')
+})
+
+test('la pluie monte en decelerant et retombe en accelerant', () => {
   const css = readFileSync(fileURLToPath(new URL('../app/globals.css', import.meta.url)), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
 
-  const frames = name => {
+  const block = name => {
     const m = css.match(new RegExp(`@keyframes\\s+${name}\\s*\\{([\\s\\S]*?)\\n\\}`))
     assert.ok(m, `@keyframes ${name} introuvable`)
-    return [...m[1].matchAll(/translateX\((-?[\d.]+)%\)/g)].map(x => Number(x[1]))
+    return m[1]
   }
-  const travel = frames('welcomeBlobTravel')
-  const shift = frames('welcomeLensShift')
 
-  assert.equal(travel.length, 2)
-  assert.deepEqual(shift, travel.map(v => -v),
-    'la lentille doit annuler le deplacement de la bulle, image par image')
+  // Deux courbes DIFFERENTES, ecrites dans les images-cles. Une seule courbe
+  // pour toute l'animation ne peut pas dire « decelere en montant » puis
+  // « accelere en tombant » : le mouvement redevient un va-et-vient
+  // mecanique, ce qui est exactement ce qu'on ne veut pas.
+  const curves = [...block('welcomeDropArc').matchAll(/animation-timing-function:\s*([^;]+);/g)]
+    .map(m => m[1].trim())
+  assert.equal(curves.length, 2, 'la montee et la chute doivent porter chacune sa courbe')
+  assert.notEqual(curves[0], curves[1], 'monter et tomber ne se font pas de la meme facon')
 
-  // Meme duree, meme retard, meme courbe : deux deplacements opposes qui ne
-  // partagent pas leur cadence ne s'annulent qu'aux deux extremites.
-  const anim = selector => {
-    const m = css.match(new RegExp(`\\${selector}\\s*\\{([\\s\\S]*?)\\n\\}`))
-    assert.ok(m, `${selector} introuvable`)
-    const a = m[1].match(/animation:\s*([^;]+);/)
-    assert.ok(a, `${selector} sans animation`)
-    return a[1].replace(/\s+/g, ' ').trim()
+  // La pluie se mesure en fractions de la largeur du mot : en pixels fixes,
+  // elle giclerait hors de l'ecran sur un telephone.
+  assert.match(block('welcomeDropArc'), /var\(--stage-w\)/,
+    'la trajectoire doit suivre la taille du mot')
+
+  // Les trois couches d'une meme goutte partagent duree et retard. Si elles
+  // divergent, la peau s'efface pendant que la bulle est encore en l'air.
+  const drop = css.match(/\.welcome-drop\s*\{([\s\S]*?)\n\}/)
+  assert.ok(drop, '.welcome-drop introuvable')
+  for (const frag of ['welcomeDropArc', 'welcomeDropGlass']) {
+    assert.match(drop[1], new RegExp(`${frag}\\s+var\\(--dur\\)\\s+linear\\s+var\\(--lag\\)`),
+      `${frag} n est pas cale sur la cadence de la goutte`)
   }
-  for (const [selector, keyframes] of [['.welcome-blob-track', 'welcomeBlobTravel'],
-                                       ['.welcome-lens-shift', 'welcomeLensShift']]) {
-    const value = anim(selector)
-    assert.ok(value.startsWith(keyframes), `${selector} ne joue pas ${keyframes}`)
-    assert.ok(value.includes('var(--welcome-draw)'), `${selector} n est pas cale sur la duree du trace`)
-    assert.ok(value.includes('var(--welcome-delay)'), `${selector} n est pas cale sur le retard du trace`)
-    assert.ok(value.includes('cubic-bezier(0.42, 0, 0.2, 1)'),
-      `${selector} n a pas la courbe du trace : la bulle ne suivrait pas la pointe du stylo`)
-  }
+  const skin = css.match(/\.welcome-drop::after\s*\{([\s\S]*?)\n\}/)
+  assert.match(skin[1], /welcomeDropFade\s+var\(--dur\)\s+linear\s+var\(--lag\)/,
+    'la peau doit se fondre sur la meme cadence que la bulle')
 })
 
 test('l ecran des championnats a bien disparu', async () => {

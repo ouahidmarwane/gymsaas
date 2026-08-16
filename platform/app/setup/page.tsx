@@ -5,6 +5,7 @@ import { Building2, Dumbbell, Palette, Plus, Trash2 } from 'lucide-react'
 import { api, ApiError, type Me } from '@/lib/client'
 import ThemePicker from '@/components/ThemePicker'
 import BannerPicker from '@/components/BannerPicker'
+import LogoPicker from '@/components/LogoPicker'
 
 interface Branch { id: string; name: string; is_active: number }
 interface Grade { id: string; rank: number; label: string }
@@ -108,6 +109,23 @@ export default function SetupPage() {
             d&apos;un clic.
           </p>
           <ThemePicker initial={me?.branding ?? null} />
+
+          {/* Logo. Meme histoire que l'habillage et la banniere : le serveur
+              ouvrait deja PUT /api/branding/logo aux administrateurs du club,
+              seul l'ecran manquait — il n'existait que dans le panneau de la
+              plateforme. Un club ne devrait pas avoir a demander un ticket
+              pour changer sa propre image. */}
+          <div style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--hairline)' }}>
+            <h3 style={{ fontSize: '0.86rem', fontWeight: 700, marginBottom: 4 }}>
+              Logo du club
+            </h3>
+            <p className="dz-card-note" style={{ marginBottom: 14 }}>
+              Il apparaît dans le rail de navigation, et partout où votre club
+              est nommé.
+            </p>
+            <LogoPicker initial={me?.branding ?? null} name={me?.branding?.name}
+                        onSaved={b => setMe(m => (m ? { ...m, branding: b } : m))} />
+          </div>
 
           <div style={{ marginTop: 26, paddingTop: 22, borderTop: '1px solid var(--hairline)' }}>
             <h3 style={{ fontSize: '0.86rem', fontWeight: 700, marginBottom: 4 }}>
