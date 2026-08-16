@@ -967,55 +967,6 @@ export const api = {
         return json({ prices })
       }
 
-      // Championnats -----------------------------------------------------
-
-      if (path === '/api/championships' && method === 'GET') {
-        atLeast(principal, 'viewer')
-        return json({ championships: await clubOf(env, principal).listChampionships() })
-      }
-
-      if (path === '/api/championships' && method === 'POST') {
-        atLeast(principal, 'staff', true)
-        const body = await readJson(request)
-        const { id } = await clubOf(env, principal).createChampionship({
-          name: str(body.name, 'name', 160),
-          eventDate: str(body.eventDate, 'eventDate', 10),
-          location: optional(body.location, 160),
-          disciplineId: optional(body.disciplineId, 60),
-          branchId: optional(body.branchId, 60),
-          actorId: principal.userId, actorName: principal.name,
-        })
-        return json({ id }, { status: 201 })
-      }
-
-      const champAthletes = path.match(/^\/api\/championships\/([^/]+)\/athletes$/)
-      if (champAthletes && (method === 'GET' || method === 'POST')) {
-        const club = clubOf(env, principal)
-        if (method === 'GET') {
-          atLeast(principal, 'viewer')
-          return json({ athletes: await club.championshipAthletes(champAthletes[1]!) })
-        }
-        atLeast(principal, 'staff', true)
-        const body = await readJson(request)
-        const { id } = await club.addAthlete({
-          championshipId: champAthletes[1]!,
-          memberId: str(body.memberId, 'memberId', 60),
-          category: optional(body.category, 80),
-          weightClass: optional(body.weightClass, 40),
-        })
-        return json({ id }, { status: 201 })
-      }
-
-      const athleteResult = path.match(/^\/api\/championships\/athletes\/([^/]+)\/result$/)
-      if (athleteResult && method === 'POST') {
-        atLeast(principal, 'staff', true)
-        const body = await readJson(request)
-        const place = body.place === null || body.place === undefined ? null : Number(body.place)
-        if (place !== null && ![1, 2, 3].includes(place)) throw new HttpError(400, 'Place invalide')
-        await clubOf(env, principal).setAthleteResult(athleteResult[1]!, place, optional(body.notes, 300))
-        return json({ ok: true })
-      }
-
       // Journal du club ---------------------------------------------------
 
       if (path === '/api/audit' && method === 'GET') {

@@ -241,7 +241,7 @@ function DeleteClubModal({ club, onClose, onDeleted }: {
         </p>
         <ul className="dz-card-note" style={{ margin: '0 0 16px', paddingInlineStart: '1.1rem',
                                               display: 'flex', flexDirection: 'column', gap: 3 }}>
-          <li>la base du club — membres, paiements, grades, championnats ;</li>
+          <li>la base du club — membres, paiements, grades ;</li>
           <li>son logo et ses fichiers ;</li>
           <li>ses comptes, s&apos;ils ne servent aucun autre club.</li>
         </ul>

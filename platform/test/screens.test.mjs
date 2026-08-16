@@ -56,12 +56,19 @@ test('toutes les routes de navigation repondent', async () => {
   // un 404 que l'utilisateur lit comme « l'application est cassee ».
   const routes = [
     '/dashboard', '/admin', '/members', '/setup',
-    '/grades', '/championships', '/comptabilite', '/staff', '/account',
+    '/grades', '/comptabilite', '/staff', '/account',
   ]
   for (const route of routes) {
     const res = await page(route)
     assert.equal(res.status, 200, `${route} a repondu ${res.status}`)
   }
+})
+
+test('l ecran des championnats a bien disparu', async () => {
+  // Retire du produit : la clientele fait surtout de la musculation et
+  // l'ecran restait vide. Ce test tient la porte fermee — une route morte
+  // qui reviendrait par un copier-coller se verrait ici.
+  assert.equal((await page('/championships')).status, 404)
 })
 
 test('le tableau de bord dispose de tout ce qu il consomme', async () => {

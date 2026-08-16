@@ -193,6 +193,11 @@ MIGRATIONS.push({
 
     // Championnats. Categories et poids sont du texte libre : les
     // federations ne les decoupent pas de la meme facon d'un sport a l'autre.
+    //
+    // SUPPRIMEES EN v8. Ces tables ne sont plus utilisees par personne : la
+    // fonctionnalite a ete retiree du produit. Les instructions restent ici
+    // parce qu'une migration passee ne se reecrit pas — sinon une meme
+    // version decrirait deux schemas differents selon l'anciennete du club.
     `CREATE TABLE IF NOT EXISTS championships (
        id            TEXT PRIMARY KEY,
        name          TEXT NOT NULL,
@@ -371,6 +376,29 @@ MIGRATIONS.push({
     // meme passage laisseraient la ceinture dependre de l'ordre d'arrivee.
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_grade_sessions_corrects
        ON grade_sessions(corrects_id) WHERE corrects_id IS NOT NULL`,
+  ],
+})
+
+MIGRATIONS.push({
+  version: 8,
+  name: 'retrait-des-championnats',
+  statements: [
+    // La fonctionnalite « Championnats » est retiree du produit : la
+    // clientele fait surtout de la musculation, l'ecran restait vide.
+    //
+    // On AJOUTE une migration de suppression, on ne retouche pas la v2 qui
+    // les creait. Les bases deja ouvertes sont en v7 : effacer le CREATE
+    // d'une migration passee ferait qu'une meme version decrirait deux
+    // schemas differents selon l'historique de chaque club — precisement ce
+    // qu'un journal de migrations versionne existe pour empecher. Un club
+    // neuf cree donc ces tables en v2 puis les supprime en v8 ; c'est le
+    // prix d'un journal qui reste vrai.
+    //
+    // L'ordre compte : les athletes referencent les championnats.
+    `DROP TABLE IF EXISTS championship_athletes`,
+    `DROP TABLE IF EXISTS championships`,
+    // Les traces d'audit restent : elles racontent ce qui s'est passe, et
+    // ne referencent aucune table supprimee.
   ],
 })
 

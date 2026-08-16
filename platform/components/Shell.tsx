@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
-  LayoutDashboard, Users, Award, Trophy, Wallet, UserCog, SlidersHorizontal,
+  LayoutDashboard, Users, Award, Wallet, UserCog, SlidersHorizontal,
   ShieldAlert, Building2, Settings, LogOut, Menu, X, Receipt,
 } from 'lucide-react'
 import { api, ApiError, type Me, type Capabilities } from '@/lib/client'
@@ -32,7 +32,6 @@ const CLUB_NAV: NavItem[] = [
   // n'apparait que si au moins une discipline du club est gradee.
   { href: '/grades',         label: 'Passage de grade', icon: Award,
     needs: c => c.hasGrading },
-  { href: '/championships',  label: 'Championnats',     icon: Trophy },
   { href: '/comptabilite',   label: 'Comptabilite',     icon: Wallet },
   { href: '/staff',          label: 'Equipe & droits',  icon: UserCog },
   { href: '/abonnement',     label: 'Mon abonnement',   icon: Receipt },

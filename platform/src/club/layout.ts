@@ -7,8 +7,8 @@
 // sans entrer en collision avec la disposition de chaque club.
 //
 // Chaque ecran a son propre catalogue et sa propre disposition, rangee sous
-// une cle distincte. Une carte n'est proposee que la ou elle a un sens : le
-// chiffre d'affaires n'a rien a faire dans l'ecran des championnats.
+// une cle distincte. Une carte n'est proposee que la ou elle a un sens : les
+// passages a venir n'ont rien a faire dans l'ecran de comptabilite.
 //
 // La disposition n'est jamais stockee telle quelle : elle est reconstruite a
 // partir du catalogue. Un JSON envoye par le client ne peut donc pas
@@ -69,11 +69,6 @@ export const PAGE_CARDS = {
   grades: {
     upcoming_grades: panel('Passages a venir', 'Listes', true),
     members_active:  stat('Membres actifs', 'Chiffres'),
-  },
-  championships: {
-    members_active:  stat('Membres actifs', 'Chiffres'),
-    grade_progress:  panel('Progression des grades', 'Graphiques', true),
-    recent_members:  panel('Derniers inscrits', 'Listes'),
   },
 } as const
 
@@ -152,11 +147,6 @@ const DEFAULTS: Record<PageKey, CardPlacement[]> = {
   grades: [
     { id: 'members_active',  x: 0, y: 0, w: 4, h: 1, visible: false },
     { id: 'upcoming_grades', x: 0, y: 1, w: 6, h: 3, visible: false },
-  ],
-  championships: [
-    { id: 'members_active', x: 0, y: 0, w: 4, h: 1, visible: true },
-    { id: 'grade_progress', x: 0, y: 1, w: 6, h: 3, visible: false },
-    { id: 'recent_members', x: 6, y: 1, w: 6, h: 3, visible: false },
   ],
 }
 
