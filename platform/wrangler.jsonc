@@ -21,9 +21,14 @@
       "binding": "CONTROL",
       "database_name": "gymflow-control",
       // En local, wrangler cree une base SQLite dans .wrangler/ et ignore cet
-      // identifiant. A remplacer par celui que renvoie
-      // `wrangler d1 create gymflow-control` avant tout deploiement.
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      // identifiant : il ne sert qu'au deploiement.
+      //
+      // UN SEUL binding sur cette base, et il n'est jamais marque "remote".
+      // Un second binding distant a ete injecte ici une fois par
+      // l'auto-provisionnement de `wrangler dev` : le developpement local
+      // ecrivait alors dans la base de production. S'il reapparait, c'est un
+      // accident, pas une intention.
+      "database_id": "bb8c92aa-66c2-4968-b58e-efe96e2fe51a"
     }
   ],
 
