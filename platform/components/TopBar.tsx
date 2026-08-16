@@ -15,12 +15,18 @@ import { useDiscipline } from '@/lib/discipline'
  * Barre du haut : filtre discipline au centre, alertes / historique /
  * reglages a droite. Reprise de l'application d'origine, classes comprises.
  *
- * Le filtre ne s'affiche pas partout. Trois ecrans raisonnent sur autre chose
- * que la discipline — la comptabilite compte de l'argent, la supervision des
- * sessions, l'equipe des comptes — et y proposer un filtre laisserait croire
- * qu'il agit.
+ * Le filtre ne s'affiche pas partout. Plusieurs ecrans raisonnent sur autre
+ * chose que la discipline — la comptabilite compte de l'argent, la
+ * supervision des sessions, l'equipe des comptes — et y proposer un filtre
+ * laisserait croire qu'il agit.
+ *
+ * `/setup` est le cas le plus net, et le plus genant : c'est l'ecran ou l'on
+ * DECLARE les disciplines. Un filtre qui les trie au-dessus de la liste qui
+ * les cree n'a aucun sens, et il invite a croire qu'il cache des sports au
+ * lieu de filtrer un contenu.
  */
-const NO_FILTER = ['/comptabilite', '/supervision', '/staff', '/admin', '/facturation', '/abonnement']
+const NO_FILTER = ['/comptabilite', '/supervision', '/staff', '/admin',
+                   '/facturation', '/abonnement', '/setup']
 
 interface Alert {
   id: string

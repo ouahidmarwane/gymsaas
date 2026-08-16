@@ -4204,7 +4204,9 @@ input, textarea, select {
 .mobile-topbar-img {
   width: 28px;
   height: 28px;
-  object-fit: contain;
+  /* Meme regle que le rail : le disque est fixe, l'image le remplit. */
+  object-fit: cover;
+  object-position: center;
   border-radius: 50%;
 }
 .mobile-topbar-name {
@@ -4372,9 +4374,26 @@ input, textarea, select {
 .rail-logo {
   width: 48px; height: 48px; border-radius: 50%; overflow: hidden; flex-shrink: 0;
   background: var(--card-border); border: 1px solid var(--overlay);
-  display: grid; place-items: center; padding: 4px;
+  display: grid; place-items: center;
 }
-.rail-logo img { width: 100%; height: 100%; object-fit: contain; border-radius: 50%; }
+/*
+  `cover`, et non `contain`.
+
+  Le disque a une taille fixe : c'est l'image qui s'y adapte, pas l'inverse.
+  Avec `contain`, une photo large etait enfermee dans une bande au milieu du
+  rond, entouree de vide — le cadre gardait sa taille, l'image devenait
+  minuscule. Avec `cover` elle remplit le disque et le debord est rogne, SANS
+  jamais etre etiree : les proportions sont conservees dans les deux cas,
+  seule change la partie qu'on voit.
+
+  Le `padding: 4px` est parti avec : combine a `contain`, il retirait encore
+  huit pixels sur quarante-huit.
+*/
+.rail-logo img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center;
+  border-radius: 50%;
+}
 .rail-nav { display: flex; flex-direction: column; gap: 10px; align-items: center; }
 .rail-btn {
   position: relative; width: 46px; height: 46px; border-radius: 50%;

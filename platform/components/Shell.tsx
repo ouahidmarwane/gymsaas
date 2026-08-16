@@ -10,7 +10,7 @@ import {
 import { api, ApiError, type Me, type Capabilities } from '@/lib/client'
 import { SKINS, DEFAULT_THEME } from '@/src/club/branding'
 import TopBar from '@/components/TopBar'
-import { DisciplineProvider } from '@/lib/discipline'
+import { DisciplineProvider, useDiscipline } from '@/lib/discipline'
 
 // Coquille de l'application : le rail flottant en pilule de 78px, exactement
 // comme l'application d'origine. Les classes viennent de globals.css, repris
@@ -20,8 +20,13 @@ interface NavItem {
   href: string
   label: string
   icon: typeof LayoutDashboard
-  /** Ecran conditionne a ce que le club pratique reellement. */
-  needs?: (c: Capabilities) => boolean
+  /**
+   * Ecran conditionne a ce que le club pratique reellement, ET a la
+   * discipline retenue dans le filtre. Les deux, parce qu'ils ne disent pas
+   * la meme chose : le club peut enseigner le karate — donc l'ecran existe —
+   * pendant qu'on regarde la musculation, ou il n'a aucun sens.
+   */
+  needs?: (c: Capabilities, activeHasGrading: boolean) => boolean
 }
 
 /** Ecrans d'un club. Ils n'ont de sens que dans un club. */
@@ -29,9 +34,12 @@ const CLUB_NAV: NavItem[] = [
   { href: '/dashboard',      label: 'Tableau de bord',  icon: LayoutDashboard },
   { href: '/members',        label: 'Membres',          icon: Users },
   // Un club de boxe sans ceinture n'a pas de passage de grade. Le lien
-  // n'apparait que si au moins une discipline du club est gradee.
+  // n'apparait que si au moins une discipline du club est gradee — ET si la
+  // discipline retenue dans le filtre l'est. Regarder « Musculation » et
+  // garder un onglet « Passage de grade » ouvert sur des ceintures de karate
+  // est une reponse a une question qu'on n'a pas posee.
   { href: '/grades',         label: 'Passage de grade', icon: Award,
-    needs: c => c.hasGrading },
+    needs: (c, graded) => c.hasGrading && graded },
   { href: '/comptabilite',   label: 'Comptabilite',     icon: Wallet },
   { href: '/staff',          label: 'Equipe & droits',  icon: UserCog },
   { href: '/abonnement',     label: 'Mon abonnement',   icon: Receipt },
@@ -39,9 +47,11 @@ const CLUB_NAV: NavItem[] = [
 ]
 
 /** Un club non configure garde tout : c'est le seul moyen d'aller configurer. */
-function allowed(items: NavItem[], capabilities: Capabilities | null): NavItem[] {
+function allowed(
+  items: NavItem[], capabilities: Capabilities | null, activeHasGrading: boolean,
+): NavItem[] {
   if (!capabilities) return items
-  return items.filter(item => !item.needs || item.needs(capabilities))
+  return items.filter(item => !item.needs || item.needs(capabilities, activeHasGrading))
 }
 
 /** Ecrans de la plateforme. L'exploitant supervise, il ne gere aucun club. */
@@ -51,9 +61,29 @@ const PLATFORM_NAV: NavItem[] = [
   { href: '/supervision',  label: 'Supervision',  icon: ShieldAlert },
 ]
 
+/**
+ * Le fournisseur de discipline enveloppe la coquille au lieu d'etre rendu
+ * par elle.
+ *
+ * Un composant ne peut pas lire un contexte qu'il pose lui-meme : `useContext`
+ * remonte aux fournisseurs situes AU-DESSUS. La coquille rendait
+ * `<DisciplineProvider>` dans son propre retour, donc `useDiscipline()` y
+ * aurait renvoye la valeur de repli — filtre inerte, `activeHasGrading` a
+ * true — et l'onglet des grades ne se serait jamais cache. D'ou la coupure en
+ * deux : le fournisseur dehors, tout le reste dedans.
+ */
 export default function Shell({ children }: { children: ReactNode }) {
+  return (
+    <DisciplineProvider>
+      <ShellBody>{children}</ShellBody>
+    </DisciplineProvider>
+  )
+}
+
+function ShellBody({ children }: { children: ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
+  const { activeHasGrading } = useDiscipline()
   const [me, setMe] = useState<Me | null>(null)
   const [failed, setFailed] = useState(false)
   const [drawer, setDrawer] = useState(false)
@@ -170,7 +200,7 @@ export default function Shell({ children }: { children: ReactNode }) {
   //
   // Hors support, un exploitant sans club ne voit que la plateforme : lui
   // montrer Membres ou Comptabilite n'aurait rien a ouvrir.
-  const clubNav = allowed(CLUB_NAV, me?.capabilities ?? null)
+  const clubNav = allowed(CLUB_NAV, me?.capabilities ?? null, activeHasGrading)
 
   const items = !me
     ? []
@@ -189,7 +219,6 @@ export default function Shell({ children }: { children: ReactNode }) {
   const logo = isOperatorView ? null : me?.branding?.logoUrl
 
   return (
-    <DisciplineProvider>
     <div className="app-shell">
       {inSupport && me && <SupportBar me={me} onLeft={() => { router.replace('/admin'); router.refresh() }} />}
 
@@ -306,7 +335,6 @@ export default function Shell({ children }: { children: ReactNode }) {
         {children}
       </main>
     </div>
-    </DisciplineProvider>
   )
 }
 

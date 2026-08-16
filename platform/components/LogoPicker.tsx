@@ -76,12 +76,15 @@ export default function LogoPicker({ initial, name, onSaved }: {
   return (
     <div>
       <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        {/* L'apercu est rond et de la taille reelle du rail : c'est la seule
-            facon de voir qu'un logo rectangulaire sera rogne. */}
+        {/* L'apercu est rond et cadre comme le rail — meme `cover`, meme
+            rognage. Un apercu en `contain` montrerait l'image entiere puis le
+            rail en couperait les bords : l'apercu mentirait sur le resultat,
+            ce qui est pire que pas d'apercu du tout. */}
         {logoUrl
           ? <img src={logoUrl} alt="Logo actuel" width={56} height={56}
                  style={{
-                   borderRadius: '50%', objectFit: 'contain', flex: 'none',
+                   borderRadius: '50%', objectFit: 'cover', objectPosition: 'center',
+                   flex: 'none',
                    background: 'var(--overlay-soft)', border: '1px solid var(--card-border)',
                  }} />
           : <span style={{
@@ -111,9 +114,10 @@ export default function LogoPicker({ initial, name, onSaved }: {
             )}
           </span>
           <span className="dz-card-note" style={{ fontSize: '0.74rem', maxWidth: 340 }}>
-            PNG, JPEG ou WebP, 2 Mo maximum. Il s&apos;affiche en rond dans le rail
-            de navigation : une image carrée passe le mieux. Sans logo, les
-            initiales du club prennent sa place.
+            PNG, JPEG ou WebP, 2 Mo maximum. Il est recadré dans un rond, sans
+            jamais être déformé : une image carrée garde donc tout, une image
+            large est rognée sur les côtés. Sans logo, les initiales du club
+            prennent sa place.
           </span>
         </div>
       </div>

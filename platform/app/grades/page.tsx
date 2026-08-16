@@ -12,6 +12,7 @@ import SlidingTabs from '@/components/SlidingTabs'
 import GradeCalendar from '@/components/GradeCalendar'
 import GradeScheduleModal from '@/components/GradeScheduleModal'
 import { isOnGrid } from '@/src/club/grade-cycle'
+import { useDiscipline } from '@/lib/discipline'
 
 /*
   Ecran unique des passages de grade.
@@ -108,6 +109,9 @@ function daysTo(iso: string): number {
 }
 
 export default function GradesPage() {
+  // Le filtre de la barre du haut, pas celui de la page : c'est lui qui
+  // decide si cet ecran a encore un sens.
+  const { active, activeHasGrading, disciplines } = useDiscipline()
   const [me, setMe] = useState<Me | null>(null)
   const [data, setData] = useState<Overview | null>(null)
   const [discipline, setDiscipline] = useState('all')
@@ -173,6 +177,35 @@ export default function GradesPage() {
             <Link className="btn-ghost" href="/setup" style={{ marginTop: 8 }}>
               Ouvrir la configuration
             </Link>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  /*
+    Le club est gradue, mais la discipline REGARDEE ne l'est pas.
+
+    Cacher le lien dans le rail ne suffit pas : on peut deja etre sur l'ecran
+    quand on bascule le filtre sur la musculation, et la page resterait la,
+    a montrer des ceintures de karate sous une entete qui annonce autre
+    chose. Le filtre doit agir partout ou il est visible, y compris sur
+    l'ecran qu'il vide.
+  */
+  if (!activeHasGrading) {
+    const current = disciplines.find(d => d.id === active)
+    return (
+      <div className="dashboard-shell">
+        <section className="dz-card">
+          <div className="gf-placeholder">
+            <Award size={38} strokeWidth={1.6} className="gf-placeholder-icon" />
+            <h2 className="gf-placeholder-title">
+              {current ? `${current.name} ne se pratique pas à grades` : 'Discipline sans grade'}
+            </h2>
+            <p className="gf-placeholder-body">
+              Choisissez une discipline graduée dans le filtre en haut de page pour
+              revenir aux passages.
+            </p>
           </div>
         </section>
       </div>
