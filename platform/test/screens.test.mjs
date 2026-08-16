@@ -64,6 +64,27 @@ test('toutes les routes de navigation repondent', async () => {
   }
 })
 
+test('l ecran de bienvenue est monte, et ne s affiche pas sans connexion', async () => {
+  // Il vit dans la coquille racine, donc son code part sur toutes les pages.
+  // Mais il ne rend RIEN tant qu'une connexion ne vient pas de reussir : le
+  // marquage ne doit donc apparaitre dans aucun HTML servi.
+  for (const route of ['/login', '/dashboard']) {
+    const res = await page(route)
+    assert.equal(res.status, 200)
+    assert.ok(!res.html.includes('welcome-splash'),
+      `${route} sert le splash alors que personne ne vient de se connecter`)
+  }
+})
+
+test('le fond du splash suit le theme, il n est jamais ecrit en dur', async () => {
+  // Le critere de recette : sur les cinq habillages, il doit se confondre
+  // avec le fond de l'application. Une couleur figee ferait un flash a
+  // chaque connexion sur un habillage clair.
+  const css = await fetch(`${BASE}/login`).then(r => r.text())
+  assert.ok(!/\.welcome-splash\s*\{[^}]*background(-color)?:\s*#/.test(css),
+    'le splash porte une couleur de fond ecrite en dur')
+})
+
 test('l ecran des championnats a bien disparu', async () => {
   // Retire du produit : la clientele fait surtout de la musculation et
   // l'ecran restait vide. Ce test tient la porte fermee — une route morte

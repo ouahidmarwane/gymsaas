@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, ApiError } from '@/lib/client'
+import { JUST_LOGGED_IN, LOGIN_EVENT } from '@/components/WelcomeSplash'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -17,6 +18,18 @@ export default function LoginPage() {
     setBusy(true)
     try {
       const { orgId } = await api.post<{ orgId: string | null }>('/api/auth/login', { email, password })
+
+      // Apres la confirmation du serveur, jamais avant : un splash joue de
+      // facon optimiste souhaiterait la bienvenue a qui vient de se tromper
+      // de mot de passe.
+      //
+      // Le drapeau couvre le rechargement complet ; l'evenement couvre le
+      // cas courant, ou `router.replace` navigue sans remonter la coquille —
+      // le splash y vit, il ne serait donc jamais remonte pour lire le
+      // drapeau.
+      try { sessionStorage.setItem(JUST_LOGGED_IN, '1') } catch { /* mode prive */ }
+      window.dispatchEvent(new Event(LOGIN_EVENT))
+
       // Un compte de plateforme sans club atterrit sur la supervision ;
       // tout le monde d'autre sur son tableau de bord.
       router.replace(orgId ? '/dashboard' : '/admin')

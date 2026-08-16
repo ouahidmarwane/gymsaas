@@ -6135,6 +6135,80 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   .grade-dist-label { flex-basis: 5rem; }
 }
 
+/* ─── Écran de bienvenue ────────────────────────────────────────
+   Le mot s'écrit d'un trait, marque un temps, puis s'efface dans le sens de
+   l'écriture. Tracé, dégradé et durées repris de la maquette.
+
+   LE FOND SUIT LE THÈME. La maquette le posait en sombre pour la démo ;
+   ici il reprend `--bg` ET `--page-wash`, exactement ce que `body` applique.
+   Sans le second, le splash serait plat là où l'application porte ses
+   dégradés, et l'on verrait un ressaut au moment où il s'efface — le flash
+   qu'on cherche justement à éviter. */
+.welcome-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  background-color: var(--bg);
+  background-image: var(--page-wash);
+  background-attachment: fixed;
+  /* Le clic saute l'animation : il faut donc qu'il arrive jusqu'ici. */
+  cursor: pointer;
+  transition: opacity 0.8s ease, visibility 0.8s ease;
+}
+.welcome-splash.hide {
+  opacity: 0;
+  visibility: hidden;
+  /* Des le depart du fondu, il cesse de capter quoi que ce soit : sinon il
+     avale les clics pendant huit dixiemes de seconde alors qu'on ne le voit
+     deja plus. */
+  pointer-events: none;
+}
+
+.welcome-splash svg {
+  width: min(72vw, 620px);
+  height: auto;
+  overflow: visible;
+  opacity: 0;
+  transform-origin: center;
+  animation: welcomeIn 0.6s ease forwards;
+  transition: transform 0.8s cubic-bezier(0.5, 0, 0.2, 1), opacity 0.8s ease;
+}
+.welcome-splash.hide svg { transform: scale(1.05); opacity: 0; }
+@keyframes welcomeIn { to { opacity: 1; } }
+
+/* pathLength="1" : le calcul ne depend plus de la longueur reelle du trace,
+   donc le dash s'exprime en fraction du mot. */
+.welcome-path {
+  fill: none;
+  stroke: url(#rainbow);
+  stroke-width: 11;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: welcomeDraw 2200ms cubic-bezier(0.42, 0, 0.2, 1) 0.15s forwards;
+}
+@keyframes welcomeDraw { to { stroke-dashoffset: 0; } }
+
+/* Sortie : effacement lettre par lettre, dans le sens de l'ecriture. */
+.welcome-path.erase {
+  animation: welcomeErase 1320ms cubic-bezier(0.5, 0, 0.5, 1) forwards;
+}
+@keyframes welcomeErase {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: 1; }
+}
+
+/* Moins de mouvement : ni trace ni effacement, seulement un fondu du mot.
+   Le splash s'en va toujours — c'est le composant qui pilote sa sortie. */
+@media (prefers-reduced-motion: reduce) {
+  .welcome-path { animation: none; stroke-dashoffset: 0; }
+  .welcome-path.erase { animation: none; }
+  .welcome-splash.hide svg { transform: none; }
+}
+
 /* ─── Celebration ───────────────────────────────────────────────
    Une seule couche, posee dans <body>, au-dessus de tout y compris des
    modales (z 500). Rien n'y est cliquable : l'effet ne doit jamais retarder

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Inter } from 'next/font/google'
 import { SKINS } from '@/src/club/branding'
+import WelcomeSplash from '@/components/WelcomeSplash'
 import './globals.css'
 import './platform.css'
 
@@ -36,7 +37,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: APPLY_SKIN }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* Monte une seule fois, au-dessus de tout. Il ne rend rien tant
+            qu'une connexion ne vient pas de reussir. */}
+        <WelcomeSplash />
+      </body>
     </html>
   )
 }
