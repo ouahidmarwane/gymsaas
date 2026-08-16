@@ -479,6 +479,22 @@ function DocViewer({ src, title, onClose }: {
   useScrollLock()
   const { dismiss, cardRef, overlayClass } = useModalMotion(onClose)
 
+  /**
+   * Quand la fenetre passe derriere, le voile de la fiche doit cesser
+   * d'intercepter les clics — sinon la fenetre est bien derriere, mais
+   * injoignable : le clic destine a la ramener devant fermerait la fiche.
+   *
+   * Une classe sur <body> parce que les deux composants sont freres : la
+   * fiche ne sait rien de la visionneuse, et lui faire remonter cet etat
+   * pour un reglage de pointeur serait un cablage disproportionne.
+   */
+  useEffect(() => {
+    const cls = 'gf-docview-behind'
+    if (front) document.body.classList.remove(cls)
+    else document.body.classList.add(cls)
+    return () => document.body.classList.remove(cls)
+  }, [front])
+
   /** Deplacement a la barre de titre, comme une fenetre. */
   function startDrag(e: React.PointerEvent<HTMLDivElement>) {
     // Pas de deplacement depuis la croix : on veut fermer, pas trainer.
@@ -542,16 +558,26 @@ function DocViewer({ src, title, onClose }: {
          /* Le fond ne ferme pas : il met la fenetre en arriere-plan et rend
             la fiche du membre utilisable. Une piece d'identite qu'on
             consulte en remplissant la fiche a cote n'a aucune raison de
-            disparaitre au premier clic a cote. */
-         onPointerDown={() => setFront(false)}
+            disparaitre au premier clic a cote.
+
+            `target === currentTarget` : seul un clic sur le fond LUI-MEME
+            compte. Un clic dans la fenetre remonte jusqu'ici, et sans ce
+            test il la renverrait derriere aussitot apres l'avoir ramenee. */
+         onPointerDown={e => { if (e.target === e.currentTarget) setFront(false) }}
          role="dialog" aria-label={title}>
       <div ref={cardRef} className="docview"
            // Deplacement et retrait composes ici, en une seule valeur : deux
            // sources pour `transform` et la derniere ecrase l'autre.
-           style={{ transform: `translate(${pos.x}px, ${pos.y}px) scale(${front ? 1 : 0.97})` }}
-           /* En capture : ramener la fenetre au premier plan doit se produire
-              avant que le fond ne la renvoie derriere. */
-           onPointerDownCapture={e => { e.stopPropagation(); setFront(true) }}>
+           // Aucune reduction d'echelle en arriere-plan : une fenetre
+           // derriere garde sa taille, c'est celle de devant qui la cache.
+           style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+           /* En phase de remontee, et SANS stopPropagation.
+              La version precedente utilisait onPointerDownCapture avec un
+              stopPropagation : en capture, arreter la propagation empeche
+              l'evenement de DESCENDRE jusqu'aux enfants — la barre de titre
+              ne recevait donc jamais son onPointerDown, et la fenetre ne se
+              deplacait pas. */
+           onPointerDown={() => setFront(true)}>
         <div className="docview-bar"
              onPointerDown={startDrag}
              /* Double-clic sur la barre : retour au centre, quand on l'a

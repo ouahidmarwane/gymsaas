@@ -6518,32 +6518,46 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 }
 
 /*
-  Fenetre en arriere-plan.
+  Fenetre en arriere-plan : DERRIERE la fiche, pas transparente.
 
-  Le voile disparait ET cesse d'intercepter les clics : la fiche du membre
-  redevient entierement utilisable pendant que la piece d'identite reste a
-  l'ecran. C'est tout l'interet — on recopie un numero de carte DANS la
-  fiche, les deux doivent coexister.
+  Premier essai : je baissais son opacite. Resultat detestable — la fenetre
+  se melangeait a la fiche, on lisait les deux l'une a travers l'autre et
+  plus rien n'etait net. Une fenetre d'arriere-plan n'est pas translucide,
+  elle est CACHEE par celle de devant.
 
-  La fenetre, elle, garde ses evenements : c'est ce qui permet de la
-  reprendre d'un clic. Elle recule visuellement, elle ne s'efface pas.
+  Elle descend donc sous le voile de la fiche (z 200) et reste parfaitement
+  opaque. Ce qui l'assombrit, c'est le voile lui-meme qui passe par-dessus —
+  exactement ce qui arrive a une fenetre derriere une autre.
 */
 .docview-overlay.behind {
+  z-index: 150;
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   pointer-events: none;
 }
 /* Pas de `transform` ici : il appartient au script, qui compose le
-   deplacement et le retrait dans une seule valeur. Deux sources pour la meme
+   deplacement et le plan dans une seule valeur. Deux sources pour la meme
    propriete, et la derniere ecrase l'autre — la fenetre aurait cesse de se
    deplacer des qu'elle passe en arriere-plan. */
 .docview-overlay.behind .docview {
   pointer-events: auto;
-  opacity: 0.62;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
 }
-.docview-overlay.behind .docview:hover { opacity: 0.85; }
+
+/*
+  Pendant que la fenetre est derriere, le voile de la fiche laisse passer les
+  clics — sa carte, elle, les garde.
+
+  Sans cela, la fenetre serait bel et bien derriere mais injoignable : le
+  voile de la fiche couvre tout l'ecran, et le clic destine a la ramener
+  devant aurait ferme la fiche a la place.
+
+  Consequence assumee : tant qu'une piece est ouverte, cliquer a cote ne
+  ferme plus la fiche. C'est le bon ordre — on referme la fenetre d'abord.
+*/
+body.gf-docview-behind .compta-modal-overlay { pointer-events: none; }
+body.gf-docview-behind .compta-modal { pointer-events: auto; }
 
 /* Le titre dit dans quel etat on est : une fenetre a demi transparente sans
    explication passe pour un defaut d'affichage. */
