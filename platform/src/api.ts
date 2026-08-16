@@ -2924,8 +2924,14 @@ async function createClub(
 
 // Empreinte factice, utilisee quand le compte n'existe pas : sans cela, la
 // difference de duree de reponse revelerait quelles adresses sont inscrites.
+//
+// Elle doit suivre le format ET le cout des vraies empreintes, sinon elle
+// n'egalise plus rien. Elle portait 210 000 iterations : au-dela du plafond
+// de workerd, `deriveBits` levait, et la connexion tombait en erreur 500
+// meme pour une adresse inconnue — l'egaliseur de temps mettait l'endpoint
+// a terre. Un test la verifie desormais.
 const DUMMY_HASH =
-  'pbkdf2$210000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+  'pbkdf2c$100000$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
 async function login(request: Request, env: Env, ip: string | null): Promise<Response> {
   // Avant meme de lire le corps : une adresse bloquee n'a rien a nous dire.
