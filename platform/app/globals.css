@@ -6180,10 +6180,21 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   overflow: visible;
   opacity: 0;
   transform-origin: center;
-  animation: welcomeIn 0.45s ease forwards;
+  /* Deux animations : le fondu du mot, et la mise au point.
+     Le flou part fort et se resorbe au rythme du trace — l'ecriture se
+     precise a mesure qu'elle avance, au lieu d'arriver nette d'un coup. */
+  animation: welcomeIn 0.45s ease forwards,
+             welcomeFocus var(--welcome-draw) cubic-bezier(0.16, 1, 0.3, 1)
+                          var(--welcome-delay) forwards;
   transition: transform var(--welcome-exit) cubic-bezier(0.5, 0, 0.2, 1),
               opacity var(--welcome-exit) ease;
 }
+@keyframes welcomeFocus {
+  from { filter: blur(7px); }
+  to   { filter: blur(0); }
+}
+/* Et il repart dans le flou en s'effacant : la sortie repond a l'entree. */
+.welcome-splash.hide svg { filter: blur(5px); }
 .welcome-splash.hide svg { transform: scale(1.05); opacity: 0; }
 @keyframes welcomeIn { to { opacity: 1; } }
 
@@ -6203,8 +6214,70 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
 @keyframes welcomeDraw { to { stroke-dashoffset: 0; } }
 
 /* Sortie : effacement lettre par lettre, dans le sens de l'ecriture. */
-.welcome-path.erase {
+.welcome-path.erase,
+.welcome-ghost.erase {
   animation: welcomeErase var(--welcome-erase) cubic-bezier(0.5, 0, 0.5, 1) forwards;
+}
+
+/*
+  ── Glitch ──
+  Deux copies du trace, cyan et magenta, en fusion « screen » : c'est la
+  separation des canaux d'un signal qui saute, pas un filtre pose dessus.
+
+  Elles suivent la MEME animation de trace que la ligne principale, avec la
+  meme duree et le meme retard. Le glitch accompagne donc la pointe du stylo
+  depuis la premiere lettre — sur un mot deja ecrit, il se contenterait de
+  scintiller.
+
+  Une seule iteration, calee sur la duree du trace : le desordre s'arrete
+  exactement quand le mot est fini, sans avoir a le couper au minuteur.
+*/
+.welcome-ghost {
+  fill: none;
+  stroke-width: 11;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: welcomeDraw var(--welcome-draw) cubic-bezier(0.42, 0, 0.2, 1)
+             var(--welcome-delay) forwards;
+  mix-blend-mode: screen;
+}
+.welcome-glitch.a .welcome-ghost { stroke: #22d3ee; }
+.welcome-glitch.b .welcome-ghost { stroke: #f0f; }
+
+.welcome-glitch {
+  animation: welcomeGlitch var(--welcome-draw) steps(1, end)
+             var(--welcome-delay) forwards;
+}
+/* La seconde copie part a contretemps : deux decalages identiques se
+   superposeraient et ne donneraient qu'un trait epaissi. */
+.welcome-glitch.b { animation-name: welcomeGlitchB; }
+
+@keyframes welcomeGlitch {
+  0%   { transform: translate(-6px, 2px);  opacity: 0.9; }
+  12%  { transform: translate(3px, -3px);  opacity: 0.5; }
+  22%  { transform: translate(-9px, 1px);  opacity: 0.95; }
+  33%  { transform: translate(2px, 4px);   opacity: 0.4; }
+  46%  { transform: translate(-5px, -2px); opacity: 0.85; }
+  58%  { transform: translate(7px, 2px);   opacity: 0.45; }
+  67%  { transform: translate(-3px, -4px); opacity: 0.9; }
+  79%  { transform: translate(4px, 1px);   opacity: 0.5; }
+  88%  { transform: translate(-2px, 2px);  opacity: 0.7; }
+  /* Les deux copies se rangent sur la principale : le mot fini est net. */
+  100% { transform: translate(0, 0);       opacity: 0; }
+}
+@keyframes welcomeGlitchB {
+  0%   { transform: translate(6px, -2px);  opacity: 0.5; }
+  12%  { transform: translate(-4px, 3px);  opacity: 0.9; }
+  22%  { transform: translate(8px, -1px);  opacity: 0.45; }
+  33%  { transform: translate(-3px, -4px); opacity: 0.85; }
+  46%  { transform: translate(5px, 2px);   opacity: 0.4; }
+  58%  { transform: translate(-7px, -2px); opacity: 0.9; }
+  67%  { transform: translate(3px, 4px);   opacity: 0.5; }
+  79%  { transform: translate(-4px, -1px); opacity: 0.85; }
+  88%  { transform: translate(2px, -2px);  opacity: 0.6; }
+  100% { transform: translate(0, 0);       opacity: 0; }
 }
 @keyframes welcomeErase {
   from { stroke-dashoffset: 0; }
@@ -6216,7 +6289,12 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
 @media (prefers-reduced-motion: reduce) {
   .welcome-path { animation: none; stroke-dashoffset: 0; }
   .welcome-path.erase { animation: none; }
-  .welcome-splash.hide svg { transform: none; }
+  .welcome-splash.hide svg { transform: none; filter: none; }
+  /* Ni mise au point, ni glitch : le tremblement et les canaux decales sont
+     precisement le genre de mouvement que cette preference ecarte. Les
+     copies disparaissent entierement plutot que de rester figees en double. */
+  .welcome-splash svg { animation: welcomeIn 0.45s ease forwards; filter: none; }
+  .welcome-glitch { display: none; }
 }
 
 /* ─── Celebration ───────────────────────────────────────────────
