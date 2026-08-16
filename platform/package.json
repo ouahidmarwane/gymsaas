@@ -11,6 +11,8 @@
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "typecheck": "tsc --noEmit",
+    "build:ci": "npm run typecheck && npm run test:static && opennextjs-cloudflare build",
+    "test:static": "node --test test/contrast.test.mjs",
     "db:apply:local": "wrangler d1 execute gymflow-control --local --file=./src/control-plane/schema.sql",
     "db:apply:remote": "wrangler d1 execute gymflow-control --remote --file=./src/control-plane/schema.sql",
     "test": "node --test --test-concurrency=1 test/isolation.test.mjs test/superadmin.test.mjs test/provisioning.test.mjs test/support-mode.test.mjs test/layout.test.mjs test/screens.test.mjs test/supervision.test.mjs test/capabilities.test.mjs test/finance.test.mjs test/contrast.test.mjs test/theme.test.mjs test/blocklist.test.mjs test/ledger.test.mjs test/import.test.mjs test/documents.test.mjs test/celebrate.test.mjs test/grades.test.mjs test/crypto.test.mjs"

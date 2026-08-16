@@ -394,6 +394,36 @@ Les trois clubs portent volontairement trois états d'abonnement différents :
 6. **Pousser le dépôt** — les 31 commits sont locaux. Le dépôt GitHub est
    public et vide ; le passer en privé avant de pousser.
 
+### Déploiement automatique (Cloudflare Workers Builds)
+
+Chaque push sur `main` construit et déploie. Le réglage vit dans le tableau de
+bord Cloudflare, mais **la commande de construction vit dans le dépôt** :
+`npm run build:ci`. C'est volontaire — un enchaînement écrit dans un champ
+d'interface n'est ni relu, ni versionné, ni exécutable en local.
+
+| Champ | Valeur |
+|---|---|
+| Root directory | `platform` |
+| Build command | `npm run build:ci` |
+| Deploy command | `npx wrangler deploy` (défaut) |
+| Branche | `main` |
+
+`build:ci` enchaîne `typecheck`, `test:static` et la construction OpenNext.
+`test:static` est le sous-ensemble des tests qui ne demande **aucun serveur**
+— le reste de la suite parle en HTTP à un worker lancé à part, ce qu'un
+conteneur de build n'a pas.
+
+**Ce que la barrière n'attrape pas, et il faut le savoir.** Elle ne voit ni
+les régressions de comportement, ni ce qui ne casse qu'en production : le
+plafond PBKDF2 de workerd (100 000 itérations) est passé au travers de toute
+la suite locale, parce que le workerd local ne l'applique pas. Un déploiement
+automatique rend donc le contrôle *après* mise en ligne plus important, pas
+moins : connexion, ouverture d'un club, envoi d'un fichier.
+
+`.node-version` fixe Node 24, la famille préinstallée dans l'image de build.
+Sans lui, une rotation de l'image changerait la version sous le projet sans
+qu'aucun commit ne le dise.
+
 ### La carte
 
 **OpenStreetMap via Leaflet** — ni compte, ni clé, ni facturation. Leaflet est
