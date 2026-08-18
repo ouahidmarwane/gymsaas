@@ -17,3 +17,6 @@ Thumbs.db
 coverage
 dist
 build
+
+.ai/tasks/*
+!.ai/tasks/.gitkeep
