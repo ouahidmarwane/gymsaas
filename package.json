@@ -1,38 +1,46 @@
 {
-  "name": "gymflow",
+  "name": "gymflow-platform",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "opennextjs-cloudflare build && wrangler dev --port 8787 --local",
+    "dev:ui": "next dev --port 3000",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
-  "dependencies": {
-    "@aws-sdk/client-s3": "^3.1108.0",
-    "@aws-sdk/s3-request-presigner": "^3.1108.0",
-    "@supabase/ssr": "^0.10.3",
-    "@supabase/supabase-js": "^2.105.4",
-    "clsx": "^2.1.1",
-    "date-fns": "^3.6.0",
-    "lucide-react": "^1.16.0",
-    "next": "^14.2.35",
-    "react": "^18",
-    "react-day-picker": "^10.0.1",
-    "react-dom": "^18",
-    "react-markdown": "^10.1.0",
-    "recharts": "^3.8.1",
-    "resend": "^3.2.0"
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "typecheck": "tsc --noEmit",
+    "build:ci": "npm run typecheck && npm run test:static && opennextjs-cloudflare build",
+    "test:static": "node --test test/contrast.test.mjs",
+    "db:apply:local": "wrangler d1 execute gymflow-control --local --file=./src/control-plane/schema.sql",
+    "db:apply:remote": "wrangler d1 execute gymflow-control --remote --file=./src/control-plane/schema.sql",
+    "test": "node --test --test-concurrency=1 test/isolation.test.mjs test/superadmin.test.mjs test/provisioning.test.mjs test/support-mode.test.mjs test/layout.test.mjs test/screens.test.mjs test/supervision.test.mjs test/capabilities.test.mjs test/finance.test.mjs test/contrast.test.mjs test/theme.test.mjs test/blocklist.test.mjs test/ledger.test.mjs test/import.test.mjs test/documents.test.mjs test/celebrate.test.mjs test/grades.test.mjs test/crypto.test.mjs"
   },
   "devDependencies": {
-    "@types/node": "^20.19.40",
-    "@types/react": "^18.3.28",
-    "@types/react-dom": "^18.3.7",
-    "autoprefixer": "^10",
-    "eslint": "^8",
-    "eslint-config-next": "^14.2.35",
-    "postcss": "^8",
-    "tailwindcss": "^3.4.3",
-    "typescript": "^5"
+    "@cloudflare/workers-types": "^5.20260812.1",
+    "@opennextjs/cloudflare": "^1.20.2",
+    "@types/leaflet": "^1.9.22",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.26",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.121.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260804.1": true,
+    "esbuild@0.25.4": true
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.31.0",
+    "next": "^16.3.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "recharts": "^3.10.1"
   }
 }

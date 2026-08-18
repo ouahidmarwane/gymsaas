@@ -1,175 +1,104 @@
-# GymFlow 🏋️
+# GymFlow Platform
 
-Plateforme de gestion de salle de sport — Next.js + Supabase + Vercel.
+Plateforme multi-clubs sur Cloudflare : Next.js 16 servi par un Worker via
+OpenNext, base centrale D1, et une base SQLite par club dans un Durable Object.
 
-## Stack
+## Architecture
 
-| Couche | Outil | Coût |
-|--------|-------|------|
-| Frontend | Next.js 14 (App Router) | Gratuit |
-| Hébergement | Vercel | Gratuit |
-| Base de données | Supabase (PostgreSQL) | Gratuit |
-| Auth | Supabase Auth | Gratuit |
-| Emails | Resend (100/jour) | Gratuit |
-| Cron rappels | Supabase Edge Functions | Gratuit |
+**Plan de controle (D1, une seule base)** : identite, catalogue des clubs,
+appartenances, sessions, abonnements, agregats en cache, journal plateforme.
+Aucune donnee metier.
 
-## Fonctionnalités
+**Un Durable Object par club** : membres, paiements, alertes, disciplines,
+succursales, grades, journal du club. Adresse par `idFromName(orgId)`, cree a
+la premiere utilisation.
 
-- ✅ Gestion des membres (CRUD)
-- 📅 Suivi des abonnements mensuels
-- 🛡️ Suivi des assurances annuelles
-- 🔔 Alertes & rappels automatiques (email + plateforme)
-- 👥 Gestion des rôles (Admin / Réceptionniste / Lecteur)
-- 🔐 Row Level Security Supabase
+L'isolation est physique. Un club ne peut pas atteindre les donnees d'un autre :
+ce n'est pas une politique a respecter, c'est une base de donnees distincte.
+Des Durable Objects plutot qu'une base D1 par club parce que les bindings D1
+sont statiques : un club par base imposerait de redeployer le Worker a chaque
+inscription, ce qui exclut l'inscription self-service.
 
----
+**Fichiers** : bucket R2 unique, cles prefixees par club.
 
-## Installation
-
-### 1. Cloner et installer
+## Developpement local
 
 ```bash
-git clone https://github.com/votre-repo/gymflow.git
-cd gymflow
 npm install
+npm run db:apply:local     # cree et remplit la base centrale locale
+npm run dev                # build OpenNext + workerd sur le port 8787
 ```
 
-### 2. Créer le projet Supabase
+`npm run dev` construit puis sert dans workerd. C'est le seul environnement
+local fidele : `next dev` s'execute dans Node, ou `cloudflare:workers` ne se
+resout pas et ou les Durable Objects ne fonctionnent pas. `npm run dev:ui`
+reste disponible pour iterer vite sur l'interface, sans API ni base.
 
-1. Aller sur [supabase.com](https://supabase.com) → New Project
-2. Copier l'URL et les clés API depuis Settings → API
-3. Copier `.env.local.example` → `.env.local` et remplir les valeurs
+### Carte de supervision
 
-### 3. Initialiser la base de données
+L'ecran Supervision affiche les salles sur **OpenStreetMap, via Leaflet**. Ni
+compte, ni cle, ni facturation : rien a configurer.
 
-Dans Supabase Dashboard → SQL Editor, copier-coller et exécuter :
+Leaflet est importe **dans l'effet**, jamais au niveau du module — il touche
+`window` des son evaluation, et le rendu serveur echouerait.
+
+Les salles se placent depuis l'ecran Supervision, bouton « Situer » : un clic
+droit dans n'importe quelle carte donne le couple de coordonnees a coller. Pas
+de geocodage automatique — le service gratuit de Nominatim interdit l'usage en
+masse, et il se trompe sur les adresses marocaines mal normalisees.
+
+Deux points a ne pas defaire :
+
+- **L'attribution OpenStreetMap est obligatoire.** Elle est stylee pour rester
+  lisible sur les deux bases, jamais masquee.
+- Les tuiles gratuites suffisent a cette charge. En gros trafic il faudrait un
+  fournisseur de tuiles ; le seul changement serait l'URL du `tileLayer`.
+
+Sur un habillage sombre, les tuiles sont inversees en CSS plutot que de
+dependre d'un second fournisseur et de ses conditions.
+
+## Tests
+
+```bash
+npm run dev      # dans un terminal
+npm test         # dans un autre
 ```
-supabase/migrations/001_schema.sql
+
+Les tests interrogent l'API par HTTP, ce qui les rend independants de la
+maniere dont elle est servie : ils ont valide la version Worker seule comme la
+version Next, sans modification.
+
+Ce qu'ils couvrent, dans les deux sens :
+
+- `isolation` : un club ne voit ni un autre club ni la base centrale ; un
+  `orgId` fourni par le client est ignore ; sessions, throttling, mots de passe.
+- `superadmin` : la plateforme supervise tous les clubs, et l'acces est trace.
+- `provisioning` : creer un club en production ne modifie aucun club existant,
+  verifie par empreinte avant/apres.
+- `support-mode` : entree en lecture seule, escalade explicite pour ecrire,
+  sortie, expiration, revocation immediate du statut plateforme.
+- `layout` : la disposition envoyee par le client est reconstruite a partir du
+  registre des cartes ; rien d'arbitraire ne persiste, et seule la plateforme
+  peut l'ecrire.
+- `theme` : l'habillage d'un club ne fuit ni chez le voisin ni sur la
+  plateforme, dans les deux sens.
+- `contrast` : les cinq habillages sont verifies par calcul WCAG sur chaque
+  surface — pas a l'oeil.
+- `blocklist` : une adresse bloquee ne se connecte plus, ne s'inscrit plus, et
+  perd ses sessions ; on ne peut pas se bloquer soi-meme.
+
+## Deploiement
+
+```bash
+wrangler d1 create gymflow-control      # reporter l'identifiant dans wrangler.jsonc
+npm run db:apply:remote
+npm run deploy
 ```
 
-### 4. Créer le premier compte admin
+Le compte exploitant de la plateforme se pose a la main, jamais par une route :
 
-Dans Supabase Dashboard → Authentication → Users → Add User :
-- Email : `admin@votresalle.ma`
-- Password : (choisir un mot de passe fort)
-
-Puis dans SQL Editor :
 ```sql
-UPDATE profiles SET role = 'admin' WHERE email = 'admin@votresalle.ma';
+UPDATE users SET is_platform_admin = 1 WHERE email_norm = 'vous@exemple.ma';
 ```
 
-### 5. Configurer Resend (emails)
-
-1. Créer un compte sur [resend.com](https://resend.com) (gratuit)
-2. Ajouter et vérifier votre domaine
-3. Créer une clé API → mettre dans `.env.local`
-
-### 6. Déployer la Edge Function
-
-```bash
-# Installer Supabase CLI
-npm install -g supabase
-
-# Login
-supabase login
-
-# Lier au projet
-supabase link --project-ref VOTRE_PROJECT_REF
-
-# Déployer la fonction
-supabase functions deploy send-reminders
-
-# Ajouter les secrets
-supabase secrets set RESEND_API_KEY=re_XXXXXXX
-supabase secrets set FROM_EMAIL="GymFlow <noreply@votresalle.ma>"
-```
-
-### 7. Configurer le cron dans Supabase
-
-Dashboard → Edge Functions → send-reminders → Schedule :
-```
-0 7 * * *
-```
-(08h00 heure Maroc, UTC+1)
-
-### 8. Développement local
-
-```bash
-npm run dev
-# → http://localhost:3000
-```
-
-### 9. Déployer sur Vercel
-
-```bash
-# Via CLI
-npx vercel
-
-# Ajouter les variables d'environnement dans Vercel Dashboard :
-# NEXT_PUBLIC_SUPABASE_URL
-# NEXT_PUBLIC_SUPABASE_ANON_KEY
-# SUPABASE_SERVICE_ROLE_KEY
-# RESEND_API_KEY
-# FROM_EMAIL
-```
-
----
-
-## Structure du projet
-
-```
-gymflow/
-├── app/
-│   ├── (protected)/
-│   │   ├── layout.tsx          ← Layout protégé (auth check)
-│   │   ├── dashboard/page.tsx  ← Vue d'ensemble
-│   │   ├── members/page.tsx    ← Liste & gestion membres
-│   │   ├── alerts/page.tsx     ← Alertes & rappels
-│   │   └── staff/page.tsx      ← Équipe & droits (admin)
-│   ├── login/page.tsx          ← Page de connexion
-│   ├── layout.tsx              ← Root layout
-│   ├── page.tsx                ← Redirect → /dashboard
-│   └── globals.css
-├── components/
-│   └── Sidebar.tsx             ← Navigation latérale
-├── lib/
-│   ├── actions.ts              ← Server Actions
-│   ├── gym.ts                  ← Logique métier (statuts)
-│   └── supabase/
-│       ├── client.ts           ← Client browser
-│       └── server.ts           ← Client serveur
-├── types/index.ts              ← Types TypeScript
-├── middleware.ts               ← Auth middleware
-└── supabase/
-    ├── config.toml             ← Config + cron schedule
-    ├── migrations/
-    │   └── 001_schema.sql      ← Tables + RLS
-    └── functions/
-        └── send-reminders/
-            └── index.ts        ← Cron Edge Function
-```
-
----
-
-## Rôles & permissions
-
-| Action | Admin | Réceptionniste | Lecteur |
-|--------|-------|----------------|---------|
-| Voir membres | ✓ | ✓ | ✓ |
-| Ajouter / modifier | ✓ | ✓ | ✗ |
-| Supprimer un membre | ✓ | ✗ | ✗ |
-| Envoyer rappels | ✓ | ✓ | ✗ |
-| Voir alertes | ✓ | ✓ | ✓ |
-| Gérer staff | ✓ | ✗ | ✗ |
-
----
-
-## Rappels automatiques
-
-| Événement | Délai | Canal |
-|-----------|-------|-------|
-| Abonnement expire bientôt | J-7 | Email + Plateforme |
-| Abonnement expiré | J+1 | Email + Plateforme |
-| Assurance expire bientôt | J-30 | Email + Plateforme |
-| Assurance expirée | J+1 | Plateforme uniquement |
-| Pas d'assurance | Quotidien | Email + Plateforme |
+Aucun bug applicatif ne peut donc conduire a cette escalade.

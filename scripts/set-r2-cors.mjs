@@ -1,62 +1,93 @@
 #!/usr/bin/env node
-// scripts/set-r2-cors.mjs
+// Pose la politique CORS du bucket R2 sur des origines nommees.
 //
-// Déclare les origines autorisées à téléverser directement vers le bucket R2.
-// Sans cette règle, le navigateur bloque le PUT signé au moment du preflight
-// et l'app affiche « réseau indisponible » — l'erreur n'a alors pas de code
-// HTTP, puisque la requête ne part jamais.
+// A LIRE AVANT DE S'EN SERVIR : en l'etat, GymFlow n'en a pas besoin.
 //
-//   node scripts/set-r2-cors.mjs http://localhost:3000
-//   node scripts/set-r2-cors.mjs http://localhost:3000 https://mon-app.vercel.app
+// Le navigateur ne parle JAMAIS a R2 directement. Photos, documents
+// d'identite, logos et bannieres transitent tous par le Worker
+// (`env.MEDIA.put` / `env.MEDIA.get` dans src/api.ts), donc en meme origine :
+// il n'y a pas de requete inter-origines a autoriser. Aucune URL signee,
+// aucun client S3, aucun domaine r2.dev dans le code — verifiable par
+// recherche.
 //
-// Passez TOUTES les origines à chaque appel : la règle est remplacée, pas
-// fusionnée. Comptez jusqu'à une minute de propagation côté Cloudflare.
-import { S3Client, PutBucketCorsCommand, GetBucketCorsCommand } from '@aws-sdk/client-s3'
-import { readFileSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+// Ce script existe pour le jour ou cela changera : servir les medias depuis
+// un domaine R2 dedie pour decharger le Worker, ou televerser directement
+// depuis le navigateur avec une URL signee. Ce jour-la, la politique doit
+// deja etre ecrite quelque part plutot qu'improvisee.
+//
+// JAMAIS "*" : le bucket porte des pieces d'identite. Une origine ouverte
+// laisserait n'importe quelle page lue par un membre connecte piocher dedans
+// avec ses jetons.
+//
+//   node scripts/set-r2-cors.mjs https://gymflow.ma
+//   node scripts/set-r2-cors.mjs https://gymflow.ma https://www.gymflow.ma
+//   node scripts/set-r2-cors.mjs --show
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-for (const name of ['.env.local', '.env']) {
-  const file = join(ROOT, name)
-  if (!existsSync(file)) continue
-  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/)
-    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '')
-  }
+const WRANGLER = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url))
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
+const BUCKET = 'gymsaas'
+
+const args = process.argv.slice(2)
+const show = args.includes('--show')
+const origins = args.filter(a => !a.startsWith('--'))
+
+function wrangler(...argv) {
+  return execFileSync(process.execPath, [WRANGLER, ...argv],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], cwd: ROOT })
 }
 
-const origins = process.argv.slice(2)
-if (!origins.length || !origins.every(o => /^https?:\/\//.test(o))) {
-  console.error('Usage : node scripts/set-r2-cors.mjs <origine> [origine...]')
-  console.error('Exemple : node scripts/set-r2-cors.mjs http://localhost:3000 https://mon-app.vercel.app')
+if (show) {
+  console.log(wrangler('r2', 'bucket', 'cors', 'list', BUCKET))
+  process.exit(0)
+}
+
+if (origins.length === 0) {
+  console.error('Usage : node scripts/set-r2-cors.mjs <origine> [autre origine...]')
+  console.error('        node scripts/set-r2-cors.mjs --show')
   process.exit(1)
 }
 
-const Bucket = process.env.R2_BUCKET
-const s3 = new S3Client({
-  region: 'auto',
-  endpoint: process.env.R2_ENDPOINT || `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-})
+// Une origine, c'est un schema et un hote — pas de chemin, pas de barre
+// finale. R2 compare la chaine telle quelle : "https://gymflow.ma/" ne
+// correspondrait a aucune requete, et l'erreur ne se verrait qu'a l'usage,
+// dans la console du navigateur d'un client.
+for (const origin of origins) {
+  let url
+  try { url = new URL(origin) } catch { console.error(`Origine illisible : ${origin}`); process.exit(1) }
+  if (url.protocol !== 'https:') { console.error(`HTTPS obligatoire : ${origin}`); process.exit(1) }
+  if (url.pathname !== '/' || origin.endsWith('/')) {
+    console.error(`Une origine ne porte ni chemin ni barre finale : ${origin}`)
+    process.exit(1)
+  }
+  if (url.hostname === '*') { console.error('Jamais de joker : ce bucket porte des pieces d identite.') ; process.exit(1) }
+}
 
-await s3.send(new PutBucketCorsCommand({
-  Bucket,
-  CORSConfiguration: {
-    CORSRules: [{
-      AllowedOrigins: origins,
-      AllowedMethods: ['PUT', 'GET', 'HEAD'],
-      AllowedHeaders: ['content-type'],
-      ExposeHeaders: ['etag'],
-      MaxAgeSeconds: 3600,
-    }],
+const policy = [
+  {
+    AllowedOrigins: origins,
+    // GET et HEAD pour lire, PUT pour un televersement direct eventuel.
+    // Pas de DELETE : rien ne doit pouvoir effacer un document depuis un
+    // navigateur, la suppression passe par le Worker qui verifie le club.
+    AllowedMethods: ['GET', 'HEAD', 'PUT'],
+    // Content-Type pour un envoi, Range pour reprendre une lecture de gros
+    // fichier. Rien d'autre : chaque en-tete autorise est une surface.
+    AllowedHeaders: ['Content-Type', 'Range'],
+    ExposeHeaders: ['Content-Length', 'Content-Type', 'ETag'],
+    // Une heure. Assez pour eviter un prevol a chaque image, assez court
+    // pour qu'un retrait d'origine prenne effet dans la journee.
+    MaxAgeSeconds: 3600,
   },
-}))
+]
 
-const { CORSRules } = await s3.send(new GetBucketCorsCommand({ Bucket }))
-console.log(`Bucket « ${Bucket} » — règle CORS en place :`)
-console.log(JSON.stringify(CORSRules, null, 2))
-console.log('\nLa propagation peut prendre jusqu\'à une minute.')
+const file = join(tmpdir(), `gymflow-r2-cors-${process.pid}.json`)
+writeFileSync(file, JSON.stringify(policy, null, 2), 'utf8')
+
+console.log(JSON.stringify(policy, null, 2))
+console.log(`\nApplication sur le bucket ${BUCKET}…`)
+wrangler('r2', 'bucket', 'cors', 'set', BUCKET, '--file', file, '--force')
+console.log('Politique posee. Relire avec : node scripts/set-r2-cors.mjs --show')

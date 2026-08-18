@@ -1,48 +1,47 @@
-import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
 import { Inter } from 'next/font/google'
+import { SKINS } from '@/src/club/branding'
+import WelcomeSplash from '@/components/WelcomeSplash'
 import './globals.css'
+import './platform.css'
 
+// Meme chargement que l'application d'origine : Inter en variable CSS, Outfit
+// arrive par l'@import en tete de globals.css.
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' })
 
-export const metadata: Metadata = {
-  title: 'Association Noujoum El Chaouia',
-  description: 'Gestion de salle de sport — Association Noujoum El Chaouia',
-  icons: {
-    icon: '/logo-noujoum-el-chaouia.png',
-    apple: '/logo-noujoum-el-chaouia.png',
-  },
+export const metadata = {
+  title: 'GymFlow',
+  description: 'Gestion de clubs sportifs',
 }
 
-export const viewport: Viewport = {
-  width: 'device-width',
-  initialScale: 1,
-  // pas de maximumScale : bloquer le zoom nuit à l'accessibilité ;
-  // le zoom auto d'iOS est évité par font-size:16px sur les champs
-}
+/**
+ * L'habillage est pose avant la premiere peinture.
+ *
+ * La coquille ne le connait qu'apres /api/me ; sur un rechargement complet,
+ * l'application s'afficherait donc en sombre pendant l'aller-retour avant de
+ * basculer. Ce script lit le dernier habillage connu et l'applique tout de
+ * suite. La table des bases est derivee du catalogue, pas recopiee : un
+ * habillage ajoute ne peut pas manquer ici.
+ */
+const SKIN_BASES = JSON.stringify(
+  Object.fromEntries(Object.entries(SKINS).map(([key, s]) => [key, s.base])),
+)
+const APPLY_SKIN = `try{var b=${SKIN_BASES},s=localStorage.getItem('gf-skin');
+if(s&&b[s]){var e=document.documentElement;e.setAttribute('data-skin',s);e.setAttribute('data-theme',b[s])}}catch(_){}`
 
-// Restaure la « Vue PC » AVANT le premier rendu : si on attendait React, la
-// page s'afficherait d'abord en mise en page mobile puis basculerait
-// (clignotement). Voir components/DesktopViewToggle.tsx.
-// L'échelle vient de `screen.width` (largeur physique, insensible à la balise
-// viewport) et non de `innerWidth`, qui vaut 1280 dès la vue PC active.
-// Voir components/DesktopViewToggle.tsx.
-const RESTORE_VIEWPORT = `try{
-  if(localStorage.getItem('gymflow:desktop-view')==='1'){
-    var m=document.querySelector('meta[name="viewport"]');
-    var w=(screen&&screen.width)||window.innerWidth||390;
-    if(m)m.setAttribute('content','width=1280, initial-scale='+Math.min(1,w/1280).toFixed(4));
-  }
-}catch(e){}`
-
+// La langue et la direction sont posees par le client une fois le club connu :
+// un club arabophone bascule en RTL sans que la coquille change.
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="fr" className={inter.variable}>
+    <html lang="fr" dir="ltr" className={inter.variable} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: RESTORE_VIEWPORT }} />
+        <script dangerouslySetInnerHTML={{ __html: APPLY_SKIN }} />
       </head>
       <body>
         {children}
+        {/* Monte une seule fois, au-dessus de tout. Il ne rend rien tant
+            qu'une connexion ne vient pas de reussir. */}
+        <WelcomeSplash />
       </body>
     </html>
   )

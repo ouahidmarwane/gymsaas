@@ -1,7 +1,13 @@
 import type { NextConfig } from 'next'
 import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare'
+import { fileURLToPath } from 'node:url'
 
 const nextConfig: NextConfig = {
+  // Le depot contient maintenant l'application a sa racine. Sans cette
+  // limite explicite, Turbopack peut choisir un package-lock.json parent.
+  turbopack: {
+    root: fileURLToPath(new URL('.', import.meta.url)),
+  },
   // En-tetes de securite sur toutes les reponses. L'API pose deja les siennes
   // reponse par reponse ; celles-ci couvrent les pages.
   async headers() {
