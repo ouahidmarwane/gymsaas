@@ -1,104 +1,253 @@
-# GymFlow Platform
+# GymFlow 🏋️
 
-Plateforme multi-clubs sur Cloudflare : Next.js 16 servi par un Worker via
-OpenNext, base centrale D1, et une base SQLite par club dans un Durable Object.
+**Open-source-ready, multi-tenant sports club management platform built on Cloudflare.**
+
+GymFlow is a management platform for gyms and sports clubs. It combines member and subscription management, disciplines and grading, financial workflows, team permissions, club messaging, support tooling, branding, supervision, and strong tenant isolation in a single platform.
+
+> Current development version: `0.1.0`
+
+## Highlights
+
+- 🏢 Multi-club / multi-tenant architecture
+- 👥 Member, staff, branch, discipline, grade and subscription management
+- 💳 Financial workflows with idempotency protections
+- 💬 Club messaging with group conversations, direct messages, reactions and attachments
+- 📣 Platform support and announcements
+- 🔐 Role-based access control, support mode and step-up security
+- 🧱 Physical tenant data isolation using one Durable Object database per club
+- 📦 Resumable and controlled organization deletion
+- 🎟️ Entitlements and feature availability controls
+- 🎨 Club branding, themes, logos, banners and configurable dashboards
+- 📍 Platform supervision with OpenStreetMap / Leaflet
+- 🗂️ R2-backed media and document storage
+- 🧪 Extensive HTTP, security, isolation, finance, migration and messaging tests
 
 ## Architecture
 
-**Plan de controle (D1, une seule base)** : identite, catalogue des clubs,
-appartenances, sessions, abonnements, agregats en cache, journal plateforme.
-Aucune donnee metier.
+GymFlow runs on **Next.js 16** and is deployed to **Cloudflare Workers** through **OpenNext**.
 
-**Un Durable Object par club** : membres, paiements, alertes, disciplines,
-succursales, grades, journal du club. Adresse par `idFromName(orgId)`, cree a
-la premiere utilisation.
+### Control plane — Cloudflare D1
 
-L'isolation est physique. Un club ne peut pas atteindre les donnees d'un autre :
-ce n'est pas une politique a respecter, c'est une base de donnees distincte.
-Des Durable Objects plutot qu'une base D1 par club parce que les bindings D1
-sont statiques : un club par base imposerait de redeployer le Worker a chaque
-inscription, ce qui exclut l'inscription self-service.
+A central D1 database stores platform-level information such as:
 
-**Fichiers** : bucket R2 unique, cles prefixees par club.
+- identities and accounts;
+- club catalogue and memberships;
+- sessions and security state;
+- subscriptions and entitlements;
+- cached aggregates;
+- platform audit information;
+- support and announcement metadata.
 
-## Developpement local
+Business data belonging to an individual club is intentionally kept outside the central database.
+
+### Club data — Durable Objects
+
+Each club receives its own Durable Object, addressed from its organization identifier. Its SQLite storage contains club-specific business data such as members, payments, alerts, disciplines, branches, grades and club audit history.
+
+This creates a strong tenant boundary: club A and club B do not merely share tables protected by an application filter — they use separate databases.
+
+Durable Objects also make self-service provisioning possible without adding a new static D1 binding and redeploying the Worker every time a club is created.
+
+### Files — Cloudflare R2
+
+Media, documents, club logos, banners and messaging attachments are stored in R2 with organization-scoped object keys. Browser-facing operations pass through authenticated application routes so authorization remains enforced by GymFlow.
+
+## Security model
+
+Security is treated as an architectural requirement rather than only a UI concern.
+
+The platform includes:
+
+- organization isolation and server-side organization resolution;
+- role and capability enforcement on API routes;
+- platform administrator boundaries;
+- read-only and explicit write support modes;
+- step-up security for sensitive operations;
+- session revocation and blocklist controls;
+- password derivation compatible with the Cloudflare Workers runtime;
+- financial idempotency protections;
+- controlled and resumable organization deletion;
+- audit-oriented platform and club workflows;
+- migration and regression tests for security-sensitive behavior.
+
+Client-supplied organization identifiers are never treated as authorization.
+
+## Messaging
+
+GymFlow includes an integrated communication surface for clubs and the platform:
+
+- group conversations;
+- direct messages;
+- message reactions;
+- attachments;
+- club conversations;
+- platform support messaging;
+- announcements.
+
+Messaging follows the same organization and support-mode authorization boundaries as the rest of the platform.
+
+## Platform supervision
+
+The platform supervision area provides cross-club operational visibility for authorized platform administrators.
+
+Club locations are displayed with **Leaflet + OpenStreetMap**, requiring no proprietary map account or API key. OpenStreetMap attribution remains visible as required.
+
+## Technology stack
+
+| Layer | Technology |
+| --- | --- |
+| Application | Next.js 16 / React 19 / TypeScript |
+| Edge runtime | Cloudflare Workers |
+| Next.js adapter | OpenNext for Cloudflare |
+| Control-plane database | Cloudflare D1 |
+| Per-club storage | Cloudflare Durable Objects + SQLite |
+| Object storage | Cloudflare R2 |
+| Deployment / local Worker runtime | Wrangler / workerd |
+| Maps | Leaflet + OpenStreetMap |
+| Charts | Recharts |
+| UI | Tailwind CSS + application CSS |
+| Tests | Node.js test runner + HTTP integration tests |
+
+## Local development
+
+### Requirements
+
+- Node.js
+- npm
+- Cloudflare Wrangler
+
+Clone the repository and install dependencies:
 
 ```bash
+git clone https://github.com/ouahidmarwane/gymsaas.git
+cd gymsaas
 npm install
-npm run db:apply:local     # cree et remplit la base centrale locale
-npm run dev                # build OpenNext + workerd sur le port 8787
 ```
 
-`npm run dev` construit puis sert dans workerd. C'est le seul environnement
-local fidele : `next dev` s'execute dans Node, ou `cloudflare:workers` ne se
-resout pas et ou les Durable Objects ne fonctionnent pas. `npm run dev:ui`
-reste disponible pour iterer vite sur l'interface, sans API ni base.
+Initialize the local control-plane database:
 
-### Carte de supervision
+```bash
+npm run db:apply:local
+```
 
-L'ecran Supervision affiche les salles sur **OpenStreetMap, via Leaflet**. Ni
-compte, ni cle, ni facturation : rien a configurer.
+Start the Cloudflare-compatible local environment:
 
-Leaflet est importe **dans l'effet**, jamais au niveau du module — il touche
-`window` des son evaluation, et le rendu serveur echouerait.
+```bash
+npm run dev
+```
 
-Les salles se placent depuis l'ecran Supervision, bouton « Situer » : un clic
-droit dans n'importe quelle carte donne le couple de coordonnees a coller. Pas
-de geocodage automatique — le service gratuit de Nominatim interdit l'usage en
-masse, et il se trompe sur les adresses marocaines mal normalisees.
+GymFlow is then available at:
 
-Deux points a ne pas defaire :
+```text
+http://localhost:8787
+```
 
-- **L'attribution OpenStreetMap est obligatoire.** Elle est stylee pour rester
-  lisible sur les deux bases, jamais masquee.
-- Les tuiles gratuites suffisent a cette charge. En gros trafic il faudrait un
-  fournisseur de tuiles ; le seul changement serait l'URL du `tileLayer`.
+`npm run dev` builds the OpenNext application and serves it through local `workerd`. This is the reference local environment because `next dev` runs in Node.js and cannot reproduce Cloudflare bindings and Durable Object behavior faithfully.
 
-Sur un habillage sombre, les tuiles sont inversees en CSS plutot que de
-dependre d'un second fournisseur et de ses conditions.
+For UI-only iteration, without the full Worker API/database environment:
+
+```bash
+npm run dev:ui
+```
+
+## Database migrations
+
+GymFlow keeps production schema changes in versioned D1 migrations.
+
+Apply pending migrations locally:
+
+```bash
+npm run db:migrate:local
+```
+
+Apply pending migrations to the configured remote D1 database:
+
+```bash
+npm run db:migrate:remote
+```
+
+Production migrations must contain schema/data migrations intentionally written for production. Local or test datasets must never be imported into production.
 
 ## Tests
 
+With the local Worker running:
+
 ```bash
-npm run dev      # dans un terminal
-npm test         # dans un autre
+npm test
 ```
 
-Les tests interrogent l'API par HTTP, ce qui les rend independants de la
-maniere dont elle est servie : ils ont valide la version Worker seule comme la
-version Next, sans modification.
+The suite exercises the application through HTTP and includes coverage for areas such as:
 
-Ce qu'ils couvrent, dans les deux sens :
+- tenant isolation;
+- authentication and session security;
+- platform administrator authorization;
+- support mode and support-surface mutations;
+- provisioning;
+- grants and step-up security;
+- financial idempotency and ledger behavior;
+- organization deletion;
+- entitlements and availability;
+- messaging;
+- migrations;
+- layout and capabilities;
+- themes and WCAG contrast;
+- blocklists;
+- documents;
+- disciplines and grades;
+- cryptographic behavior.
 
-- `isolation` : un club ne voit ni un autre club ni la base centrale ; un
-  `orgId` fourni par le client est ignore ; sessions, throttling, mots de passe.
-- `superadmin` : la plateforme supervise tous les clubs, et l'acces est trace.
-- `provisioning` : creer un club en production ne modifie aucun club existant,
-  verifie par empreinte avant/apres.
-- `support-mode` : entree en lecture seule, escalade explicite pour ecrire,
-  sortie, expiration, revocation immediate du statut plateforme.
-- `layout` : la disposition envoyee par le client est reconstruite a partir du
-  registre des cartes ; rien d'arbitraire ne persiste, et seule la plateforme
-  peut l'ecrire.
-- `theme` : l'habillage d'un club ne fuit ni chez le voisin ni sur la
-  plateforme, dans les deux sens.
-- `contrast` : les cinq habillages sont verifies par calcul WCAG sur chaque
-  surface — pas a l'oeil.
-- `blocklist` : une adresse bloquee ne se connecte plus, ne s'inscrit plus, et
-  perd ses sessions ; on ne peut pas se bloquer soi-meme.
-
-## Deploiement
+Static checks used by CI can be run with:
 
 ```bash
-wrangler d1 create gymflow-control      # reporter l'identifiant dans wrangler.jsonc
-npm run db:apply:remote
+npm run build:ci
+```
+
+This performs TypeScript checking, static tests and the OpenNext build.
+
+## Deployment
+
+Build and deploy through OpenNext / Cloudflare:
+
+```bash
 npm run deploy
 ```
 
-Le compte exploitant de la plateforme se pose a la main, jamais par une route :
+For a new control-plane database, create/configure the D1 database first and apply the appropriate schema or migrations before serving production traffic.
 
-```sql
-UPDATE users SET is_platform_admin = 1 WHERE email_norm = 'vous@exemple.ma';
-```
+Platform administrator privileges are deliberately not exposed as a normal self-service application action. Sensitive platform access must be provisioned through controlled operational procedures.
 
-Aucun bug applicatif ne peut donc conduire a cette escalade.
+## Project status
+
+GymFlow is under **active development**. The platform architecture, security model, messaging system and operational tooling are evolving quickly, so APIs and deployment procedures may change before a stable `1.0` release.
+
+The repository is being prepared for broader open-source collaboration. Documentation, contribution guidelines, security reporting instructions and release processes will continue to be expanded.
+
+## Roadmap
+
+Near-term open-source work includes:
+
+- contributor documentation and development workflow;
+- security disclosure documentation;
+- issue and pull-request templates;
+- public release/versioning workflow;
+- additional deployment and self-hosting documentation;
+- broader automated CI coverage;
+- improved architecture and operational documentation.
+
+## Contributing
+
+Community contributions will be welcome as the public contribution workflow is finalized. Until `CONTRIBUTING.md` is published, please use GitHub issues for reproducible bug reports and focused feature proposals.
+
+When proposing security-sensitive changes, avoid publishing exploitable details in a public issue; a dedicated security reporting process will be documented separately.
+
+## License
+
+A formal open-source license has not yet been selected for GymFlow.
+
+**Important:** public source code is not automatically licensed for unrestricted reuse. Until a `LICENSE` file is added, no additional reuse rights should be assumed beyond those provided by applicable law and GitHub's terms.
+
+Selecting and publishing an appropriate open-source license is one of the next repository milestones.
+
+---
+
+Built and maintained by [Marwane Ouahid](https://github.com/ouahidmarwane).
