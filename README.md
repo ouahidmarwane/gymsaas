@@ -278,3 +278,12 @@ compte Wrangler actif est le bon : vérifiez d'abord l'environnement ciblé.
 - Les clés R2 restent préfixées et validées par club.
 - Les API Node-only ne sont pas introduites sans vérifier workerd.
 - Les secrets et fichiers `.env*` ne sont jamais commités.
+
+## Licence
+
+Copyright © 2026 Marwane Ouahid. Tous droits réservés.
+
+GymFlow est un logiciel propriétaire. La consultation publique du code
+n'accorde aucun droit de copie, modification, distribution, déploiement ou
+exploitation commerciale. Consultez le fichier [LICENSE](./LICENSE) pour les
+conditions complètes et les demandes de licence commerciale.
