@@ -1,0 +1,60 @@
+GYMFLOW PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2026 Marwane Ouahid. All rights reserved.
+
+1. Ownership
+
+GymFlow, including its source code, documentation, visual identity, database
+schemas, application logic, user interfaces, and all associated original
+materials (the "Software"), is proprietary software owned by Marwane Ouahid.
+
+2. Limited permission to view
+
+If the Software is made available in a public or shared repository, permission
+is granted solely to view and evaluate the source code for informational
+purposes. Access to the source code does not transfer ownership and does not
+grant an open-source licence or any other implied right.
+
+3. Restrictions
+
+Without prior written permission from the copyright holder, you may not, in
+whole or in part:
+
+- copy, reproduce, modify, adapt, translate, or create derivative works;
+- distribute, publish, sublicense, sell, rent, lease, or transfer the Software;
+- deploy, host, operate, or make the Software available as a service;
+- use the Software or its source code for any commercial or production purpose;
+- remove or alter copyright, ownership, attribution, or proprietary notices;
+- use the GymFlow name, logo, branding, or visual identity; or
+- assist another person or organization in performing any restricted action.
+
+4. Commercial licences and contributions
+
+Any permission for commercial use, deployment, redistribution, partnership, or
+other use must be granted in a separate written agreement signed by the
+copyright holder. Contributions do not change the ownership or licensing of
+the Software unless a separate written agreement states otherwise.
+
+5. Third-party software
+
+Third-party packages and assets included with or referenced by the Software
+remain subject to their respective licences. This licence applies only to the
+original GymFlow materials and does not replace any third-party licence.
+
+6. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. THE COPYRIGHT HOLDER
+SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM OR
+IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+7. Termination
+
+Any permission granted under this licence terminates automatically if you
+breach its terms. Upon termination, you must stop using the Software and delete
+all copies in your possession or control.
+
+For licensing enquiries, contact the copyright holder through:
+https://github.com/ouahidmarwane
+
