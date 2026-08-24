@@ -59,7 +59,7 @@ CREATE TRIGGER financial_transition_guard
   BEFORE INSERT ON financial_idempotency
   WHEN NEW.operation IN ('proof_accept','proof_reject','invoice_mark_paid','invoice_mark_unpaid')
 BEGIN
-  SELECT CASE
+  SELECT (CASE
     WHEN NEW.operation IN ('proof_accept','proof_reject') AND NOT EXISTS (
       SELECT 1 FROM org_invoice_proofs p
        WHERE p.invoice_id = json_extract(NEW.request_json, '$.invoiceId')
@@ -80,7 +80,7 @@ BEGIN
        WHERE i.id = json_extract(NEW.request_json, '$.invoiceId')
          AND i.org_id = NEW.org_id AND i.paid_at IS NOT NULL
     ) THEN RAISE(ABORT, 'STALE_FINANCIAL_STATE')
-  END;
+  END);
 END;
 
 CREATE TRIGGER financial_transition_apply

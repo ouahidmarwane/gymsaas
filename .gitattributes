@@ -1,0 +1,2 @@
+migrations/*.sql text eol=lf
+src/control-plane/schema.sql text eol=lf
