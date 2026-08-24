@@ -10,7 +10,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   PieChart, Pie, Cell,
 } from 'recharts'
-import { api, ApiError, type Theme } from '@/lib/client'
+import { api, ApiError, privileged, type Theme } from '@/lib/client'
 import { useScrollLock } from '@/lib/scroll-lock'
 import { useModalMotion } from '@/lib/modal-motion'
 
@@ -227,7 +227,7 @@ export default function FacturationPage() {
   async function act(key: string, run: () => Promise<string | void>, done?: string) {
     setBusy(key); setError(null); setNotice(null)
     try {
-      const message = await run()
+      const message = await privileged(run)
       await load()
       setNotice(message ?? done ?? null)
     } catch (e) {
@@ -744,7 +744,7 @@ function BankDetails({ initial, onSaved }: { initial: string; onSaved: () => voi
         <button className="gf-mini-btn" disabled={busy} onClick={async () => {
           setBusy(true)
           try {
-            await api.put('/api/admin/bank-details', { value })
+            await privileged(() => api.put('/api/admin/bank-details', { value }))
             setSaved(true); setTouched(false); onSaved()
           } finally { setBusy(false) }
         }}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button>

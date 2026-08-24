@@ -21,12 +21,15 @@ export function client() {
   let cookie = null
   return {
     get cookie() { return cookie },
-    async call(method, path, body) {
+    async call(method, path, body, headers = {}) {
       const res = await fetch(BASE + path, {
         method,
         headers: {
           ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(!['GET', 'HEAD', 'OPTIONS'].includes(method)
+            ? { 'Idempotency-Key': `test-${crypto.randomUUID()}` } : {}),
           ...(cookie ? { Cookie: cookie } : {}),
+          ...headers,
         },
         body: body ? JSON.stringify(body) : undefined,
         redirect: 'manual',
@@ -72,6 +75,15 @@ export function control(sql, attempts = 8) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200 * i)
     }
   }
+}
+
+/** Applique un fichier SQL a la base locale, pour les fixtures de migration. */
+export function controlFile(file) {
+  return execFileSync(
+    process.execPath,
+    [WRANGLER, 'd1', 'execute', 'gymflow-control', '--local', '--file', file],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: ROOT },
+  )
 }
 
 /** Cree un exploitant de plateforme, sans club, hors application. */

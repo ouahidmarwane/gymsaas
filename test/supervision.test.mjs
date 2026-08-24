@@ -36,6 +36,9 @@ before(async () => {
     email: opEmail, password: 'motdepasse-solide-ops',
   })
   assert.equal(login.status, 200, JSON.stringify(login.data))
+  assert.equal((await operator.call('POST', '/api/admin/step-up', {
+    password: 'motdepasse-solide-ops',
+  })).status, 200)
 })
 
 test('la supervision est reservee a la plateforme', async () => {

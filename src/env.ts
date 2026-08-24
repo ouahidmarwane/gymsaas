@@ -14,4 +14,7 @@ export interface Env {
    * fourni par l'appelant, donc choisi par lui.
    */
   TRUST_FORWARDED_IP?: string
+
+  /** Entitlement enforcement rollout mode; `observe` logs without blocking. */
+  ENTITLEMENT_MODE?: string
 }

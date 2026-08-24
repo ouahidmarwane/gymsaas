@@ -402,4 +402,107 @@ MIGRATIONS.push({
   ],
 })
 
+MIGRATIONS.push({
+  version: 9,
+  name: 'messagerie-du-club',
+  statements: [
+    `CREATE TABLE IF NOT EXISTS conversations (
+       id          TEXT PRIMARY KEY,
+       type        TEXT NOT NULL CHECK (type IN ('dm','group','team')),
+       name        TEXT,
+       description TEXT,
+       created_by  TEXT NOT NULL,
+       is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0,1)),
+       created_at  TEXT NOT NULL DEFAULT (${NOW}),
+       updated_at  TEXT NOT NULL DEFAULT (${NOW})
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_team
+       ON conversations(type) WHERE type = 'team'`,
+    `CREATE TABLE IF NOT EXISTS conversation_members (
+       conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+       user_id         TEXT NOT NULL,
+       display_name    TEXT NOT NULL,
+       role            TEXT,
+       is_admin        INTEGER NOT NULL DEFAULT 0 CHECK (is_admin IN (0,1)),
+       joined_at       TEXT NOT NULL DEFAULT (${NOW}),
+       removed_at      TEXT,
+       PRIMARY KEY (conversation_id, user_id)
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_conversation_members_user
+       ON conversation_members(user_id, removed_at, conversation_id)`,
+    `CREATE TABLE IF NOT EXISTS messages (
+       id              TEXT PRIMARY KEY,
+       conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+       author_id       TEXT NOT NULL,
+       author_name     TEXT NOT NULL,
+       body            TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 4000),
+       reply_to_id     TEXT REFERENCES messages(id) ON DELETE SET NULL,
+       created_at      TEXT NOT NULL DEFAULT (${NOW})
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_messages_conversation_cursor
+       ON messages(conversation_id, created_at DESC, id DESC)`,
+    `CREATE TABLE IF NOT EXISTS message_mentions (
+       message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+       user_id    TEXT NOT NULL,
+       PRIMARY KEY (message_id, user_id)
+     )`,
+    `CREATE TABLE IF NOT EXISTS message_reactions (
+       message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+       user_id    TEXT NOT NULL,
+       emoji      TEXT NOT NULL CHECK (emoji IN ('👍','❤️','😂','👏')),
+       created_at TEXT NOT NULL DEFAULT (${NOW}),
+       PRIMARY KEY (message_id, user_id, emoji)
+     )`,
+    `CREATE TABLE IF NOT EXISTS conversation_reads (
+       conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+       user_id         TEXT NOT NULL,
+       last_read_at    TEXT NOT NULL DEFAULT (${NOW}),
+       last_read_message_id TEXT NOT NULL DEFAULT '',
+       PRIMARY KEY (conversation_id, user_id)
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_conversation_reads_user
+       ON conversation_reads(user_id, conversation_id)`,
+  ],
+})
+
+MIGRATIONS.push({
+  version: 10,
+  name: 'pieces-jointes-messagerie',
+  statements: [
+    `CREATE TABLE IF NOT EXISTS message_attachments (
+       id           TEXT PRIMARY KEY,
+       message_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+       file_key     TEXT NOT NULL UNIQUE,
+       file_name    TEXT NOT NULL,
+       content_type TEXT NOT NULL,
+       size_bytes   INTEGER NOT NULL CHECK (size_bytes BETWEEN 1 AND 10485760),
+       kind         TEXT NOT NULL CHECK (kind IN ('image','file')),
+       created_at   TEXT NOT NULL DEFAULT (${NOW})
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_message_attachments_message
+       ON message_attachments(message_id, id)`,
+  ],
+})
+
+MIGRATIONS.push({
+  version: 11,
+  name: 'idempotence-financiere',
+  statements: [
+    // Le resultat fait partie de la meme transaction SQLite que la mutation.
+    // Une reponse perdue peut donc etre rejouee sans repeter l'encaissement.
+    `CREATE TABLE financial_idempotency (
+       actor_id     TEXT NOT NULL,
+       org_id       TEXT NOT NULL,
+       operation    TEXT NOT NULL,
+       idem_key     TEXT NOT NULL,
+       payload_hash TEXT NOT NULL,
+       result_json  TEXT NOT NULL,
+       created_at   TEXT NOT NULL DEFAULT (${NOW}),
+       PRIMARY KEY (actor_id, org_id, operation, idem_key)
+     )`,
+    `CREATE INDEX idx_financial_idempotency_created
+       ON financial_idempotency(created_at)`,
+  ],
+})
+
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version

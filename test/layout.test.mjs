@@ -55,8 +55,12 @@ before(async () => {
     const w = client()
     const login = await w.call('POST', '/api/auth/login', { email, password: 'motdepasse-solide-op' })
     assert.equal(login.status, 200, JSON.stringify(login.data))
+    assert.equal((await w.call('POST', '/api/admin/step-up', {
+      password: 'motdepasse-solide-op',
+    })).status, 200)
     const enter = await w.call('POST', `/api/admin/clubs/${club.orgId}/support`)
     assert.equal(enter.status, 200, JSON.stringify(enter.data))
+    assert.equal((await w.call('POST', '/api/admin/support/write')).status, 200)
     writers.push(w)
   }
   writerA = writers[0]

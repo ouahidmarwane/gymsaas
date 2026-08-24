@@ -19,6 +19,39 @@ import type { Env } from '../env'
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
 
+export type DataScope = { branchId?: string | null; disciplineId?: string | null }
+
+export interface CursorPayload {
+  val: string
+  id: string
+  dir?: 'asc' | 'desc'
+}
+
+export function encodeCursor(payload: CursorPayload): string {
+  try {
+    const json = JSON.stringify(payload)
+    return btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+export function decodeCursor(cursor: string | null | undefined): CursorPayload | null {
+  if (!cursor || typeof cursor !== 'string') return null
+  try {
+    let base64 = cursor.replace(/-/g, '+').replace(/_/g, '/')
+    while (base64.length % 4) base64 += '='
+    const json = atob(base64)
+    const obj = JSON.parse(json)
+    if (obj && typeof obj.val === 'string' && typeof obj.id === 'string') {
+      return obj as CursorPayload
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 export class ClubDatabase extends DurableObject<Env> {
   private sql: SqlStorage
 
@@ -46,10 +79,12 @@ export class ClubDatabase extends DurableObject<Env> {
 
     for (const migration of MIGRATIONS) {
       if (migration.version <= current) continue
-      for (const statement of migration.statements) {
-        this.sql.exec(statement)
-      }
-      this.sql.exec('INSERT INTO _schema_version (version) VALUES (?)', migration.version)
+      this.ctx.storage.transactionSync(() => {
+        for (const statement of migration.statements) {
+          this.sql.exec(statement)
+        }
+        this.sql.exec('INSERT INTO _schema_version (version) VALUES (?)', migration.version)
+      })
     }
   }
 
@@ -125,13 +160,28 @@ export class ClubDatabase extends DurableObject<Env> {
   }
 
   updateBranch(id: string, input: { name?: string; nameAr?: string | null; address?: string | null }): void {
+    const sets: string[] = []
+    const params: unknown[] = []
+
+    if (input.name !== undefined) {
+      sets.push('name = ?')
+      params.push(input.name)
+    }
+    if (input.nameAr !== undefined) {
+      sets.push('name_ar = ?')
+      params.push(input.nameAr)
+    }
+    if (input.address !== undefined) {
+      sets.push('address = ?')
+      params.push(input.address)
+    }
+
+    if (sets.length === 0) return
+
+    params.push(id)
     this.sql.exec(
-      `UPDATE branches
-          SET name    = COALESCE(?, name),
-              name_ar = COALESCE(?, name_ar),
-              address = COALESCE(?, address)
-        WHERE id = ?`,
-      input.name ?? null, input.nameAr ?? null, input.address ?? null, id,
+      `UPDATE branches SET ${sets.join(', ')} WHERE id = ?`,
+      ...params,
     )
   }
 
@@ -294,47 +344,298 @@ export class ClubDatabase extends DurableObject<Env> {
 
   listMembers(opts: {
     limit?: number; offset?: number; search?: string
-    /** Filtre discipline, pilote par la barre du haut. */
-    disciplineId?: string | null
-  } = {}) {
-    // Bornes resistantes a NaN : Math.min(Math.max(NaN, 1), 200) vaut NaN,
-    // qui atteindrait le LIMIT et le viderait de son sens.
-    const clamp = (v: number | undefined, min: number, max: number, fallback: number) =>
-      Number.isFinite(v) ? Math.min(Math.max(Math.trunc(v!), min), max) : fallback
-    const limit = clamp(opts.limit, 1, 200, 50)
-    const offset = clamp(opts.offset, 0, 1_000_000, 0)
+    disciplineId?: string | null; branchId?: string | null
+    status?: string | null; quick?: string | null
+    sort?: 'name' | 'sub_expiry' | 'created_at' | null
+    sortDir?: 'asc' | 'desc'
+    cursor?: string | null
+    scope?: DataScope
+  } = {}): { items: Array<Record<string, SqlStorageValue>>; members: Array<Record<string, SqlStorageValue>>; nextCursor: string | null; hasMore: boolean; limit: number } {
+    const rawLimit = Number.isFinite(opts.limit) ? opts.limit! : 50
+    const limit = Math.min(Math.max(rawLimit, 1), 100)
 
-    const select = `
-      SELECT m.*, b.name AS branch_name,
-             d.name AS discipline_name, d.has_grading,
-             g.label AS grade_label, g.color AS grade_color
-        FROM members m
-        LEFT JOIN branches     b ON b.id = m.branch_id
-        LEFT JOIN disciplines  d ON d.id = m.discipline_id
-        LEFT JOIN grade_levels g ON g.id = m.grade_id
-       WHERE m.status != 'archived'`
-
-    // Toujours des requetes parametrees : l'entree utilisateur ne rejoint
-    // jamais le texte SQL. Le filtre discipline s'ajoute comme condition,
-    // il ne se concatene pas.
-    const conditions: string[] = []
+    const conditions: string[] = ["m.status != 'archived'"]
     const params: unknown[] = []
-    if (opts.disciplineId) {
+
+    if (opts.scope?.disciplineId) {
+      conditions.push('m.discipline_id = ?')
+      params.push(opts.scope.disciplineId)
+    } else if (opts.disciplineId && opts.disciplineId !== 'all') {
       conditions.push('m.discipline_id = ?')
       params.push(opts.disciplineId)
     }
-    if (opts.search) {
-      conditions.push('(m.name LIKE ? OR m.phone LIKE ?)')
-      params.push(`%${opts.search}%`, `%${opts.search}%`)
-    }
-    const extra = conditions.length ? ` AND ${conditions.join(' AND ')}` : ''
 
-    return this.sql
-      .exec(
-        `${select}${extra} ORDER BY m.created_at DESC LIMIT ? OFFSET ?`,
-        ...params, limit, offset,
-      )
-      .toArray()
+    if (opts.scope?.branchId) {
+      conditions.push('m.branch_id = ?')
+      params.push(opts.scope.branchId)
+    } else if (opts.branchId && opts.branchId !== 'all') {
+      conditions.push('m.branch_id = ?')
+      params.push(opts.branchId)
+    }
+
+    if (opts.search && opts.search.trim()) {
+      const q = `%${opts.search.trim()}%`
+      conditions.push('(m.name LIKE ? OR m.phone LIKE ? OR m.email LIKE ?)')
+      params.push(q, q, q)
+    }
+
+    if (opts.status) {
+      if (opts.status === 'active') {
+        conditions.push("m.status = 'active'")
+      } else if (opts.status === 'inactive') {
+        conditions.push("m.status = 'inactive'")
+      }
+    }
+
+    if (opts.quick) {
+      if (opts.quick === 'active') {
+        conditions.push("m.status = 'active' AND (m.sub_expiry IS NULL OR m.sub_expiry >= date('now'))")
+      } else if (opts.quick === 'expiring') {
+        conditions.push("m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry BETWEEN date('now') AND date('now', '+7 days')")
+      } else if (opts.quick === 'expired') {
+        conditions.push("m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry < date('now')")
+      } else if (opts.quick === 'uninsured') {
+        conditions.push("m.status = 'active' AND m.is_insured = 0")
+      } else if (opts.quick === 'ins_expiring') {
+        conditions.push("m.status = 'active' AND m.is_insured = 1 AND m.ins_expiry IS NOT NULL AND m.ins_expiry BETWEEN date('now') AND date('now', '+30 days')")
+      } else if (opts.quick === 'dormant') {
+        conditions.push("m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry < date('now', '-3 months')")
+      }
+    }
+
+    const sortField = opts.sort === 'name' ? 'name' : opts.sort === 'sub_expiry' ? 'sub_expiry' : 'created_at'
+    const sortDir = opts.sortDir === 'asc' ? 'ASC' : 'DESC'
+
+    const decoded = decodeCursor(opts.cursor)
+    if (decoded) {
+      if (sortField === 'name') {
+        if (sortDir === 'ASC') {
+          conditions.push('(m.name, m.id) > (?, ?)')
+        } else {
+          conditions.push('(m.name, m.id) < (?, ?)')
+        }
+      } else if (sortField === 'sub_expiry') {
+        if (sortDir === 'ASC') {
+          conditions.push('(COALESCE(m.sub_expiry, \'\'), m.id) > (?, ?)')
+        } else {
+          conditions.push('(COALESCE(m.sub_expiry, \'\'), m.id) < (?, ?)')
+        }
+      } else {
+        if (sortDir === 'ASC') {
+          conditions.push('(m.created_at, m.id) > (?, ?)')
+        } else {
+          conditions.push('(m.created_at, m.id) < (?, ?)')
+        }
+      }
+      params.push(decoded.val, decoded.id)
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    let orderClause = `ORDER BY m.created_at ${sortDir}, m.id ${sortDir}`
+    if (sortField === 'name') {
+      orderClause = `ORDER BY m.name ${sortDir}, m.id ${sortDir}`
+    } else if (sortField === 'sub_expiry') {
+      orderClause = `ORDER BY m.sub_expiry ${sortDir}, m.id ${sortDir}`
+    }
+
+    const rows = this.sql.exec<Record<string, SqlStorageValue>>(
+      `SELECT m.*, b.name AS branch_name,
+              d.name AS discipline_name, d.has_grading,
+              g.label AS grade_label, g.color AS grade_color
+         FROM members m
+         LEFT JOIN branches     b ON b.id = m.branch_id
+         LEFT JOIN disciplines  d ON d.id = m.discipline_id
+         LEFT JOIN grade_levels g ON g.id = m.grade_id
+        ${where}
+        ${orderClause}
+        LIMIT ?`,
+      ...params, limit + 1,
+    ).toArray()
+
+    const hasMore = rows.length > limit
+    const items = hasMore ? rows.slice(0, limit) : rows
+    let nextCursor: string | null = null
+    if (hasMore && items.length > 0) {
+      const last = items[items.length - 1]!
+      let cursorVal = ''
+      if (sortField === 'name') cursorVal = String(last.name ?? '')
+      else if (sortField === 'sub_expiry') cursorVal = String(last.sub_expiry ?? '')
+      else cursorVal = String(last.created_at ?? '')
+
+      nextCursor = encodeCursor({
+        val: cursorVal,
+        id: String(last.id ?? ''),
+        dir: opts.sortDir === 'asc' ? 'asc' : 'desc',
+      })
+    }
+
+    return {
+      items,
+      members: items,
+      nextCursor,
+      hasMore,
+      limit,
+    }
+  }
+
+  memberSummary(opts: {
+    disciplineId?: string | null; branchId?: string | null; scope?: DataScope
+  } = {}): {
+    total: number; active: number; expiring: number; expired: number
+    uninsured: number; ins_expiring: number; dormant: number
+  } {
+    const conditions: string[] = ["m.status != 'archived'"]
+    const params: unknown[] = []
+
+    if (opts.scope?.disciplineId) {
+      conditions.push('m.discipline_id = ?')
+      params.push(opts.scope.disciplineId)
+    } else if (opts.disciplineId && opts.disciplineId !== 'all') {
+      conditions.push('m.discipline_id = ?')
+      params.push(opts.disciplineId)
+    }
+
+    if (opts.scope?.branchId) {
+      conditions.push('m.branch_id = ?')
+      params.push(opts.scope.branchId)
+    } else if (opts.branchId && opts.branchId !== 'all') {
+      conditions.push('m.branch_id = ?')
+      params.push(opts.branchId)
+    }
+
+    const where = `WHERE ${conditions.join(' AND ')}`
+
+    const row = this.sql.exec<{
+      total: number
+      active: number
+      expiring: number
+      expired: number
+      uninsured: number
+      ins_expiring: number
+      dormant: number
+    }>(
+      `SELECT
+         COUNT(*) AS total,
+         COUNT(CASE WHEN m.status = 'active' AND (m.sub_expiry IS NULL OR m.sub_expiry >= date('now')) THEN 1 END) AS active,
+         COUNT(CASE WHEN m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry BETWEEN date('now') AND date('now', '+7 days') THEN 1 END) AS expiring,
+         COUNT(CASE WHEN m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry < date('now') THEN 1 END) AS expired,
+         COUNT(CASE WHEN m.status = 'active' AND m.is_insured = 0 THEN 1 END) AS uninsured,
+         COUNT(CASE WHEN m.status = 'active' AND m.is_insured = 1 AND m.ins_expiry IS NOT NULL AND m.ins_expiry BETWEEN date('now') AND date('now', '+30 days') THEN 1 END) AS ins_expiring,
+         COUNT(CASE WHEN m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry < date('now', '-3 months') THEN 1 END) AS dormant
+       FROM members m
+       ${where}`,
+      ...params,
+    ).toArray()[0]
+
+    return row ?? {
+      total: 0,
+      active: 0,
+      expiring: 0,
+      expired: 0,
+      uninsured: 0,
+      ins_expiring: 0,
+      dormant: 0,
+    }
+  }
+
+  async *exportMembers(opts: {
+    disciplineId?: string | null; branchId?: string | null
+    status?: string | null; sub?: string | null; ins?: string | null
+    year?: string | null; dormant?: boolean; noIdDoc?: boolean
+    scope?: DataScope; batchSize?: number
+  } = {}): AsyncGenerator<Array<Record<string, SqlStorageValue>>> {
+    const batchSize = Math.min(Math.max(opts.batchSize ?? 500, 50), 1000)
+    let lastCreatedAt: string | null = null
+    let lastId: string | null = null
+
+    while (true) {
+      const conditions: string[] = ["m.status != 'archived'"]
+      const params: unknown[] = []
+
+      if (opts.scope?.disciplineId) {
+        conditions.push('m.discipline_id = ?')
+        params.push(opts.scope.disciplineId)
+      } else if (opts.disciplineId && opts.disciplineId !== 'all') {
+        conditions.push('m.discipline_id = ?')
+        params.push(opts.disciplineId)
+      }
+
+      if (opts.scope?.branchId) {
+        conditions.push('m.branch_id = ?')
+        params.push(opts.scope.branchId)
+      } else if (opts.branchId && opts.branchId !== 'all') {
+        conditions.push('m.branch_id = ?')
+        params.push(opts.branchId)
+      }
+
+      if (opts.status) {
+        conditions.push('m.status = ?')
+        params.push(opts.status)
+      }
+
+      if (opts.sub && opts.sub !== 'all') {
+        if (opts.sub === 'active') {
+          conditions.push("m.status = 'active' AND (m.sub_expiry IS NULL OR m.sub_expiry >= date('now'))")
+        } else if (opts.sub === 'expiring') {
+          conditions.push("m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry BETWEEN date('now') AND date('now', '+7 days')")
+        } else if (opts.sub === 'expired') {
+          conditions.push("m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry < date('now')")
+        }
+      }
+
+      if (opts.ins && opts.ins !== 'all') {
+        if (opts.ins === 'active') {
+          conditions.push("m.status = 'active' AND m.is_insured = 1 AND (m.ins_expiry IS NULL OR m.ins_expiry >= date('now'))")
+        } else if (opts.ins === 'expiring') {
+          conditions.push("m.status = 'active' AND m.is_insured = 1 AND m.ins_expiry IS NOT NULL AND m.ins_expiry BETWEEN date('now') AND date('now', '+30 days')")
+        } else if (opts.ins === 'expired') {
+          conditions.push("m.status = 'active' AND m.is_insured = 1 AND m.ins_expiry IS NOT NULL AND m.ins_expiry < date('now')")
+        } else if (opts.ins === 'uninsured') {
+          conditions.push("m.status = 'active' AND m.is_insured = 0")
+        }
+      }
+
+      if (opts.year && opts.year !== 'all') {
+        conditions.push("m.join_date >= ? AND m.join_date < ?")
+        params.push(`${opts.year}-01-01`, `${Number(opts.year) + 1}-01-01`)
+      }
+
+      if (opts.dormant) {
+        conditions.push("m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry < date('now', '-3 months')")
+      }
+
+      if (opts.noIdDoc) {
+        conditions.push("m.id_doc_key IS NULL")
+      }
+
+      if (lastCreatedAt !== null && lastId !== null) {
+        conditions.push('(m.created_at, m.id) < (?, ?)')
+        params.push(lastCreatedAt, lastId)
+      }
+
+      const where = `WHERE ${conditions.join(' AND ')}`
+      const rows = this.sql.exec<Record<string, SqlStorageValue>>(
+        `SELECT m.*, b.name AS branch_name,
+                d.name AS discipline_name, d.has_grading,
+                g.label AS grade_label, g.color AS grade_color
+           FROM members m
+           LEFT JOIN branches     b ON b.id = m.branch_id
+           LEFT JOIN disciplines  d ON d.id = m.discipline_id
+           LEFT JOIN grade_levels g ON g.id = m.grade_id
+          ${where}
+          ORDER BY m.created_at DESC, m.id DESC
+          LIMIT ?`,
+        ...params, batchSize,
+      ).toArray()
+
+      if (rows.length === 0) break
+      yield rows
+      if (rows.length < batchSize) break
+
+      const last = rows[rows.length - 1]!
+      lastCreatedAt = String(last.created_at ?? '')
+      lastId = String(last.id ?? '')
+    }
   }
 
   countMembers(): number {
@@ -409,29 +710,66 @@ export class ClubDatabase extends DurableObject<Env> {
     actorId?: string
     actorName?: string
   }): void {
-    // COALESCE partout : un champ absent garde sa valeur. Le formulaire peut
-    // donc n'envoyer que ce qui a change.
+    const sets: string[] = []
+    const params: unknown[] = []
+
+    if (input.name !== undefined) {
+      sets.push('name = ?')
+      params.push(input.name)
+    }
+    if (input.phone !== undefined) {
+      sets.push('phone = ?')
+      params.push(input.phone)
+    }
+    if (input.email !== undefined) {
+      sets.push('email = ?')
+      params.push(input.email)
+    }
+    if (input.branchId !== undefined) {
+      sets.push('branch_id = ?')
+      params.push(input.branchId)
+    }
+    if (input.disciplineId !== undefined) {
+      sets.push('discipline_id = ?')
+      params.push(input.disciplineId)
+    }
+    if (input.gradeId !== undefined) {
+      sets.push('grade_id = ?')
+      params.push(input.gradeId)
+    }
+    if (input.subExpiry !== undefined) {
+      sets.push('sub_expiry = ?')
+      params.push(input.subExpiry)
+    }
+    if (input.insExpiry !== undefined) {
+      sets.push('ins_expiry = ?')
+      params.push(input.insExpiry)
+    }
+    if (input.joinDate !== undefined) {
+      sets.push('join_date = ?')
+      params.push(input.joinDate)
+    }
+    if (input.isInsured !== undefined) {
+      sets.push('is_insured = ?')
+      params.push(input.isInsured ? 1 : 0)
+    }
+    if (input.notes !== undefined) {
+      sets.push('notes = ?')
+      params.push(input.notes)
+    }
+    if (input.status !== undefined) {
+      sets.push('status = ?')
+      params.push(input.status)
+    }
+
+    if (sets.length === 0) return
+
+    params.push(id)
+
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
-        `UPDATE members SET
-           name          = COALESCE(?, name),
-           phone         = COALESCE(?, phone),
-           email         = COALESCE(?, email),
-           branch_id     = COALESCE(?, branch_id),
-           discipline_id = COALESCE(?, discipline_id),
-           grade_id      = COALESCE(?, grade_id),
-           sub_expiry    = COALESCE(?, sub_expiry),
-           ins_expiry    = COALESCE(?, ins_expiry),
-           join_date     = COALESCE(?, join_date),
-           is_insured    = COALESCE(?, is_insured),
-           notes         = COALESCE(?, notes),
-           status        = COALESCE(?, status)
-         WHERE id = ?`,
-        input.name ?? null, input.phone ?? null, input.email ?? null,
-        input.branchId ?? null, input.disciplineId ?? null, input.gradeId ?? null,
-        input.subExpiry ?? null, input.insExpiry ?? null, input.joinDate ?? null,
-        input.isInsured === undefined ? null : (input.isInsured ? 1 : 0),
-        input.notes ?? null, input.status ?? null, id,
+        `UPDATE members SET ${sets.join(', ')} WHERE id = ?`,
+        ...params,
       )
       this.sql.exec(
         `INSERT INTO audit_logs (action, entity, entity_id, actor_id, actor_name)
@@ -711,27 +1049,78 @@ export class ClubDatabase extends DurableObject<Env> {
    */
   listPayments(opts: {
     year?: number; month?: number; from?: string; to?: string
-    branchId?: string | null; limit?: number
-  } = {}) {
-    const limit = Number.isFinite(opts.limit) ? Math.min(Math.max(opts.limit!, 1), 500) : 300
+    branchId?: string | null; limit?: number; cursor?: string | null; scope?: DataScope
+  } = {}): { items: Array<Record<string, SqlStorageValue>>; payments: Array<Record<string, SqlStorageValue>>; nextCursor: string | null; hasMore: boolean; limit: number } {
+    const rawLimit = Number.isFinite(opts.limit) ? opts.limit! : 50
+    const limit = Math.min(Math.max(rawLimit, 1), 100)
     const conditions: string[] = []
     const params: unknown[] = []
 
-    if (Number.isFinite(opts.year)) {
-      conditions.push("strftime('%Y', p.paid_at) = ?")
-      params.push(String(opts.year))
-    }
-    if (Number.isFinite(opts.month)) {
+    let from = opts.from
+    let to = opts.to
+
+    if (Number.isFinite(opts.year) && Number.isFinite(opts.month)) {
+      const y = String(opts.year)
+      const m = String(opts.month).padStart(2, '0')
+      const start = `${y}-${m}-01`
+      const endMonth = Number(opts.month) === 12 ? 1 : Number(opts.month) + 1
+      const endYear = Number(opts.month) === 12 ? Number(opts.year) + 1 : Number(opts.year)
+      const end = `${endYear}-${String(endMonth).padStart(2, '0')}-01`
+      from = from ? (from > start ? from : start) : start
+      if (!to) {
+        conditions.push('p.paid_at >= ? AND p.paid_at < ?')
+        params.push(from, end)
+      }
+    } else if (Number.isFinite(opts.year)) {
+      const y = String(opts.year)
+      const start = `${y}-01-01`
+      const end = `${Number(opts.year) + 1}-01-01`
+      from = from ? (from > start ? from : start) : start
+      if (!to) {
+        conditions.push('p.paid_at >= ? AND p.paid_at < ?')
+        params.push(from, end)
+      }
+    } else if (Number.isFinite(opts.month)) {
       conditions.push("strftime('%m', p.paid_at) = ?")
       params.push(String(opts.month).padStart(2, '0'))
     }
-    if (opts.from) { conditions.push('p.paid_at >= ?'); params.push(opts.from) }
-    if (opts.to) { conditions.push('p.paid_at <= ?'); params.push(opts.to) }
-    if (opts.branchId) { conditions.push('p.branch_id = ?'); params.push(opts.branchId) }
+
+    if (from) {
+      conditions.push('p.paid_at >= ?')
+      params.push(from)
+    }
+    if (to) {
+      if (to.length === 10) {
+        conditions.push('p.paid_at <= ?')
+        params.push(`${to}T23:59:59.999Z`)
+      } else {
+        conditions.push('p.paid_at <= ?')
+        params.push(to)
+      }
+    }
+
+    if (opts.scope?.branchId) {
+      if (opts.branchId && opts.branchId !== opts.scope.branchId) {
+        return { items: [], payments: [], nextCursor: null, hasMore: false, limit }
+      }
+      conditions.push('p.branch_id = ?'); params.push(opts.scope.branchId)
+    } else if (opts.branchId) {
+      conditions.push('p.branch_id = ?'); params.push(opts.branchId)
+    }
+
+    if (opts.scope?.disciplineId) {
+      conditions.push('p.discipline_id = ?'); params.push(opts.scope.disciplineId)
+    }
+
+    const decoded = decodeCursor(opts.cursor)
+    if (decoded) {
+      conditions.push('(p.paid_at, p.id) < (?, ?)')
+      params.push(decoded.val, decoded.id)
+    }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 
-    return this.sql.exec(
+    const rows = this.sql.exec<Record<string, SqlStorageValue>>(
       `SELECT p.*, m.name AS member_name, b.name AS branch_name,
               o.name AS reversed_member_name
          FROM payments p
@@ -740,10 +1129,30 @@ export class ClubDatabase extends DurableObject<Env> {
          LEFT JOIN payments r ON r.id = p.reverses_id
          LEFT JOIN members o  ON o.id = r.member_id
          ${where}
-        ORDER BY p.paid_at DESC, p.created_at DESC
+        ORDER BY p.paid_at DESC, p.id DESC
         LIMIT ?`,
-      ...params, limit,
+      ...params, limit + 1,
     ).toArray()
+
+    const hasMore = rows.length > limit
+    const items = hasMore ? rows.slice(0, limit) : rows
+    let nextCursor: string | null = null
+    if (hasMore && items.length > 0) {
+      const last = items[items.length - 1]!
+      nextCursor = encodeCursor({
+        val: String(last.paid_at ?? ''),
+        id: String(last.id ?? ''),
+        dir: 'desc',
+      })
+    }
+
+    return {
+      items,
+      payments: items,
+      nextCursor,
+      hasMore,
+      limit,
+    }
   }
 
   addPayment(input: {
@@ -968,21 +1377,33 @@ export class ClubDatabase extends DurableObject<Env> {
   }
 
   /** Recettes par mois sur douze mois, pour le graphique de comptabilite. */
-  revenueByMonth(): Array<{ month: string; cents: number }> {
+  revenueByMonth(scope?: DataScope): Array<{ month: string; cents: number }> {
+    const conditions: string[] = ["paid_at >= date('now','-11 months','start of month')"]
+    const params: unknown[] = []
+    if (scope?.branchId) { conditions.push('branch_id = ?'); params.push(scope.branchId) }
+    if (scope?.disciplineId) { conditions.push('discipline_id = ?'); params.push(scope.disciplineId) }
+    const where = `WHERE ${conditions.join(' AND ')}`
     return this.sql.exec<{ month: string; cents: number }>(
       `SELECT strftime('%Y-%m', paid_at) AS month, SUM(amount_cents) AS cents
          FROM payments
-        WHERE paid_at >= date('now','-11 months','start of month')
+        ${where}
         GROUP BY month ORDER BY month`,
+      ...params,
     ).toArray()
   }
 
-  revenueByType(): Array<{ type: string; cents: number }> {
+  revenueByType(scope?: DataScope): Array<{ type: string; cents: number }> {
+    const conditions: string[] = ["paid_at >= date('now','start of month')"]
+    const params: unknown[] = []
+    if (scope?.branchId) { conditions.push('branch_id = ?'); params.push(scope.branchId) }
+    if (scope?.disciplineId) { conditions.push('discipline_id = ?'); params.push(scope.disciplineId) }
+    const where = `WHERE ${conditions.join(' AND ')}`
     return this.sql.exec<{ type: string; cents: number }>(
       `SELECT type, SUM(amount_cents) AS cents
          FROM payments
-        WHERE paid_at >= date('now','start of month')
+        ${where}
         GROUP BY type`,
+      ...params,
     ).toArray()
   }
 
@@ -1709,6 +2130,423 @@ export class ClubDatabase extends DurableObject<Env> {
     ).toArray()
   }
 
+  // Messagerie ---------------------------------------------------------------
+
+  private conversationMember(conversationId: string, userId: string): {
+    conversation_id: string; user_id: string; display_name: string; role: string | null; is_admin: number
+  } | null {
+    return this.sql.exec<{
+      conversation_id: string; user_id: string; display_name: string; role: string | null; is_admin: number
+    }>(
+      `SELECT conversation_id, user_id, display_name, role, is_admin
+         FROM conversation_members
+        WHERE conversation_id = ? AND user_id = ? AND removed_at IS NULL`,
+      conversationId, userId,
+    ).toArray()[0] ?? null
+  }
+
+  private requireConversationMember(conversationId: string, userId: string) {
+    const member = this.conversationMember(conversationId, userId)
+    if (!member) throw new Error('CONVERSATION_NOT_FOUND')
+    return member
+  }
+
+  private requireGroupAdmin(conversationId: string, userId: string): void {
+    const member = this.requireConversationMember(conversationId, userId)
+    const row = this.sql.exec<{ type: string; is_archived: number }>(
+      'SELECT type, is_archived FROM conversations WHERE id = ?',
+      conversationId,
+    ).toArray()[0]
+    if (!row || row.is_archived === 1 || row.type !== 'group') throw new Error('CONVERSATION_NOT_FOUND')
+    if (member.is_admin !== 1) throw new Error('GROUP_ADMIN_REQUIRED')
+  }
+
+  ensureTeamConversation(members: Array<{ id: string; name: string; role: string }>): string {
+    let row = this.sql.exec<{ id: string }>(
+      "SELECT id FROM conversations WHERE type = 'team' AND is_archived = 0 LIMIT 1",
+    ).toArray()[0]
+    if (!row) {
+      const id = crypto.randomUUID()
+      this.sql.exec(
+        `INSERT INTO conversations (id, type, name, description, created_by)
+         VALUES (?, 'team', 'Toute l’équipe', 'Canal interne du club', ?)`,
+        id, members[0]?.id ?? 'system',
+      )
+      row = { id }
+    }
+
+    for (const member of members) {
+      this.sql.exec(
+        `INSERT INTO conversation_members (conversation_id, user_id, display_name, role, is_admin, removed_at)
+         VALUES (?, ?, ?, ?, ?, NULL)
+         ON CONFLICT(conversation_id, user_id) DO UPDATE SET
+           display_name = excluded.display_name,
+           role = excluded.role,
+           removed_at = NULL`,
+        row.id, member.id, member.name, member.role, ['owner', 'admin'].includes(member.role) ? 1 : 0,
+      )
+    }
+    return row.id
+  }
+
+  listConversations(userId: string, members: Array<{ id: string; name: string; role: string }>) {
+    this.ensureTeamConversation(members)
+    return this.sql.exec<{
+      id: string; type: 'dm' | 'group' | 'team'; name: string | null; description: string | null
+      last_body: string | null; last_at: string | null; updated_at: string; unread: number
+    }>(
+      `SELECT c.id, c.type,
+              CASE
+                WHEN c.type = 'dm' THEN COALESCE((
+                  SELECT cm2.display_name FROM conversation_members cm2
+                   WHERE cm2.conversation_id = c.id AND cm2.user_id != ? AND cm2.removed_at IS NULL
+                   LIMIT 1
+                ), c.name)
+                ELSE c.name
+              END AS name,
+              c.description,
+              last.body AS last_body,
+              last.created_at AS last_at,
+              c.updated_at,
+              COALESCE((
+                SELECT COUNT(*) FROM messages mu
+                  LEFT JOIN conversation_reads cr
+                    ON cr.conversation_id = c.id AND cr.user_id = ?
+                 WHERE mu.conversation_id = c.id
+                   AND mu.author_id != ?
+                   AND (cr.last_read_at IS NULL OR mu.created_at > cr.last_read_at)
+              ), 0) AS unread
+         FROM conversations c
+         JOIN conversation_members cm
+           ON cm.conversation_id = c.id AND cm.user_id = ? AND cm.removed_at IS NULL
+         LEFT JOIN messages last ON last.id = (
+           SELECT m.id FROM messages m
+            WHERE m.conversation_id = c.id
+            ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+         )
+        WHERE c.is_archived = 0
+        ORDER BY COALESCE(last.created_at, c.updated_at) DESC, c.id DESC`,
+      userId, userId, userId, userId,
+    ).toArray()
+  }
+
+  openDirectConversation(input: {
+    actor: { id: string; name: string; role: string }
+    target: { id: string; name: string; role: string }
+  }): { id: string } {
+    const existing = this.sql.exec<{ id: string }>(
+      `SELECT c.id
+         FROM conversations c
+         JOIN conversation_members a ON a.conversation_id = c.id AND a.user_id = ? AND a.removed_at IS NULL
+         JOIN conversation_members b ON b.conversation_id = c.id AND b.user_id = ? AND b.removed_at IS NULL
+        WHERE c.type = 'dm' AND c.is_archived = 0
+        LIMIT 1`,
+      input.actor.id, input.target.id,
+    ).toArray()[0]
+    if (existing) return { id: existing.id }
+
+    const id = crypto.randomUUID()
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO conversations (id, type, created_by) VALUES (?, 'dm', ?)`,
+        id, input.actor.id,
+      )
+      for (const member of [input.actor, input.target]) {
+        this.sql.exec(
+          `INSERT INTO conversation_members (conversation_id, user_id, display_name, role, is_admin)
+           VALUES (?, ?, ?, ?, 0)`,
+          id, member.id, member.name, member.role,
+        )
+      }
+    })
+    return { id }
+  }
+
+  createGroupConversation(input: {
+    actor: { id: string; name: string; role: string }
+    name: string; description?: string | null
+    members: Array<{ id: string; name: string; role: string }>
+  }): { id: string } {
+    const id = crypto.randomUUID()
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO conversations (id, type, name, description, created_by)
+         VALUES (?, 'group', ?, ?, ?)`,
+        id, input.name, input.description ?? null, input.actor.id,
+      )
+      const unique = new Map<string, { id: string; name: string; role: string; admin: number }>()
+      unique.set(input.actor.id, { ...input.actor, admin: 1 })
+      for (const member of input.members) unique.set(member.id, { ...member, admin: 0 })
+      for (const member of unique.values()) {
+        this.sql.exec(
+          `INSERT INTO conversation_members (conversation_id, user_id, display_name, role, is_admin)
+           VALUES (?, ?, ?, ?, ?)`,
+          id, member.id, member.name, member.role, member.admin,
+        )
+      }
+    })
+    return { id }
+  }
+
+  conversationDetails(conversationId: string, userId: string) {
+    this.requireConversationMember(conversationId, userId)
+    const conversation = this.sql.exec<{ id: string; type: string; name: string | null; description: string | null }>(
+      'SELECT id, type, name, description FROM conversations WHERE id = ? AND is_archived = 0',
+      conversationId,
+    ).toArray()[0]
+    if (!conversation) throw new Error('CONVERSATION_NOT_FOUND')
+    const members = this.sql.exec<{ id: string; name: string; role: string | null; isAdmin: number }>(
+      `SELECT user_id AS id, display_name AS name, role, is_admin AS isAdmin
+         FROM conversation_members
+        WHERE conversation_id = ? AND removed_at IS NULL
+        ORDER BY is_admin DESC, display_name`,
+      conversationId,
+    ).toArray()
+    return { ...conversation, members }
+  }
+
+  listConversationMessages(conversationId: string, userId: string, opts: {
+    limit?: number; beforeAt?: string | null; beforeId?: string | null
+  } = {}) {
+    this.requireConversationMember(conversationId, userId)
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100)
+    const params: unknown[] = [conversationId]
+    let cursor = ''
+    if (opts.beforeAt && opts.beforeId) {
+      cursor = 'AND (m.created_at < ? OR (m.created_at = ? AND m.id < ?))'
+      params.push(opts.beforeAt, opts.beforeAt, opts.beforeId)
+    }
+    params.push(limit + 1)
+    const rows = this.sql.exec<{
+      id: string; authorId: string; authorName: string; body: string; createdAt: string
+      replyToId: string | null; replyBody: string | null; replyAuthor: string | null
+    }>(
+      `SELECT m.id,
+              m.author_id AS authorId,
+              m.author_name AS authorName,
+              m.body,
+              m.created_at AS createdAt,
+              m.reply_to_id AS replyToId,
+              r.body AS replyBody,
+              r.author_name AS replyAuthor
+         FROM messages m
+         LEFT JOIN messages r ON r.id = m.reply_to_id
+        WHERE m.conversation_id = ?
+          ${cursor}
+        ORDER BY m.created_at DESC, m.id DESC
+        LIMIT ?`,
+      ...params,
+    ).toArray()
+
+    const page = rows.slice(0, limit).reverse()
+    const ids = page.map(row => row.id)
+    if (ids.length === 0) return { messages: [], hasMore: rows.length > limit }
+
+    const placeholders = ids.map(() => '?').join(',')
+    const mentions = this.sql.exec<{ message_id: string; user_id: string }>(
+      `SELECT message_id, user_id FROM message_mentions WHERE message_id IN (${placeholders})`,
+      ...ids,
+    ).toArray()
+    const reactions = this.sql.exec<{ message_id: string; emoji: string; count: number; reacted: number }>(
+      `SELECT message_id, emoji, COUNT(*) AS count,
+              MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS reacted
+         FROM message_reactions
+        WHERE message_id IN (${placeholders})
+        GROUP BY message_id, emoji
+        ORDER BY emoji`,
+      userId, ...ids,
+    ).toArray()
+    const attachments = this.sql.exec<{
+      message_id: string; id: string; fileName: string; contentType: string; sizeBytes: number; kind: 'image' | 'file'
+    }>(
+      `SELECT message_id, id, file_name AS fileName, content_type AS contentType,
+              size_bytes AS sizeBytes, kind
+         FROM message_attachments
+        WHERE message_id IN (${placeholders})
+        ORDER BY created_at, id`,
+      ...ids,
+    ).toArray()
+
+    return {
+      hasMore: rows.length > limit,
+      messages: page.map(message => ({
+        ...message,
+        mentions: mentions.filter(item => item.message_id === message.id).map(item => item.user_id),
+        reactions: reactions
+          .filter(item => item.message_id === message.id)
+          .map(({ emoji, count, reacted }) => ({ emoji, count, reacted })),
+        attachments: attachments
+          .filter(item => item.message_id === message.id)
+          .map(({ message_id: _messageId, ...item }) => item),
+      })),
+    }
+  }
+
+  sendConversationMessage(input: {
+    conversationId: string
+    actor: { id: string; name: string }
+    body: string
+    mentionIds?: string[]
+    replyToId?: string | null
+  }): { id: string } {
+    this.requireConversationMember(input.conversationId, input.actor.id)
+    const body = input.body.trim()
+    if (body.length < 1 || body.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(body)) {
+      throw new Error('INVALID_MESSAGE')
+    }
+    const allowed = new Set(this.sql.exec<{ user_id: string }>(
+      'SELECT user_id FROM conversation_members WHERE conversation_id = ? AND removed_at IS NULL',
+      input.conversationId,
+    ).toArray().map(row => row.user_id))
+    for (const id of input.mentionIds ?? []) if (!allowed.has(id)) throw new Error('INVALID_MENTION')
+    if (input.replyToId) {
+      const reply = this.sql.exec<{ id: string }>(
+        'SELECT id FROM messages WHERE id = ? AND conversation_id = ?',
+        input.replyToId, input.conversationId,
+      ).toArray()[0]
+      if (!reply) throw new Error('INVALID_REPLY')
+    }
+
+    const id = crypto.randomUUID()
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO messages (id, conversation_id, author_id, author_name, body, reply_to_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        id, input.conversationId, input.actor.id, input.actor.name, body, input.replyToId ?? null,
+      )
+      for (const mentionId of new Set(input.mentionIds ?? [])) {
+        this.sql.exec('INSERT INTO message_mentions (message_id, user_id) VALUES (?, ?)', id, mentionId)
+      }
+      this.sql.exec("UPDATE conversations SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?", input.conversationId)
+    })
+    return { id }
+  }
+
+  markConversationRead(conversationId: string, userId: string): void {
+    this.requireConversationMember(conversationId, userId)
+    const last = this.sql.exec<{ id: string | null; created_at: string | null }>(
+      'SELECT id, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+      conversationId,
+    ).toArray()[0]
+    this.sql.exec(
+      `INSERT INTO conversation_reads (conversation_id, user_id, last_read_at, last_read_message_id)
+       VALUES (?, ?, COALESCE(?, strftime('%Y-%m-%dT%H:%M:%SZ','now')), COALESCE(?, ''))
+       ON CONFLICT(conversation_id, user_id) DO UPDATE SET
+         last_read_at = excluded.last_read_at,
+         last_read_message_id = excluded.last_read_message_id`,
+      conversationId, userId, last?.created_at ?? null, last?.id ?? null,
+    )
+  }
+
+  reactToMessage(conversationId: string, messageId: string, userId: string, emoji: string): void {
+    this.requireConversationMember(conversationId, userId)
+    if (!['👍', '❤️', '😂', '👏'].includes(emoji)) throw new Error('INVALID_REACTION')
+    const message = this.sql.exec<{ id: string }>(
+      'SELECT id FROM messages WHERE id = ? AND conversation_id = ?',
+      messageId, conversationId,
+    ).toArray()[0]
+    if (!message) throw new Error('CONVERSATION_NOT_FOUND')
+    const existing = this.sql.exec<{ emoji: string }>(
+      'SELECT emoji FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
+      messageId, userId, emoji,
+    ).toArray()[0]
+    if (existing) this.sql.exec('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', messageId, userId, emoji)
+    else this.sql.exec('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)', messageId, userId, emoji)
+  }
+
+  renameConversation(conversationId: string, userId: string, name: string): void {
+    this.requireGroupAdmin(conversationId, userId)
+    this.sql.exec("UPDATE conversations SET name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?", name, conversationId)
+  }
+
+  archiveConversation(conversationId: string, userId: string): void {
+    this.requireGroupAdmin(conversationId, userId)
+    this.sql.exec("UPDATE conversations SET is_archived = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?", conversationId)
+  }
+
+  addGroupMembers(conversationId: string, actorId: string, members: Array<{ id: string; name: string; role: string }>): void {
+    this.requireGroupAdmin(conversationId, actorId)
+    for (const member of members) {
+      this.sql.exec(
+        `INSERT INTO conversation_members (conversation_id, user_id, display_name, role, is_admin, removed_at)
+         VALUES (?, ?, ?, ?, 0, NULL)
+         ON CONFLICT(conversation_id, user_id) DO UPDATE SET
+           display_name = excluded.display_name,
+           role = excluded.role,
+           removed_at = NULL`,
+        conversationId, member.id, member.name, member.role,
+      )
+    }
+  }
+
+  removeGroupMember(conversationId: string, actorId: string, userId: string): void {
+    this.requireGroupAdmin(conversationId, actorId)
+    this.sql.exec(
+      `UPDATE conversation_members
+          SET removed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), is_admin = 0
+        WHERE conversation_id = ? AND user_id = ?`,
+      conversationId, userId,
+    )
+  }
+
+  setGroupAdmin(conversationId: string, actorId: string, userId: string, admin: boolean): void {
+    this.requireGroupAdmin(conversationId, actorId)
+    this.sql.exec(
+      'UPDATE conversation_members SET is_admin = ? WHERE conversation_id = ? AND user_id = ? AND removed_at IS NULL',
+      admin ? 1 : 0, conversationId, userId,
+    )
+  }
+
+  leaveGroup(conversationId: string, userId: string): void {
+    this.requireConversationMember(conversationId, userId)
+    this.sql.exec(
+      `UPDATE conversation_members
+          SET removed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), is_admin = 0
+        WHERE conversation_id = ? AND user_id = ?`,
+      conversationId, userId,
+    )
+  }
+
+  attachMessageFile(input: {
+    conversationId: string
+    actor: { id: string; name: string }
+    fileKey: string; fileName: string; contentType: string; sizeBytes: number; kind: 'image' | 'file'
+  }): { messageId: string; attachmentId: string } {
+    this.requireConversationMember(input.conversationId, input.actor.id)
+    const messageId = crypto.randomUUID()
+    const attachmentId = crypto.randomUUID()
+    const body = input.kind === 'image' ? `Image : ${input.fileName}` : `Fichier : ${input.fileName}`
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO messages (id, conversation_id, author_id, author_name, body)
+         VALUES (?, ?, ?, ?, ?)`,
+        messageId, input.conversationId, input.actor.id, input.actor.name, body,
+      )
+      this.sql.exec(
+        `INSERT INTO message_attachments (id, message_id, file_key, file_name, content_type, size_bytes, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        attachmentId, messageId, input.fileKey, input.fileName, input.contentType, input.sizeBytes, input.kind,
+      )
+      this.sql.exec("UPDATE conversations SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?", input.conversationId)
+    })
+    return { messageId, attachmentId }
+  }
+
+  getMessageAttachment(conversationId: string, attachmentId: string, userId: string): {
+    id: string; file_key: string; file_name: string; content_type: string; size_bytes: number; kind: string
+  } | null {
+    this.requireConversationMember(conversationId, userId)
+    return this.sql.exec<{
+      id: string; file_key: string; file_name: string; content_type: string; size_bytes: number; kind: string
+    }>(
+      `SELECT a.id, a.file_key, a.file_name, a.content_type, a.size_bytes, a.kind
+         FROM message_attachments a
+         JOIN messages m ON m.id = a.message_id
+        WHERE a.id = ? AND m.conversation_id = ?`,
+      attachmentId, conversationId,
+    ).toArray()[0] ?? null
+  }
+
   // Journal ------------------------------------------------------------------
 
   auditLog(limit = 100) {
@@ -1760,9 +2598,9 @@ export class ClubDatabase extends DurableObject<Env> {
    *
    * Douze cartes qui interrogeraient chacune l'objet feraient douze allers
    * pour un seul ecran ; ici la base est locale au thread, donc autant tout
-   * calculer d'un coup.
+   * calculer d'un coup en agregation conditionnelle.
    */
-  dashboard(): {
+  dashboard(scope: DataScope = { branchId: null, disciplineId: null }): {
     membersTotal: number
     membersActive: number
     subsExpiring: number
@@ -1776,66 +2614,99 @@ export class ClubDatabase extends DurableObject<Env> {
     upcomingGrades: Array<{ id: string; member_name: string; scheduled_date: string; to_label: string | null }>
     branchSplit: Array<{ name: string; count: number }>
   } {
-    const one = <T extends Record<string, SqlStorageValue>>(sql: string, ...p: unknown[]) =>
-      this.sql.exec<T>(sql, ...p).one()
+    const memberConditions: string[] = []
+    const memberParams: unknown[] = []
+    const paymentConditions: string[] = []
+    const paymentParams: unknown[] = []
+
+    if (scope.branchId) {
+      memberConditions.push('m.branch_id = ?')
+      memberParams.push(scope.branchId)
+      paymentConditions.push('p.branch_id = ?')
+      paymentParams.push(scope.branchId)
+    }
+    if (scope.disciplineId) {
+      memberConditions.push('m.discipline_id = ?')
+      memberParams.push(scope.disciplineId)
+      paymentConditions.push('p.discipline_id = ?')
+      paymentParams.push(scope.disciplineId)
+    }
+
+    const memberWhere = memberConditions.length ? `AND ${memberConditions.join(' AND ')}` : ''
+    const paymentWhere = paymentConditions.length ? `${paymentConditions.join(' AND ')} AND` : ''
+
+    const counts = this.sql.exec<{
+      membersTotal: number
+      membersActive: number
+      subsExpiring: number
+      insuranceMissing: number
+      alertsCount: number
+    }>(
+      `SELECT
+         COUNT(CASE WHEN m.status != 'archived' THEN 1 END) AS membersTotal,
+         COUNT(CASE WHEN m.status = 'active' AND (m.sub_expiry IS NULL OR m.sub_expiry >= date('now')) THEN 1 END) AS membersActive,
+         COUNT(CASE WHEN m.status = 'active' AND m.sub_expiry IS NOT NULL AND m.sub_expiry BETWEEN date('now') AND date('now', '+7 days') THEN 1 END) AS subsExpiring,
+         COUNT(CASE WHEN m.status = 'active' AND (m.is_insured = 0 OR m.ins_expiry IS NULL OR m.ins_expiry < date('now')) THEN 1 END) AS insuranceMissing,
+         COUNT(CASE WHEN m.status = 'active' AND ((m.sub_expiry IS NOT NULL AND m.sub_expiry <= date('now', '+7 days')) OR m.is_insured = 0 OR (m.ins_expiry IS NOT NULL AND m.ins_expiry <= date('now', '+30 days'))) THEN 1 END) AS alertsCount
+       FROM members m
+       WHERE 1=1 ${memberWhere}`,
+      ...memberParams,
+    ).toArray()[0] ?? { membersTotal: 0, membersActive: 0, subsExpiring: 0, insuranceMissing: 0, alertsCount: 0 }
+
+    const revenueMonthCents = this.sql.exec<{ s: number | null }>(
+      `SELECT SUM(p.amount_cents) AS s FROM payments p WHERE ${paymentWhere} p.paid_at >= date('now', 'start of month')`,
+      ...paymentParams,
+    ).toArray()[0]?.s ?? 0
 
     return {
-      membersTotal: one<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM members WHERE status != 'archived'").n,
-      membersActive: one<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM members
-          WHERE status = 'active' AND (sub_expiry IS NULL OR sub_expiry >= date('now'))`).n,
-      subsExpiring: one<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM members
-          WHERE status = 'active' AND sub_expiry IS NOT NULL
-            AND sub_expiry BETWEEN date('now') AND date('now','+7 days')`).n,
-      insuranceMissing: one<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM members
-          WHERE status = 'active'
-            AND (is_insured = 0 OR ins_expiry IS NULL OR ins_expiry < date('now'))`).n,
-      revenueMonthCents: one<{ s: number | null }>(
-        "SELECT SUM(amount_cents) AS s FROM payments WHERE paid_at >= date('now','start of month')").s ?? 0,
-      alertsCount: one<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM members
-          WHERE status = 'active'
-            AND ((sub_expiry IS NOT NULL AND sub_expiry <= date('now','+7 days'))
-                 OR is_insured = 0
-                 OR (ins_expiry IS NOT NULL AND ins_expiry <= date('now','+30 days')))`).n,
-
-      // Croissance cumulee : le total des inscrits a la fin de chaque mois.
+      membersTotal: counts.membersTotal,
+      membersActive: counts.membersActive,
+      subsExpiring: counts.subsExpiring,
+      insuranceMissing: counts.insuranceMissing,
+      revenueMonthCents,
+      alertsCount: counts.alertsCount,
       growth: this.sql.exec<{ month: string; total: number }>(
         `WITH RECURSIVE months(m) AS (
-           SELECT date('now','start of month','-11 months')
-           UNION ALL SELECT date(m,'+1 month') FROM months WHERE m < date('now','start of month')
+           SELECT date('now', 'start of month', '-11 months')
+           UNION ALL SELECT date(m, '+1 month') FROM months WHERE m < date('now', 'start of month')
          )
          SELECT strftime('%Y-%m', m) AS month,
-                (SELECT COUNT(*) FROM members
-                  WHERE join_date <= date(m,'+1 month','-1 day') AND status != 'archived') AS total
-           FROM months`).toArray(),
-
-      revenue: this.revenueByMonth(),
-      grades: this.gradeDistribution(),
-
+                (SELECT COUNT(*) FROM members m
+                  WHERE 1=1 ${memberWhere} AND m.join_date <= date(months.m, '+1 month', '-1 day') AND m.status != 'archived') AS total
+           FROM months`,
+        ...memberParams,
+      ).toArray(),
+      revenue: this.revenueByMonth(scope),
+      grades: this.sql.exec<{ label: string; color: string | null; count: number }>(
+        `SELECT COALESCE(g.label, 'Sans grade') AS label, g.color, COUNT(*) AS count
+           FROM members m
+           LEFT JOIN grade_levels g ON g.id = m.grade_id
+          WHERE 1=1 ${memberWhere} AND m.status != 'archived'
+          GROUP BY g.id ORDER BY g.rank`,
+        ...memberParams,
+      ).toArray(),
       recentMembers: this.sql.exec<{ id: string; name: string; join_date: string }>(
-        `SELECT id, name, join_date FROM members
-          WHERE status != 'archived' ORDER BY created_at DESC LIMIT 8`).toArray(),
-
-      upcomingGrades: this.sql.exec<{
-        id: string; member_name: string; scheduled_date: string; to_label: string | null
-      }>(
+        `SELECT m.id, m.name, m.join_date FROM members m
+          WHERE 1=1 ${memberWhere} AND m.status != 'archived'
+          ORDER BY m.created_at DESC LIMIT 8`,
+        ...memberParams,
+      ).toArray(),
+      upcomingGrades: this.sql.exec<{ id: string; member_name: string; scheduled_date: string; to_label: string | null }>(
         `SELECT g.id, m.name AS member_name, g.scheduled_date, t.label AS to_label
            FROM grade_sessions g
            JOIN members m ON m.id = g.member_id
            LEFT JOIN grade_levels t ON t.id = g.to_grade_id
-          WHERE g.status = 'pending'
-          ORDER BY g.scheduled_date LIMIT 8`).toArray(),
-
+          WHERE 1=1 ${memberWhere} AND g.status = 'pending'
+          ORDER BY g.scheduled_date LIMIT 8`,
+        ...memberParams,
+      ).toArray(),
       branchSplit: this.sql.exec<{ name: string; count: number }>(
         `SELECT b.name, COUNT(m.id) AS count
            FROM branches b
            LEFT JOIN members m ON m.branch_id = b.id AND m.status = 'active'
           WHERE b.is_active = 1
-          GROUP BY b.id ORDER BY count DESC`).toArray(),
+          GROUP BY b.id ORDER BY count DESC`,
+      ).toArray(),
     }
   }
 

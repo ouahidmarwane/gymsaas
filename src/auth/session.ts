@@ -38,8 +38,29 @@ export interface Principal {
    * l'identite du proprietaire, on greffe une portee temporaire.
    */
   supportOrgId: string | null
+  /**
+   * Organization recorded on the session even when its support TTL expired.
+   * An expired support context must fail closed until the operator explicitly
+   * leaves support mode; otherwise expiry would silently restore unrestricted
+   * platform mutation authority.
+   */
+  supportContextOrgId: string | null
   /** Lecture seule tant que ce drapeau n'est pas leve explicitement. */
   supportWrite: boolean
+}
+
+export interface DataScope {
+  branchId: string | null
+  disciplineId: string | null
+}
+
+/** Portee metier immuable issue de l'appartenance, jamais de la requete. */
+export function dataScope(p: Principal): DataScope {
+  // Le support n'usurpe aucune appartenance du club visite. Sa frontiere est
+  // le club entier, avec lecture seule/ecriture courte geree separement.
+  return p.supportOrgId
+    ? { branchId: null, disciplineId: null }
+    : { branchId: p.branchId, disciplineId: p.disciplineId }
 }
 
 /** Club reellement vise par la requete, et a quel titre. */
@@ -85,6 +106,7 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
   const row = await env.CONTROL.prepare(
     `SELECT s.user_id, s.org_id, s.expires_at, s.last_seen_at,
             s.support_org_id, s.support_expires_at, s.support_write,
+            sw.expires_at AS support_write_expires_at,
             u.name, u.email, u.is_platform_admin, u.status AS user_status,
             m.role, m.branch_id, m.discipline_id, m.status AS membership_status,
             o.status AS org_status
@@ -92,6 +114,7 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
        JOIN users u ON u.id = s.user_id
        LEFT JOIN memberships m ON m.user_id = s.user_id AND m.org_id = s.org_id
        LEFT JOIN organizations o ON o.id = s.org_id
+       LEFT JOIN support_write_grants sw ON sw.token_hash = s.token_hash
       WHERE s.token_hash = ?`,
   )
     .bind(tokenHash)
@@ -103,6 +126,7 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
       support_org_id: string | null
       support_expires_at: string | null
       support_write: number
+      support_write_expires_at: string | null
       name: string
       email: string
       is_platform_admin: number
@@ -169,12 +193,15 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
     branchId: row.branch_id,
     disciplineId: row.discipline_id,
     supportOrgId: supportLive ? row.support_org_id : null,
-    supportWrite: supportLive && row.support_write === 1,
+    supportContextOrgId: isPlatformAdmin ? row.support_org_id : null,
+    supportWrite: supportLive && row.support_write === 1 &&
+      Boolean(row.support_write_expires_at) && Date.parse(row.support_write_expires_at!) > now,
   }
 }
 
 const SUPPORT_TTL_MINUTES = 30
-const SUPPORT_WRITE_TTL_MINUTES = 10
+const SUPPORT_WRITE_TTL_MINUTES = 5
+const STEP_UP_TTL_MINUTES = 10
 
 /**
  * Entre en mode support sur un club.
@@ -187,42 +214,82 @@ const SUPPORT_WRITE_TTL_MINUTES = 10
  * quand on veut regarder sans risquer de toucher.
  */
 export async function beginSupport(
-  env: Env, token: string, orgId: string, readOnly = false,
+  env: Env, token: string, orgId: string,
 ): Promise<{ expiresAt: string; canWrite: boolean }> {
   const expires = isoSeconds(new Date(Date.now() + SUPPORT_TTL_MINUTES * 60_000))
-  await env.CONTROL.prepare(
+  const tokenHash = await hashToken(token)
+  await env.CONTROL.batch([
+    env.CONTROL.prepare('DELETE FROM support_write_grants WHERE token_hash = ?').bind(tokenHash),
+    env.CONTROL.prepare(
     `UPDATE sessions
-        SET support_org_id = ?, support_expires_at = ?, support_write = ?
+        SET support_org_id = ?, support_expires_at = ?, support_write = 0
       WHERE token_hash = ?`,
-  ).bind(orgId, expires, readOnly ? 0 : 1, await hashToken(token)).run()
-  return { expiresAt: expires, canWrite: !readOnly }
+    ).bind(orgId, expires, tokenHash),
+  ])
+  return { expiresAt: expires, canWrite: false }
 }
 
 /** Repasse en ecriture apres une visite en lecture seule. */
 export async function allowSupportWrite(env: Env, token: string): Promise<string> {
-  const expires = isoSeconds(new Date(Date.now() + SUPPORT_TTL_MINUTES * 60_000))
-  await env.CONTROL.prepare(
-    `UPDATE sessions
-        SET support_write = 1, support_expires_at = ?
-      WHERE token_hash = ? AND support_org_id IS NOT NULL`,
-  ).bind(expires, await hashToken(token)).run()
+  const expires = isoSeconds(new Date(Date.now() + SUPPORT_WRITE_TTL_MINUTES * 60_000))
+  const tokenHash = await hashToken(token)
+  await env.CONTROL.batch([
+    env.CONTROL.prepare(
+      `INSERT INTO support_write_grants (token_hash, expires_at) VALUES (?, ?)
+       ON CONFLICT(token_hash) DO UPDATE SET expires_at = excluded.expires_at,
+         created_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+    ).bind(tokenHash, expires),
+    env.CONTROL.prepare(
+      `UPDATE sessions SET support_write = 1
+        WHERE token_hash = ? AND support_org_id IS NOT NULL`,
+    ).bind(tokenHash),
+  ])
   return expires
+}
+
+export async function grantStepUp(env: Env, token: string, userId: string): Promise<string> {
+  const tokenHash = await hashToken(token)
+  const expires = isoSeconds(new Date(Date.now() + STEP_UP_TTL_MINUTES * 60_000))
+  await env.CONTROL.prepare(
+    `INSERT INTO privileged_grants (token_hash, user_id, expires_at) VALUES (?, ?, ?)
+     ON CONFLICT(token_hash) DO UPDATE SET user_id = excluded.user_id,
+       expires_at = excluded.expires_at, created_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+  ).bind(tokenHash, userId, expires).run()
+  return expires
+}
+
+export async function hasStepUp(env: Env, token: string | null, userId: string): Promise<boolean> {
+  if (!token) return false
+  const row = await env.CONTROL.prepare(
+    `SELECT 1 FROM privileged_grants
+      WHERE token_hash = ? AND user_id = ?
+        AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+  ).bind(await hashToken(token), userId).first()
+  return Boolean(row)
 }
 
 /** Bascule en observation : on regarde sans pouvoir toucher. */
 export async function setSupportReadOnly(env: Env, token: string): Promise<void> {
-  await env.CONTROL.prepare(
+  const tokenHash = await hashToken(token)
+  await env.CONTROL.batch([
+    env.CONTROL.prepare('DELETE FROM support_write_grants WHERE token_hash = ?').bind(tokenHash),
+    env.CONTROL.prepare(
     `UPDATE sessions SET support_write = 0
       WHERE token_hash = ? AND support_org_id IS NOT NULL`,
-  ).bind(await hashToken(token)).run()
+    ).bind(tokenHash),
+  ])
 }
 
 export async function endSupport(env: Env, token: string): Promise<void> {
-  await env.CONTROL.prepare(
+  const tokenHash = await hashToken(token)
+  await env.CONTROL.batch([
+    env.CONTROL.prepare('DELETE FROM support_write_grants WHERE token_hash = ?').bind(tokenHash),
+    env.CONTROL.prepare(
     `UPDATE sessions
         SET support_org_id = NULL, support_expires_at = NULL, support_write = 0
       WHERE token_hash = ?`,
-  ).bind(await hashToken(token)).run()
+    ).bind(tokenHash),
+  ])
 }
 
 export async function destroySession(env: Env, token: string): Promise<void> {
@@ -298,4 +365,3 @@ export function clearedCookie(request: Request): string {
   const secure = isSecure(request) ? ' Secure;' : ''
   return `${cookieName(request)}=; HttpOnly;${secure} SameSite=Lax; Path=/; Max-Age=0`
 }
-

@@ -38,6 +38,7 @@ before(async () => {
   assert.equal(op.status, 201, JSON.stringify(op.data))
 
   control(`UPDATE users SET is_platform_admin = 1 WHERE email_norm = '${opEmail}'`)
+  await waitReady()
 
   // Nouvelle session : le statut est relu a chaque requete, mais on repart
   // proprement pour ne rien devoir a un cache.

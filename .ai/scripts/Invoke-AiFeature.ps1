@@ -1,43 +1,60 @@
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Task')]
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, ParameterSetName = 'Task')]
     [ValidateNotNullOrEmpty()]
-    [string]$Task
+    [string]$Task,
+    [Parameter(Mandatory = $true, ParameterSetName = 'TaskFile')]
+    [ValidateNotNullOrEmpty()]
+    [string]$TaskFile,
+    [ValidateSet('Full', 'Fast')]
+    [string]$Mode = 'Full'
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 Set-Location -LiteralPath $projectRoot
 
-$taskDirectory = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'New-AiTask.ps1') -Task $Task
-if ($LASTEXITCODE -ne 0) {
-    throw 'Could not create the task workspace.'
+if ($PSCmdlet.ParameterSetName -eq 'TaskFile') {
+    $resolvedRequest = (Resolve-Path -LiteralPath $TaskFile).Path
+    if (-not $resolvedRequest.StartsWith($projectRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'TaskFile must be inside the GymFlow repository.'
+    }
+    if ([string]::IsNullOrWhiteSpace((Get-Content -Raw -LiteralPath $resolvedRequest))) { throw 'The feature task is empty.' }
+    $newTaskArguments = @('-TaskFile', $resolvedRequest)
+} else {
+    $newTaskArguments = @('-Task', $Task)
 }
+
+$taskDirectory = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'New-AiTask.ps1') @newTaskArguments -Mode $Mode
+if ($LASTEXITCODE -ne 0) { throw 'Could not create the task workspace.' }
 $taskDirectory = $taskDirectory | Select-Object -Last 1
 $resolvedTask = (Resolve-Path -LiteralPath $taskDirectory).Path
-$errorPath = Join-Path $resolvedTask 'orchestrator-provider-error.txt'
-$outputPath = Join-Path $resolvedTask 'orchestrator-output.txt'
 
-$message = "Execute the complete workflow in .opencode/commands/feature.md using the existing task directory '$taskDirectory'. Do not create another task. Start at architecture, persist every report, and enforce all safety and cycle rules."
-$openCodeOutput = & opencode.cmd run --agent orchestrator $message 2>&1
-$openCodeExit = $LASTEXITCODE
-$openCodeOutput | Set-Content -LiteralPath $outputPath -Encoding UTF8
-
-if ($openCodeExit -eq 0) {
-    Write-Output $openCodeOutput
-    Write-Output "Task directory: $taskDirectory"
-    exit 0
+$workflowFailed = $false
+try {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'invoke-codex.ps1') -Role 'orchestrator' -TaskDirectory $resolvedTask -Mode $Mode
+    if ($LASTEXITCODE -ne 0) { throw "Codex Orchestrator exited with code $LASTEXITCODE." }
+} catch {
+    $workflowFailed = $true
+    Set-Content -LiteralPath (Join-Path $resolvedTask 'orchestration-error.txt') -Encoding UTF8 -Value 'The Codex orchestration process failed unexpectedly. Inspect local process output.'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Set-AiTaskState.ps1') -TaskDirectory $resolvedTask -Status 'orchestration_failed' | Out-Null
 }
 
-$openCodeOutput | Set-Content -LiteralPath $errorPath -Encoding UTF8
-$providerFailure = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Test-ProviderFailure.ps1') -InputFile $errorPath
-if ($providerFailure -ne 'true') {
-    throw "OpenCode failed with a non-provider error. Inspect $errorPath; Codex fallback was not activated."
+$state = Get-Content -Raw -LiteralPath (Join-Path $resolvedTask 'state.json') | ConvertFrom-Json
+$status = [string]$state.status
+switch ($status) {
+    'approved' { $title = 'GymFlow AI - Approved'; $message = "Feature approved.`nReview: PASS`nTests: PASS`nSecurity: PASS"; $priority = 'default'; $tags = 'white_check_mark' }
+    'blocked' { $title = 'GymFlow AI - Human input required'; $message = 'Architect blocked on an unresolved decision. Check the task reports.'; $priority = 'high'; $tags = 'warning' }
+    'rejected' { $title = 'GymFlow AI - Rejected'; $message = 'Feature rejected. Check the final report.'; $priority = 'high'; $tags = 'x' }
+    default { $title = 'GymFlow AI - Workflow failed'; $message = 'Workflow failed unexpectedly. Check orchestration logs.'; $priority = 'high'; $tags = 'rotating_light' }
 }
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Set-AiTaskState.ps1') -TaskDirectory $resolvedTask -Status 'fallback-orchestrator' -FallbackRole 'fallback-orchestrator' | Out-Null
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'invoke-codex.ps1') -Role 'fallback-orchestrator' -TaskDirectory $resolvedTask
-if ($LASTEXITCODE -ne 0) {
-    throw 'Codex fallback Orchestrator failed.'
-}
+$notificationResult = @(& (Join-Path $PSScriptRoot 'Send-AiNotification.ps1') -Status $status -Title $title -Message $message -Priority $priority -Tags $tags) | Select-Object -Last 1
+if ($notificationResult -eq 'SENT') { $notificationState = 'sent' }
+elseif ($notificationResult -eq 'NOT_CONFIGURED') { $notificationState = 'not_configured' }
+else { $notificationState = 'failed' }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Set-AiTaskState.ps1') -TaskDirectory $resolvedTask -Status $status -NotificationStatus $notificationState | Out-Null
+
 Write-Output "Task directory: $taskDirectory"
+Write-Output "Workflow status: $status"
+if ($workflowFailed -or $status -notin @('approved', 'blocked', 'rejected')) { exit 1 }

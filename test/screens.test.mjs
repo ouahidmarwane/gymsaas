@@ -9,7 +9,7 @@ import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { BASE, client, control, page, uniq } from './helpers.mjs'
+import { BASE, client, control, page, uniq, waitReady } from './helpers.mjs'
 
 let owner, operator, clubId
 
@@ -33,6 +33,7 @@ before(async () => {
     email: opEmail, password: 'motdepasse-solide-e2',
   })
   control(`UPDATE users SET is_platform_admin = 1 WHERE email_norm = '${opEmail}'`)
+  await waitReady()
   operator = client()
   await operator.call('POST', '/api/auth/login', { email: opEmail, password: 'motdepasse-solide-e2' })
 })
@@ -58,7 +59,7 @@ test('toutes les routes de navigation repondent', async () => {
   // un 404 que l'utilisateur lit comme « l'application est cassee ».
   const routes = [
     '/dashboard', '/admin', '/members', '/setup',
-    '/grades', '/comptabilite', '/staff', '/account',
+    '/grades', '/comptabilite', '/staff', '/account', '/messagerie',
   ]
   for (const route of routes) {
     const res = await page(route)
@@ -254,12 +255,15 @@ test('entrer dans un club puis en sortir depuis l interface', async () => {
   // La banniere de support lit ces champs : leur absence la rendrait muette.
   const me = await operator.call('GET', '/api/me')
   assert.equal(me.data.scope.mode, 'support')
-  assert.equal(me.data.scope.canWrite, true)
+  assert.equal(me.data.scope.canWrite, false)
   assert.ok(me.data.branding?.name, 'la banniere doit pouvoir nommer le club')
 
   // La disposition du club est modifiable depuis le support.
   const layout = await operator.call('GET', '/api/layout/dashboard')
   assert.equal(layout.status, 200)
+  assert.equal((await operator.call('PUT', '/api/layout/dashboard', { layout: layout.data.layout })).status, 403)
+  assert.equal((await operator.call('POST', '/api/admin/step-up', { password: 'motdepasse-solide-e2' })).status, 200)
+  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
   const saved = await operator.call('PUT', '/api/layout/dashboard', { layout: layout.data.layout })
   assert.equal(saved.status, 200, 'le support doit pouvoir enregistrer la disposition')
 

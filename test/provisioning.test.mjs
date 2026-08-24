@@ -9,7 +9,7 @@
 //   node --test test/provisioning.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-import { BASE, client, control, uniq } from './helpers.mjs'
+import { BASE, client, control, uniq, waitReady } from './helpers.mjs'
 
 // Deux clubs volontairement dissemblables : rien dans le schema ne privilegie
 // un sport ni un nombre de salles.
@@ -54,6 +54,7 @@ before(async () => {
     email: opEmail, password: 'motdepasse-solide-op',
   })
   control(`UPDATE users SET is_platform_admin = 1 WHERE email_norm = '${opEmail}'`)
+  await waitReady()
   operator = client()
   await operator.call('POST', '/api/auth/login', { email: opEmail, password: 'motdepasse-solide-op' })
 })

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { LogIn, Users, Wallet, Building2, Plus, Trash2, AlertTriangle } from 'lucide-react'
-import { api, ApiError, type ClubRow } from '@/lib/client'
+import { api, ApiError, privileged, type ClubRow } from '@/lib/client'
 import { useScrollLock } from '@/lib/scroll-lock'
 import { useModalMotion } from '@/lib/modal-motion'
 import CreateClubModal from '@/components/CreateClubModal'
@@ -285,9 +285,9 @@ function DeleteClubModal({ club, onClose, onDeleted }: {
               if (!matches) { setProblem(`Saisissez exactement : ${club.slug}`); return }
               setBusy(true); setProblem(null)
               try {
-                const res = await api.del<{ orphanedAccounts: number }>(
+                const res = await privileged(() => api.del<{ orphanedAccounts: number }>(
                   `/api/admin/clubs/${club.id}`, { slug: club.slug },
-                )
+                ))
                 const extra = res.orphanedAccounts > 0
                   ? ` ${res.orphanedAccounts} compte(s) devenu(s) sans club ont ete supprimes.`
                   : ''

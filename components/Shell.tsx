@@ -6,8 +6,9 @@ import Link from 'next/link'
 import {
   LayoutDashboard, Users, Award, Wallet, UserCog, SlidersHorizontal,
   ShieldAlert, Building2, Settings, LogOut, Menu, X, Receipt,
+  MessageCircle,
 } from 'lucide-react'
-import { api, ApiError, type Me, type Capabilities } from '@/lib/client'
+import { api, ApiError, privileged, type Me, type Capabilities } from '@/lib/client'
 import { SKINS, DEFAULT_THEME } from '@/src/club/branding'
 import TopBar from '@/components/TopBar'
 import { DisciplineProvider, useDiscipline } from '@/lib/discipline'
@@ -42,6 +43,7 @@ const CLUB_NAV: NavItem[] = [
     needs: (c, graded) => c.hasGrading && graded },
   { href: '/comptabilite',   label: 'Comptabilite',     icon: Wallet },
   { href: '/staff',          label: 'Equipe & droits',  icon: UserCog },
+  { href: '/messagerie',     label: 'Messagerie',       icon: MessageCircle },
   { href: '/abonnement',     label: 'Mon abonnement',   icon: Receipt },
   { href: '/setup',          label: 'Configuration',    icon: SlidersHorizontal },
 ]
@@ -57,6 +59,7 @@ function allowed(
 /** Ecrans de la plateforme. L'exploitant supervise, il ne gere aucun club. */
 const PLATFORM_NAV: NavItem[] = [
   { href: '/admin',        label: 'Clubs',        icon: Building2 },
+  { href: '/messagerie',   label: 'Messagerie',   icon: MessageCircle },
   { href: '/facturation',  label: 'Facturation',  icon: Receipt },
   { href: '/supervision',  label: 'Supervision',  icon: ShieldAlert },
 ]
@@ -146,6 +149,7 @@ function ShellBody({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!me) return
     const clubRoute = CLUB_NAV.some(n => pathname.startsWith(n.href))
+      && !PLATFORM_NAV.some(n => pathname.startsWith(n.href))
     if (clubRoute && me.isPlatformAdmin && !me.org && me.scope.mode !== 'support') {
       router.replace('/admin')
     }
@@ -327,11 +331,11 @@ function ShellBody({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      <main className="app-main">
+      <main className={`app-main${pathname.startsWith('/messagerie') ? ' messaging-app-main' : ''}`}>
         {/* Barre du haut : filtre discipline, alertes, historique, reglages.
             Uniquement dans un club — la plateforme n'a ni discipline ni
             journal de club a montrer. */}
-        {me && (inSupport || me.org) && (
+        {me && !pathname.startsWith('/messagerie') && (inSupport || me.org) && (
           <TopBar canSeeHistory={['owner', 'admin'].includes(me.org?.role ?? '') || inSupport} />
         )}
         {children}
@@ -374,7 +378,9 @@ function SupportBar({ me, onLeft }: { me: Me; onLeft: () => void }) {
           onClick={async () => {
             setBusy('mode')
             try {
-              await api.post(canWrite ? '/api/admin/support/read-only' : '/api/admin/support/write')
+              await (canWrite
+                ? api.post('/api/admin/support/read-only')
+                : privileged(() => api.post('/api/admin/support/write')))
               setCanWrite(!canWrite)
             } finally { setBusy(null) }
           }}

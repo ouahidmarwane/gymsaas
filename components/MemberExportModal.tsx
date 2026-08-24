@@ -74,29 +74,49 @@ export default function MemberExportModal({
 
   const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('fr-FR') : '')
 
-  function run() {
-    const rows: unknown[][] = [
-      ['Nom', 'Téléphone', 'E-mail', 'Salle', 'Discipline', 'Grade',
-       'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance',
-       'Pièce d’identité', 'N° pièce'],
-      ...selected.map(m => [
-        m.name, m.phone, m.email ?? '', m.branch_name ?? '', m.discipline_name ?? '',
-        m.grade_label ?? '', day(m.join_date),
-        SUB_LABEL[subStatus(m)], day(m.sub_expiry),
-        INS_LABEL[insStatus(m)], m.is_insured ? day(m.ins_expiry) : '',
-        // Le type, jamais le fichier : un export CSV part par courriel, et
-        // un scan de carte nationale n'a rien a y faire.
-        m.id_doc_type === 'cin' ? 'Carte nationale'
-          : m.id_doc_type === 'passeport' ? 'Passeport' : '',
-        m.id_doc_number ?? '',
-      ]),
-    ]
-    // Le nom du fichier porte les criteres : trois exports dans le meme
-    // dossier doivent rester distinguables sans les ouvrir.
+  async function run() {
+    const params = new URLSearchParams()
+    if (sub !== 'all') params.set('sub', sub)
+    if (ins !== 'all') params.set('ins', ins)
+    if (branch !== 'all') params.set('branchId', branch)
+    if (discipline !== 'all') params.set('disciplineId', discipline)
+    if (year !== 'all') params.set('year', year)
+    if (dormant) params.set('dormant', 'true')
+    if (noIdDoc) params.set('noIdDoc', 'true')
+
     const tag = [sub !== 'all' && `abo-${sub}`, ins !== 'all' && `ass-${ins}`,
                  year !== 'all' && year, dormant && 'inactifs', noIdDoc && 'sans-piece-identite']
       .filter(Boolean).join('_') || 'tous'
-    download(toCsv(rows), `membres-${tag}-${new Date().toISOString().slice(0, 10)}.csv`)
+
+    try {
+      const res = await fetch(`/api/members/export?${params.toString()}`)
+      if (!res.ok) throw new Error('Erreur export')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `membres-${tag}-${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      const rows: unknown[][] = [
+        ['Nom', 'Téléphone', 'E-mail', 'Salle', 'Discipline', 'Grade',
+         'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance',
+         'Pièce d’identité', 'N° pièce'],
+        ...selected.map(m => [
+          m.name, m.phone, m.email ?? '', m.branch_name ?? '', m.discipline_name ?? '',
+          m.grade_label ?? '', day(m.join_date),
+          SUB_LABEL[subStatus(m)], day(m.sub_expiry),
+          INS_LABEL[insStatus(m)], m.is_insured ? day(m.ins_expiry) : '',
+          m.id_doc_type === 'cin' ? 'Carte nationale'
+            : m.id_doc_type === 'passeport' ? 'Passeport' : '',
+          m.id_doc_number ?? '',
+        ]),
+      ]
+      download(toCsv(rows), `membres-${tag}-${new Date().toISOString().slice(0, 10)}.csv`)
+    }
     dismiss()
   }
 

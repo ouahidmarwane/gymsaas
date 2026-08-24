@@ -10,7 +10,7 @@
 //   node --test test/support-mode.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-import { BASE, client, control, uniq } from './helpers.mjs'
+import { BASE, client, control, uniq, waitReady } from './helpers.mjs'
 
 let operator, owner, clubId, memberName
 
@@ -57,13 +57,11 @@ test('avant d entrer, la plateforme ne voit pas les membres du club', async () =
   assert.equal(res.data.members.some(m => m.name === memberName), false)
 })
 
-test('entrer dans un club donne acces en ecriture', async () => {
+test('entrer dans un club commence toujours en lecture seule', async () => {
   const enter = await operator.call('POST', `/api/admin/clubs/${clubId}/support`)
   assert.equal(enter.status, 200, JSON.stringify(enter.data))
   assert.equal(enter.data.mode, 'support')
-  // Entrer pour depanner suppose de pouvoir agir : l'escalade a chaque geste
-  // transformait le support en parcours du combattant.
-  assert.equal(enter.data.canWrite, true)
+  assert.equal(enter.data.canWrite, false)
 
   // Les memes routes servent desormais le club visite.
   const members = await operator.call('GET', '/api/members')
@@ -74,7 +72,13 @@ test('entrer dans un club donne acces en ecriture', async () => {
   assert.deepEqual(branches.data.branches.map(b => b.name), ['Salle Unique'])
 })
 
-test('le support peut modifier le club visite', async () => {
+test('le support ne peut ecrire qu apres reauthentification explicite', async () => {
+  const refused = await operator.call('POST', '/api/branches', { name: 'Salle Refusee' })
+  assert.equal(refused.status, 403)
+  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 403)
+  assert.equal((await operator.call('POST', '/api/admin/step-up', { password: 'incorrect' })).status, 401)
+  assert.equal((await operator.call('POST', '/api/admin/step-up', { password: 'motdepasse-solide-s2' })).status, 200)
+  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
   const branch = await operator.call('POST', '/api/branches', { name: 'Salle Ajoutee Par Support' })
   assert.equal(branch.status, 201, JSON.stringify(branch.data))
 
@@ -91,6 +95,28 @@ test('/api/me signale clairement le mode support', async () => {
   // L'identite ne change pas : on n'usurpe pas le proprietaire.
   assert.notEqual(me.data.user.id, undefined)
   assert.equal(me.data.isPlatformAdmin, true)
+})
+
+test('le droit d ecriture expire sans fermer la session de support', async () => {
+  control("UPDATE support_write_grants SET expires_at = '2000-01-01T00:00:00Z'")
+  await waitReady()
+  const me = await operator.call('GET', '/api/me')
+  assert.equal(me.status, 200)
+  assert.equal(me.data.scope.mode, 'support')
+  assert.equal(me.data.scope.canWrite, false)
+  assert.equal((await operator.call('POST', '/api/branches', { name: 'Salle Apres Expiration' })).status, 403)
+  // Le grant de reauthentification est encore court et valide ; seule
+  // l autorisation d ecriture support a expire ici.
+  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
+})
+
+test('le step-up expire et doit etre renouvele pour une operation privilegiee', async () => {
+  assert.equal((await operator.call('POST', '/api/admin/support/read-only')).status, 200)
+  control("UPDATE privileged_grants SET expires_at = '2000-01-01T00:00:00Z'")
+  await waitReady()
+  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 403)
+  assert.equal((await operator.call('POST', '/api/admin/step-up', { password: 'motdepasse-solide-s2' })).status, 200)
+  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
 })
 
 test('l observation en lecture seule reste possible et bloque les ecritures', async () => {

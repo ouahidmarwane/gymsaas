@@ -7,7 +7,8 @@ import { hashPassword, verifyPassword, newId } from './auth/crypto'
 import {
   createSession, resolveSession, destroySession, readSessionCookie,
   sessionCookie, clearedCookie, isoSeconds, activeScope,
-  beginSupport, allowSupportWrite, setSupportReadOnly, endSupport, type Principal,
+  beginSupport, allowSupportWrite, setSupportReadOnly, endSupport,
+  grantStepUp, hasStepUp, type Principal,
 } from './auth/session'
 import { hashToken } from './auth/crypto'
 import {
@@ -36,7 +37,16 @@ const json = (data: unknown, init: ResponseInit = {}) =>
 const fail = (status: number, error: string) => json({ error }, { status })
 
 class HttpError extends Error {
-  constructor(readonly status: number, message: string) { super(message) }
+  status: number
+  code?: string
+  extra?: Record<string, unknown>
+
+  constructor(status: number, message: string, code?: string, extra?: Record<string, unknown>) {
+    super(message)
+    this.status = status
+    this.code = code
+    this.extra = extra
+  }
 }
 
 // Acces au club --------------------------------------------------------------
@@ -80,6 +90,24 @@ async function clubAsPlatformAdmin(
   return env.CLUB.get(env.CLUB.idFromName(orgId))
 }
 
+function scopeOf(principal: Principal): { branchId?: string | null; disciplineId?: string | null } {
+  return {
+    branchId: principal.branchId ?? null,
+    disciplineId: principal.disciplineId ?? null,
+  }
+}
+
+function assertMemberScope(principal: Principal, member: { branch_id?: string | null; discipline_id?: string | null } | null | undefined): void {
+  if (!member) return
+  const scope = scopeOf(principal)
+  if (scope.branchId && member.branch_id && member.branch_id !== scope.branchId) {
+    throw new HttpError(403, 'Acces refuse pour cette salle')
+  }
+  if (scope.disciplineId && member.discipline_id && member.discipline_id !== scope.disciplineId) {
+    throw new HttpError(403, 'Acces refuse pour cette discipline')
+  }
+}
+
 // Roles ----------------------------------------------------------------------
 
 const RANK = { viewer: 0, staff: 1, admin: 2, owner: 3 } as const
@@ -121,6 +149,415 @@ async function auditSupport(
     'INSERT INTO platform_audit (actor_id, action, org_id, detail, ip) VALUES (?, ?, ?, ?, ?)',
   ).bind(principal.userId, action, principal.supportOrgId, JSON.stringify(detail ?? null), ip).run()
 }
+
+type MessagingPerson = { id: string; name: string; role: string }
+
+function messagingAllowed(principal: Principal): void {
+  atLeast(principal, 'staff')
+  if (!['owner', 'admin', 'staff'].includes(principal.role ?? '')) {
+    throw new HttpError(403, 'Messagerie reservee a l equipe du club')
+  }
+}
+
+async function messagingPeople(env: Env, orgId: string): Promise<MessagingPerson[]> {
+  const { results } = await env.CONTROL.prepare(
+    `SELECT u.id, u.name, m.role
+       FROM memberships m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.org_id = ?
+        AND m.status = 'active'
+        AND u.status = 'active'
+        AND m.role IN ('owner','admin','staff')
+      ORDER BY u.name`,
+  ).bind(orgId).all<MessagingPerson>()
+  return results
+}
+
+function pickPeople(people: MessagingPerson[], ids: unknown, opts: { allowSelf?: boolean; selfId?: string } = {}): MessagingPerson[] {
+  if (!Array.isArray(ids)) throw new HttpError(400, 'Liste de membres invalide')
+  const wanted = new Set(ids.map(id => typeof id === 'string' ? id : ''))
+  wanted.delete('')
+  if (!opts.allowSelf && opts.selfId) wanted.delete(opts.selfId)
+  const selected = people.filter(person => wanted.has(person.id))
+  if (selected.length !== wanted.size) throw new HttpError(400, 'Membre hors club ou non autorise')
+  return selected
+}
+
+function conversationFailure(error: unknown): never {
+  const message = error instanceof Error ? error.message : ''
+  if (message === 'CONVERSATION_NOT_FOUND') throw new HttpError(404, 'Conversation introuvable')
+  if (message === 'GROUP_ADMIN_REQUIRED') throw new HttpError(403, 'Reserve aux administrateurs du groupe')
+  if (message === 'INVALID_MESSAGE') throw new HttpError(400, 'Message invalide')
+  if (message === 'INVALID_MENTION') throw new HttpError(400, 'Mention hors conversation')
+  if (message === 'INVALID_REPLY') throw new HttpError(400, 'Reponse introuvable')
+  if (message === 'INVALID_REACTION') throw new HttpError(400, 'Reaction invalide')
+  throw error
+}
+
+function supportOrg(principal: Principal, url: URL): string | null {
+  if (principal.isPlatformAdmin) return url.searchParams.get('orgId')
+  if (!['owner', 'admin'].includes(principal.role ?? '')) throw new HttpError(403, 'Reserve aux responsables')
+  return scopedOrgId(principal)
+}
+
+async function ensureSupportThread(env: Env, orgId: string, actorId: string): Promise<string> {
+  const existing = await env.CONTROL.prepare('SELECT id FROM support_threads WHERE org_id = ?')
+    .bind(orgId).first<{ id: string }>()
+  if (existing) return existing.id
+  const id = newId()
+  await env.CONTROL.prepare(
+    `INSERT INTO support_threads (id, org_id, created_by) VALUES (?, ?, ?)`,
+  ).bind(id, orgId, actorId).run()
+  return id
+}
+
+async function assertOrgExists(env: Env, orgId: string): Promise<void> {
+  const org = await env.CONTROL.prepare('SELECT 1 FROM organizations WHERE id = ?').bind(orgId).first()
+  if (!org) throw new HttpError(404, 'Club inconnu')
+}
+
+// Modele central d'entitlements SaaS ------------------------------------------
+
+export type EntitlementState =
+  | 'active'
+  | 'trial'
+  | 'grace'
+  | 'expired'
+  | 'suspended'
+  | 'cancelled'
+  | 'deleting'
+  | 'deleted'
+
+export interface EntitlementInfo {
+  state: EntitlementState
+  readOnly: boolean
+  plan: string
+  daysLeft: number | null
+  expiresAt: string | null
+  maxMembers: number | null
+  maxBranches: number | null
+  maxStaff: number | null
+}
+
+export async function evaluateEntitlement(env: Env, orgId: string): Promise<EntitlementInfo> {
+  const row = await env.CONTROL.prepare(
+    `SELECT o.id, o.status, o.plan, o.trial_ends_at, o.max_members, o.max_branches, o.max_staff,
+            b.expires_at, b.price_cents
+       FROM organizations o
+       LEFT JOIN org_billing b ON b.org_id = o.id
+      WHERE o.id = ?`,
+  ).bind(orgId).first<{
+    id: string; status: string; plan: string; trial_ends_at: string | null
+    max_members: number | null; max_branches: number | null; max_staff: number | null
+    expires_at: string | null; price_cents: number | null
+  }>()
+
+  if (!row) {
+    return {
+      state: 'deleted',
+      readOnly: true,
+      plan: 'trial',
+      daysLeft: null,
+      expiresAt: null,
+      maxMembers: null,
+      maxBranches: null,
+      maxStaff: null,
+    }
+  }
+
+  const today = isoSeconds(new Date()).slice(0, 10)
+
+  if (row.status === 'deleting' || row.status === 'deleted') {
+    return {
+      state: row.status as EntitlementState,
+      readOnly: true,
+      plan: row.plan,
+      daysLeft: null,
+      expiresAt: null,
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  }
+
+  if (row.status === 'suspended') {
+    return {
+      state: 'suspended',
+      readOnly: true,
+      plan: row.plan,
+      daysLeft: null,
+      expiresAt: null,
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  }
+
+  if (row.status === 'cancelled') {
+    return {
+      state: 'cancelled',
+      readOnly: true,
+      plan: row.plan,
+      daysLeft: null,
+      expiresAt: null,
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  }
+
+  if (row.status !== 'active') {
+    // Statut inconnu ou inactif : fermeture par défaut (fail closed)
+    return {
+      state: 'expired',
+      readOnly: true,
+      plan: row.plan,
+      daysLeft: null,
+      expiresAt: null,
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  }
+
+  // Formule d'essai (Trial)
+  if (row.plan === 'trial') {
+    if (!row.trial_ends_at || isNaN(Date.parse(row.trial_ends_at))) {
+      // Données d'essai absentes ou invalides : fail closed
+      return {
+        state: 'expired',
+        readOnly: true,
+        plan: 'trial',
+        daysLeft: null,
+        expiresAt: null,
+        maxMembers: row.max_members,
+        maxBranches: row.max_branches,
+        maxStaff: row.max_staff,
+      }
+    }
+
+    const diffDays = Math.round((Date.parse(`${row.trial_ends_at.slice(0, 10)}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000)
+    if (diffDays >= 0) {
+      return {
+        state: 'trial',
+        readOnly: false,
+        plan: 'trial',
+        daysLeft: diffDays,
+        expiresAt: row.trial_ends_at.slice(0, 10),
+        maxMembers: row.max_members,
+        maxBranches: row.max_branches,
+        maxStaff: row.max_staff,
+      }
+    } else if (diffDays >= -7) {
+      return {
+        state: 'grace',
+        readOnly: false,
+        plan: 'trial',
+        daysLeft: diffDays,
+        expiresAt: row.trial_ends_at.slice(0, 10),
+        maxMembers: row.max_members,
+        maxBranches: row.max_branches,
+        maxStaff: row.max_staff,
+      }
+    } else {
+      return {
+        state: 'expired',
+        readOnly: true,
+        plan: 'trial',
+        daysLeft: diffDays,
+        expiresAt: row.trial_ends_at.slice(0, 10),
+        maxMembers: row.max_members,
+        maxBranches: row.max_branches,
+        maxStaff: row.max_staff,
+      }
+    }
+  }
+
+  // Formules payantes ('essentiel', 'club', 'federation', 'starter', 'pro')
+  const validPlans = ['essentiel', 'club', 'federation', 'starter', 'pro']
+  if (!validPlans.includes(row.plan)) {
+    // Formule inconnue : fail closed
+    return {
+      state: 'expired',
+      readOnly: true,
+      plan: row.plan,
+      daysLeft: null,
+      expiresAt: null,
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  }
+
+  if (row.price_cents == null || !row.expires_at || isNaN(Date.parse(row.expires_at))) {
+    // Organisation payante sans ligne de facturation active ou date expirée : fail closed
+    return {
+      state: 'expired',
+      readOnly: true,
+      plan: row.plan,
+      daysLeft: null,
+      expiresAt: null,
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  }
+
+  const diffDays = Math.round((Date.parse(`${row.expires_at.slice(0, 10)}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000)
+  if (diffDays >= 0) {
+    return {
+      state: 'active',
+      readOnly: false,
+      plan: row.plan,
+      daysLeft: diffDays,
+      expiresAt: row.expires_at.slice(0, 10),
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  } else if (diffDays >= -7) {
+    return {
+      state: 'grace',
+      readOnly: false,
+      plan: row.plan,
+      daysLeft: diffDays,
+      expiresAt: row.expires_at.slice(0, 10),
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  } else {
+    return {
+      state: 'expired',
+      readOnly: true,
+      plan: row.plan,
+      daysLeft: diffDays,
+      expiresAt: row.expires_at.slice(0, 10),
+      maxMembers: row.max_members,
+      maxBranches: row.max_branches,
+      maxStaff: row.max_staff,
+    }
+  }
+}
+
+async function assertEntitledWrite(env: Env, principal: Principal, orgId: string, path: string, method: string): Promise<void> {
+  const scope = activeScope(principal)
+  if (scope.mode === 'support') {
+    return
+  }
+  if (principal.isPlatformAdmin && path.startsWith('/api/admin/')) {
+    return
+  }
+
+  const entitlement = await evaluateEntitlement(env, orgId)
+  if (entitlement.readOnly) {
+    if (env.ENTITLEMENT_MODE === 'observe') {
+      console.warn('[ENTITLEMENT_OBSERVE] Write allowed in observe mode for readOnly club', {
+        orgId,
+        state: entitlement.state,
+        path,
+        method,
+      })
+      return
+    }
+
+    let msg = 'Abonnement expire ou suspendu. Action en ecriture non autorisee.'
+    if (entitlement.state === 'suspended') {
+      msg = 'Ce club est suspendu. Action en ecriture non autorisee.'
+    } else if (entitlement.state === 'cancelled') {
+      msg = 'Ce club est resilie. Action en ecriture non autorisee.'
+    } else if (entitlement.state === 'expired') {
+      msg = 'Votre abonnement a expire. Le club est en lecture seule.'
+    }
+
+    throw new HttpError(403, msg, 'ENTITLEMENT_READ_ONLY', { entitlementState: entitlement.state })
+  }
+}
+
+async function assertMemberCap(env: Env, principal: Principal, club: DurableObjectStub<ClubDatabase>, additionalCount = 1): Promise<void> {
+  const scope = activeScope(principal)
+  if (scope.mode === 'support') return
+  if (!scope.orgId) return
+
+  const entitlement = await evaluateEntitlement(env, scope.orgId)
+  if (entitlement.maxMembers !== null) {
+    const current = await club.countMembers()
+    if (current + additionalCount > entitlement.maxMembers) {
+      if (env.ENTITLEMENT_MODE === 'observe') {
+        console.warn('[ENTITLEMENT_OBSERVE] Member cap exceeded in observe mode', {
+          orgId: scope.orgId,
+          current,
+          additionalCount,
+          limit: entitlement.maxMembers,
+        })
+        return
+      }
+      const remaining = Math.max(0, entitlement.maxMembers - current)
+      const msg = additionalCount > 1
+        ? `Capacite restante insuffisante (${remaining} place(s) disponible(s), ${additionalCount} demandee(s))`
+        : 'Limite de membres atteinte pour votre formule'
+      throw new HttpError(403, msg, 'PLAN_MEMBER_LIMIT', {
+        current,
+        limit: entitlement.maxMembers,
+        remaining,
+      })
+    }
+  }
+}
+
+async function assertBranchCap(env: Env, principal: Principal, club: DurableObjectStub<ClubDatabase>): Promise<void> {
+  const scope = activeScope(principal)
+  if (scope.mode === 'support') return
+  if (!scope.orgId) return
+
+  const entitlement = await evaluateEntitlement(env, scope.orgId)
+  if (entitlement.maxBranches !== null) {
+    const { branchCount } = await club.capabilities()
+    if (branchCount >= entitlement.maxBranches) {
+      if (env.ENTITLEMENT_MODE === 'observe') {
+        console.warn('[ENTITLEMENT_OBSERVE] Branch cap exceeded in observe mode', {
+          orgId: scope.orgId,
+          current: branchCount,
+          limit: entitlement.maxBranches,
+        })
+        return
+      }
+      throw new HttpError(403, 'Limite de succursales atteinte pour votre formule', 'PLAN_BRANCH_LIMIT', {
+        current: branchCount,
+        limit: entitlement.maxBranches,
+      })
+    }
+  }
+}
+
+async function assertStaffCap(env: Env, principal: Principal, orgId: string): Promise<void> {
+  const scope = activeScope(principal)
+  if (scope.mode === 'support') return
+
+  const entitlement = await evaluateEntitlement(env, orgId)
+  if (entitlement.maxStaff !== null) {
+    const staffCount = await env.CONTROL.prepare(
+      `SELECT COUNT(*) as n FROM memberships WHERE org_id = ? AND status = 'active' AND role IN ('owner','admin','staff','viewer')`,
+    ).bind(orgId).first<{ n: number }>()
+
+    const current = staffCount?.n ?? 0
+    if (current >= entitlement.maxStaff) {
+      if (env.ENTITLEMENT_MODE === 'observe') {
+        console.warn('[ENTITLEMENT_OBSERVE] Staff cap exceeded in observe mode', {
+          orgId,
+          current,
+          limit: entitlement.maxStaff,
+        })
+        return
+      }
+      throw new HttpError(403, 'Limite d equipe atteinte pour votre formule', 'PLAN_STAFF_LIMIT', {
+        current,
+        limit: entitlement.maxStaff,
+      })
+    }
+  }
+}
+
 
 // Anti-force brute -----------------------------------------------------------
 
@@ -260,6 +697,25 @@ function optional(v: unknown, max = 200): string | null {
   return s || null
 }
 
+/** Chaine facultative avec distinction absence (undefined) / mise a null explicite (null). */
+function parseOptionalField(body: Record<string, unknown>, field: string, max = 200): string | null | undefined {
+  if (!(field in body) || body[field] === undefined) return undefined
+  const v = body[field]
+  if (v === null || v === '') return null
+  if (typeof v !== 'string') throw new HttpError(400, `Valeur attendue : texte (${field})`)
+  const s = v.trim()
+  if (s.length > max) throw new HttpError(400, `Valeur trop longue : ${field}`)
+  return s || null
+}
+
+/** Date facultative avec distinction absence (undefined) / mise a null explicite (null). */
+function parseOptionalDate(body: Record<string, unknown>, field: string): string | null | undefined {
+  if (!(field in body) || body[field] === undefined) return undefined
+  const v = body[field]
+  if (v === null || v === '') return null
+  return dateOnly(v, field)
+}
+
 /**
  * Date calendaire au format ISO, ou null.
  *
@@ -378,6 +834,8 @@ async function subscriptionOf(env: Env, orgId: string) {
   const configured = billing?.price_cents != null
   const open = invoices.results.filter(r => !(r as { paid_at: string | null }).paid_at)
 
+  const entitlement = await evaluateEntitlement(env, orgId)
+
   return {
     orgName: billing?.org_name ?? '',
     configured,
@@ -385,7 +843,8 @@ async function subscriptionOf(env: Env, orgId: string) {
     cycleMonths: billing?.cycle_months ?? null,
     expiresAt,
     daysLeft,
-    expired: configured && expiresAt !== null && daysLeft !== null && daysLeft < 0,
+    expired: entitlement.readOnly || (configured && expiresAt !== null && daysLeft !== null && daysLeft < 0),
+    entitlement,
     dueCents: open.reduce((s, r) => s + (r as { amount_cents: number }).amount_cents, 0),
     invoices: invoices.results,
     bankDetails: bank?.value ?? null,
@@ -561,6 +1020,7 @@ export const api = {
           : null
         // Le mode support doit etre visible dans l'interface : une banniere
         // permanente vaut mieux qu'un exploitant qui oublie ou il se trouve.
+        const entitlement = scope.orgId ? await evaluateEntitlement(env, scope.orgId) : null
         return json({
           user: { id: principal.userId, name: principal.name, email: principal.email },
           isPlatformAdmin: principal.isPlatformAdmin,
@@ -572,7 +1032,408 @@ export const api = {
           },
           branding: scope.orgId ? await brandingOf(env, scope.orgId) : null,
           capabilities,
+          entitlement,
         })
+      }
+
+      // Messagerie -----------------------------------------------------------
+
+      if (path === '/api/messaging/participants' && method === 'GET') {
+        messagingAllowed(principal)
+        const people = (await messagingPeople(env, scopedOrgId(principal)))
+          .filter(person => person.id !== principal.userId)
+        return json({ people })
+      }
+
+      if (path === '/api/messaging/conversations' && method === 'GET') {
+        messagingAllowed(principal)
+        const orgId = scopedOrgId(principal)
+        const people = await messagingPeople(env, orgId)
+        const conversations = await clubOf(env, principal).listConversations(principal.userId, people)
+        return json({ conversations })
+      }
+
+      if (path === '/api/messaging/dm' && method === 'POST') {
+        messagingAllowed(principal)
+        const orgId = scopedOrgId(principal)
+        const body = await readJson(request)
+        const people = await messagingPeople(env, orgId)
+        const target = people.find(person => person.id === str(body.userId, 'userId', 80) && person.id !== principal.userId)
+        if (!target) return fail(400, 'Membre hors club ou non autorise')
+        try {
+          const result = await clubOf(env, principal).openDirectConversation({
+            actor: { id: principal.userId, name: principal.name, role: principal.role ?? 'staff' },
+            target,
+          })
+          return json(result, { status: 201 })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      if (path === '/api/messaging/groups' && method === 'POST') {
+        messagingAllowed(principal)
+        const orgId = scopedOrgId(principal)
+        const body = await readJson(request)
+        const name = str(body.name, 'name', 100).trim()
+        if (name.length < 2) return fail(400, 'Nom du groupe trop court')
+        const people = await messagingPeople(env, orgId)
+        const selected = pickPeople(people, body.memberIds, { selfId: principal.userId })
+        if (selected.length === 0) return fail(400, 'Choisissez au moins un membre')
+        try {
+          const result = await clubOf(env, principal).createGroupConversation({
+            actor: { id: principal.userId, name: principal.name, role: principal.role ?? 'staff' },
+            name,
+            description: optional(body.description, 500),
+            members: selected,
+          })
+          return json(result, { status: 201 })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const conversationRoute = path.match(/^\/api\/messaging\/conversations\/([^/]+)$/)
+      if (conversationRoute && method === 'GET') {
+        messagingAllowed(principal)
+        try {
+          return json(await clubOf(env, principal).conversationDetails(
+            decodeURIComponent(conversationRoute[1]!), principal.userId,
+          ))
+        } catch (e) { conversationFailure(e) }
+      }
+
+      if (conversationRoute && method === 'PATCH') {
+        messagingAllowed(principal)
+        const body = await readJson(request)
+        try {
+          await clubOf(env, principal).renameConversation(
+            decodeURIComponent(conversationRoute[1]!),
+            principal.userId,
+            str(body.name, 'name', 100).trim(),
+          )
+          return json({ ok: true })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      if (conversationRoute && method === 'DELETE') {
+        messagingAllowed(principal)
+        try {
+          await clubOf(env, principal).archiveConversation(
+            decodeURIComponent(conversationRoute[1]!), principal.userId,
+          )
+          return json({ ok: true })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const messagesRoute = path.match(/^\/api\/messaging\/conversations\/([^/]+)\/messages$/)
+      if (messagesRoute && method === 'GET') {
+        messagingAllowed(principal)
+        try {
+          return json(await clubOf(env, principal).listConversationMessages(
+            decodeURIComponent(messagesRoute[1]!),
+            principal.userId,
+            {
+              limit: intParam(url, 'limit', 50),
+              beforeAt: url.searchParams.get('beforeAt'),
+              beforeId: url.searchParams.get('beforeId'),
+            },
+          ))
+        } catch (e) { conversationFailure(e) }
+      }
+
+      if (messagesRoute && method === 'POST') {
+        messagingAllowed(principal)
+        const body = await readJson(request)
+        try {
+          const result = await clubOf(env, principal).sendConversationMessage({
+            conversationId: decodeURIComponent(messagesRoute[1]!),
+            actor: { id: principal.userId, name: principal.name },
+            body: str(body.body, 'body', 4000),
+            mentionIds: Array.isArray(body.mentionIds) ? body.mentionIds.filter((id): id is string => typeof id === 'string') : [],
+            replyToId: optional(body.replyToId, 80),
+          })
+          return json(result, { status: 201 })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const readRoute = path.match(/^\/api\/messaging\/conversations\/([^/]+)\/read$/)
+      if (readRoute && method === 'POST') {
+        messagingAllowed(principal)
+        try {
+          await clubOf(env, principal).markConversationRead(
+            decodeURIComponent(readRoute[1]!), principal.userId,
+          )
+          return json({ ok: true })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const reactionRoute = path.match(/^\/api\/messaging\/conversations\/([^/]+)\/messages\/([^/]+)\/reactions$/)
+      if (reactionRoute && method === 'POST') {
+        messagingAllowed(principal)
+        const body = await readJson(request)
+        try {
+          await clubOf(env, principal).reactToMessage(
+            decodeURIComponent(reactionRoute[1]!),
+            decodeURIComponent(reactionRoute[2]!),
+            principal.userId,
+            str(body.emoji, 'emoji', 8),
+          )
+          return json({ ok: true })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const attachmentCollection = path.match(/^\/api\/messaging\/conversations\/([^/]+)\/attachments$/)
+      if (attachmentCollection && method === 'PUT') {
+        messagingAllowed(principal)
+        const conversationId = decodeURIComponent(attachmentCollection[1]!)
+        const fileName = str(url.searchParams.get('name'), 'name', 160).replace(/[\\/]/g, '_')
+        const contentType = request.headers.get('content-type') ?? 'application/octet-stream'
+        if (!/^(image\/png|image\/jpe?g|image\/webp|application\/pdf)$/i.test(contentType)) {
+          return fail(415, 'Type de fichier non autorise')
+        }
+        const data = await request.arrayBuffer()
+        if (data.byteLength < 1 || data.byteLength > 10 * 1024 * 1024) return fail(400, 'Fichier invalide')
+        const kind = contentType.startsWith('image/') ? 'image' : 'file'
+        const orgId = scopedOrgId(principal)
+        const key = `messaging/${orgId}/${conversationId}/${crypto.randomUUID()}-${fileName}`
+        await env.MEDIA.put(key, data, {
+          httpMetadata: { contentType },
+          customMetadata: { orgId, conversationId },
+        })
+        try {
+          const result = await clubOf(env, principal).attachMessageFile({
+            conversationId,
+            actor: { id: principal.userId, name: principal.name },
+            fileKey: key,
+            fileName,
+            contentType,
+            sizeBytes: data.byteLength,
+            kind,
+          })
+          return json(result, { status: 201 })
+        } catch (e) {
+          await env.MEDIA.delete(key).catch(() => {})
+          conversationFailure(e)
+        }
+      }
+
+      const attachmentRoute = path.match(/^\/api\/messaging\/conversations\/([^/]+)\/attachments\/([^/]+)$/)
+      if (attachmentRoute && method === 'GET') {
+        messagingAllowed(principal)
+        try {
+          const meta = await clubOf(env, principal).getMessageAttachment(
+            decodeURIComponent(attachmentRoute[1]!),
+            decodeURIComponent(attachmentRoute[2]!),
+            principal.userId,
+          )
+          if (!meta) return fail(404, 'Piece jointe introuvable')
+          const object = await env.MEDIA.get(meta.file_key)
+          if (!object) return fail(404, 'Piece jointe introuvable')
+          return new Response(object.body, {
+            headers: {
+              'Content-Type': meta.content_type,
+              'Content-Length': String(meta.size_bytes),
+              'Content-Disposition': `inline; filename="${meta.file_name.replace(/"/g, '')}"`,
+              'X-Content-Type-Options': 'nosniff',
+              'Cache-Control': 'private, max-age=60',
+            },
+          })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const groupMembersRoute = path.match(/^\/api\/messaging\/groups\/([^/]+)\/members$/)
+      if (groupMembersRoute && method === 'POST') {
+        messagingAllowed(principal)
+        const orgId = scopedOrgId(principal)
+        const body = await readJson(request)
+        const selected = pickPeople(await messagingPeople(env, orgId), body.memberIds, { selfId: principal.userId })
+        try {
+          await clubOf(env, principal).addGroupMembers(
+            decodeURIComponent(groupMembersRoute[1]!), principal.userId, selected,
+          )
+          return json({ ok: true })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const groupMemberRoute = path.match(/^\/api\/messaging\/groups\/([^/]+)\/members\/([^/]+)$/)
+      if (groupMemberRoute && method === 'DELETE') {
+        messagingAllowed(principal)
+        try {
+          await clubOf(env, principal).removeGroupMember(
+            decodeURIComponent(groupMemberRoute[1]!),
+            principal.userId,
+            decodeURIComponent(groupMemberRoute[2]!),
+          )
+          return json({ ok: true })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const groupAdminRoute = path.match(/^\/api\/messaging\/groups\/([^/]+)\/admins\/([^/]+)$/)
+      if (groupAdminRoute && (method === 'POST' || method === 'DELETE')) {
+        messagingAllowed(principal)
+        try {
+          await clubOf(env, principal).setGroupAdmin(
+            decodeURIComponent(groupAdminRoute[1]!),
+            principal.userId,
+            decodeURIComponent(groupAdminRoute[2]!),
+            method === 'POST',
+          )
+          return json({ ok: true })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      const groupLeaveRoute = path.match(/^\/api\/messaging\/groups\/([^/]+)\/leave$/)
+      if (groupLeaveRoute && method === 'POST') {
+        messagingAllowed(principal)
+        try {
+          await clubOf(env, principal).leaveGroup(
+            decodeURIComponent(groupLeaveRoute[1]!), principal.userId,
+          )
+          return json({ ok: true })
+        } catch (e) { conversationFailure(e) }
+      }
+
+      if (path === '/api/messaging/support/threads' && method === 'GET') {
+        if (!principal.isPlatformAdmin && !['owner', 'admin'].includes(principal.role ?? '')) {
+          return fail(403, 'Reserve aux responsables')
+        }
+        if (principal.isPlatformAdmin) {
+          const { results } = await env.CONTROL.prepare(
+            `SELECT t.org_id AS orgId, o.name AS orgName, t.updated_at AS updatedAt,
+                    (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastBody,
+                    0 AS unread,
+                    t.id
+               FROM support_threads t
+               JOIN organizations o ON o.id = t.org_id
+              ORDER BY t.updated_at DESC
+              LIMIT 100`,
+          ).all()
+          return json({ threads: results })
+        }
+        const orgId = scopedOrgId(principal)
+        const { results } = await env.CONTROL.prepare(
+          `SELECT t.org_id AS orgId, o.name AS orgName, t.updated_at AS updatedAt,
+                  (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastBody,
+                  0 AS unread,
+                  t.id
+             FROM support_threads t
+             JOIN organizations o ON o.id = t.org_id
+            WHERE t.org_id = ?`,
+        ).bind(orgId).all()
+        return json({ threads: results })
+      }
+
+      if (path === '/api/messaging/support' && method === 'GET') {
+        const orgId = supportOrg(principal, url)
+        if (!orgId) return json({ thread: null, messages: [] })
+        if (!principal.isPlatformAdmin && orgId !== scopedOrgId(principal)) return json({ thread: null, messages: [] })
+        const thread = await env.CONTROL.prepare(
+          'SELECT id, org_id AS orgId FROM support_threads WHERE org_id = ?',
+        ).bind(orgId).first<{ id: string; orgId: string }>()
+        if (!thread) return json({ thread: null, messages: [] })
+        const { results } = await env.CONTROL.prepare(
+          `SELECT id, author_id AS authorId, author_name AS authorName,
+                  author_kind AS authorKind, body, created_at AS createdAt
+             FROM support_messages
+            WHERE thread_id = ?
+            ORDER BY created_at ASC, id ASC
+            LIMIT 200`,
+        ).bind(thread.id).all()
+        return json({ thread, messages: results })
+      }
+
+      if (path === '/api/messaging/support' && method === 'POST') {
+        const body = await readJson(request)
+        const orgId = principal.isPlatformAdmin
+          ? str(body.orgId, 'orgId', 80)
+          : scopedOrgId(principal)
+        if (!principal.isPlatformAdmin && !['owner', 'admin'].includes(principal.role ?? '')) {
+          return fail(403, 'Reserve aux responsables')
+        }
+        await assertOrgExists(env, orgId)
+        const text = str(body.body, 'body', 4000).trim()
+        if (!text) return fail(400, 'Message vide')
+        const threadId = await ensureSupportThread(env, orgId, principal.userId)
+        await env.CONTROL.batch([
+          env.CONTROL.prepare(
+            `INSERT INTO support_messages (id, thread_id, author_id, author_name, author_kind, body)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          ).bind(
+            newId(), threadId, principal.userId,
+            principal.isPlatformAdmin ? 'GymFlow Support' : principal.name,
+            principal.isPlatformAdmin ? 'support' : 'club',
+            text,
+          ),
+          env.CONTROL.prepare(
+            "UPDATE support_threads SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+          ).bind(threadId),
+        ])
+        return json({ ok: true }, { status: 201 })
+      }
+
+      if (path === '/api/messaging/announcements' && method === 'GET') {
+        const manage = principal.isPlatformAdmin && url.searchParams.get('manage') === '1'
+        const { results } = await env.CONTROL.prepare(
+          `SELECT a.id, a.title, a.content, a.status,
+                  a.published_at AS publishedAt, a.created_at AS createdAt,
+                  u.name AS publisherName,
+                  CASE WHEN r.user_id IS NULL THEN 0 ELSE 1 END AS isRead
+             FROM platform_announcements a
+             LEFT JOIN users u ON u.id = a.created_by
+             LEFT JOIN announcement_reads r ON r.announcement_id = a.id AND r.user_id = ?
+            WHERE ${manage ? "a.status IN ('draft','published','archived')" : "a.status = 'published'"}
+            ORDER BY COALESCE(a.published_at, a.created_at) DESC, a.id DESC
+            LIMIT 100`,
+        ).bind(principal.userId).all()
+        return json({ announcements: results })
+      }
+
+      if (path === '/api/messaging/announcements' && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const body = await readJson(request)
+        const status = body.status === 'published' ? 'published' : 'draft'
+        const title = str(body.title, 'title', 160).trim()
+        const content = str(body.content, 'content', 8000).trim()
+        if (!title || !content) return fail(400, 'Annonce incomplete')
+        const id = newId()
+        await env.CONTROL.prepare(
+          `INSERT INTO platform_announcements (id, title, content, status, published_at, created_by)
+           VALUES (?, ?, ?, ?, CASE WHEN ? = 'published' THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') ELSE NULL END, ?)`,
+        ).bind(id, title, content, status, status, principal.userId).run()
+        return json({ id }, { status: 201 })
+      }
+
+      const announcementRead = path.match(/^\/api\/messaging\/announcements\/([^/]+)\/read$/)
+      if (announcementRead && method === 'POST') {
+        await env.CONTROL.prepare(
+          `INSERT INTO announcement_reads (announcement_id, user_id)
+           SELECT id, ? FROM platform_announcements WHERE id = ? AND status = 'published'
+           ON CONFLICT(announcement_id, user_id) DO UPDATE SET
+             read_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+        ).bind(principal.userId, decodeURIComponent(announcementRead[1]!)).run()
+        return json({ ok: true })
+      }
+
+      const announcementRoute = path.match(/^\/api\/messaging\/announcements\/([^/]+)$/)
+      if (announcementRoute && method === 'PATCH') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const body = await readJson(request)
+        await env.CONTROL.prepare(
+          `UPDATE platform_announcements
+              SET title = COALESCE(?, title),
+                  content = COALESCE(?, content),
+                  status = COALESCE(?, status),
+                  published_at = CASE
+                    WHEN ? = 'published' AND published_at IS NULL THEN strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                    ELSE published_at
+                  END,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+            WHERE id = ?`,
+        ).bind(
+          typeof body.title === 'string' ? str(body.title, 'title', 160).trim() : null,
+          typeof body.content === 'string' ? str(body.content, 'content', 8000).trim() : null,
+          ['draft', 'published', 'archived'].includes(String(body.status)) ? String(body.status) : null,
+          String(body.status),
+          decodeURIComponent(announcementRoute[1]!),
+        ).run()
+        return json({ ok: true })
       }
 
       // Configuration du club : succursales et disciplines.
@@ -619,6 +1480,8 @@ export const api = {
 
       if (path === '/api/disciplines' && method === 'POST') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const { id } = await clubOf(env, principal).addDiscipline(
           parseDiscipline(await readJson(request)),
         )
@@ -628,6 +1491,8 @@ export const api = {
       const ladderRoute = path.match(/^\/api\/disciplines\/([^/]+)\/grades$/)
       if (ladderRoute && method === 'PUT') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         await clubOf(env, principal).setGradeLadder(ladderRoute[1]!, parseGrades(body.grades))
         return json({ ok: true })
@@ -636,6 +1501,8 @@ export const api = {
       const disciplineRoute = path.match(/^\/api\/disciplines\/([^/]+)$/)
       if (disciplineRoute && method === 'DELETE') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         await clubOf(env, principal).deactivateDiscipline(disciplineRoute[1]!)
         return json({ ok: true })
       }
@@ -668,6 +1535,8 @@ export const api = {
       /** Mois d'ancrage de la cadence trimestrielle. */
       if (path === '/api/grades/settings' && method === 'PUT') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         const month = Number(body.anchorMonth)
         if (!Number.isInteger(month) || month < 1 || month > 12) {
@@ -682,6 +1551,8 @@ export const api = {
 
       if (path === '/api/grades/sessions' && method === 'POST') {
         atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         const { id } = await clubOf(env, principal).createGradeSession({
           memberId: str(body.memberId, 'memberId', 60),
@@ -710,6 +1581,8 @@ export const api = {
       const gradeCorrect = path.match(/^\/api\/grades\/sessions\/([^/]+)\/correction$/)
       if (gradeCorrect && method === 'POST') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         if (typeof body.passed !== 'boolean') return fail(400, 'passed doit etre vrai ou faux')
         const reason = str(body.reason, 'reason', 300).trim()
@@ -750,6 +1623,8 @@ export const api = {
       const gradeDecide = path.match(/^\/api\/grades\/sessions\/([^/]+)\/decision$/)
       if (gradeDecide && method === 'POST') {
         atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         await clubOf(env, principal).decideGradeSession({
           sessionId: gradeDecide[1]!,
@@ -870,26 +1745,45 @@ export const api = {
         const to = dateOnly(url.searchParams.get('to'), 'to')
         if (from && to && to < from) return fail(400, 'La periode se termine avant de commencer')
 
-        const [payments, byMonth, byType, byMethod, outstanding] = await Promise.all([
+        const cursor = url.searchParams.get('cursor')
+        const limit = intParam(url, 'limit', 50)
+
+        const [paymentRes, byMonth, byType, byMethod, outstanding] = await Promise.all([
           club.listPayments({
             year: year ? Number(year) : undefined,
             month: month ? Number(month) : undefined,
             from: from ?? undefined,
             to: to ?? undefined,
             branchId: optional(url.searchParams.get('branchId'), 60),
+            limit,
+            cursor,
+            scope: scopeOf(principal),
           }),
-          club.revenueByMonth(),
-          club.revenueByType(),
+          club.revenueByMonth(scopeOf(principal)),
+          club.revenueByType(scopeOf(principal)),
           club.revenueByMethod({ from: from ?? undefined, to: to ?? undefined }),
           club.outstanding(),
         ])
-        return json({ payments, byMonth, byType, byMethod, outstanding })
+
+        return json({
+          payments: paymentRes.payments,
+          items: paymentRes.items,
+          nextCursor: paymentRes.nextCursor,
+          hasMore: paymentRes.hasMore,
+          limit: paymentRes.limit,
+          byMonth,
+          byType,
+          byMethod,
+          outstanding,
+        })
       }
 
       // Annulation : une ecriture inverse, jamais une modification.
       const reverseRoute = path.match(/^\/api\/payments\/([^/]+)\/reverse$/)
       if (reverseRoute && method === 'POST') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         // Valide AVANT le try : un motif manquant est une erreur de requete
         // (400), pas un refus metier (409). Les melanger rendait « motif
@@ -916,6 +1810,8 @@ export const api = {
 
       if (path === '/api/payments' && method === 'POST') {
         atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         const amount = Number(body.amountCents)
         // Strictement positif : un encaissement de zero est du bruit dans le
@@ -957,6 +1853,8 @@ export const api = {
 
       if (path === '/api/finance/prices' && method === 'PUT') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         const price = (key: string) => {
           const v = Number(body[key])
@@ -991,6 +1889,7 @@ export const api = {
       if (path === '/api/branding' && method === 'PUT') {
         atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const result = await saveBranding(env, orgId, await readJson(request))
         if (activeScope(principal).mode === 'support') {
           await auditSupport(env, principal, 'support_write_branding', result, ip)
@@ -1012,6 +1911,7 @@ export const api = {
       if (path === '/api/branding/logo' && method === 'DELETE') {
         atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const previous = await env.CONTROL.prepare(
           'SELECT logo_key FROM organizations WHERE id = ?',
         ).bind(orgId).first<{ logo_key: string | null }>()
@@ -1031,6 +1931,7 @@ export const api = {
       if (path === '/api/branding/logo' && method === 'PUT') {
         atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const contentType = request.headers.get('Content-Type') ?? ''
         const ext = logoExtension(contentType)
 
@@ -1092,6 +1993,7 @@ export const api = {
       if (path === '/api/branding/banner' && (method === 'PUT' || method === 'DELETE')) {
         atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
 
         const previous = await env.CONTROL.prepare(
           'SELECT file_key FROM org_banners WHERE org_id = ?',
@@ -1220,6 +2122,8 @@ export const api = {
         */
         if (method === 'PUT' || method === 'DELETE') {
           atLeast(principal, 'admin', true)
+          const orgId = scopedOrgId(principal)
+          await assertEntitledWrite(env, principal, orgId, path, method)
           if (page !== 'dashboard' && !principal.isPlatformAdmin) {
             throw new HttpError(403, 'Cet ecran est dispose par la plateforme')
           }
@@ -1262,32 +2166,178 @@ export const api = {
       if (path === '/api/members' && method === 'GET') {
         atLeast(principal, 'viewer')
         const club = clubOf(env, principal)
-        // Number('abc') vaut NaN, qui traversait les bornes et arrivait tel
-        // quel dans le LIMIT — au mieux une erreur, au pire plus de limite
-        // du tout et toute la table renvoyee.
-        // Le filtre discipline vient de la barre du haut. Absent ou 'all',
-        // il ne restreint rien : un club a discipline unique ne le voit meme
-        // pas s'afficher.
-        const wanted = url.searchParams.get('disciplineId')
-        const members = await club.listMembers({
-          limit: intParam(url, 'limit', 50),
-          offset: intParam(url, 'offset', 0),
-          search: url.searchParams.get('q') ?? undefined,
-          disciplineId: wanted && wanted !== 'all' ? wanted : null,
+        const disciplineId = url.searchParams.get('disciplineId')
+        const branchId = url.searchParams.get('branchId')
+        const q = url.searchParams.get('q') ?? url.searchParams.get('search') ?? undefined
+        const status = url.searchParams.get('status')
+        const quick = url.searchParams.get('quick')
+        const sort = (url.searchParams.get('sort') ?? url.searchParams.get('orderBy')) as 'name' | 'sub_expiry' | 'created_at' | null
+        const sortDir = (url.searchParams.get('sortDir') ?? url.searchParams.get('orderDir')) as 'asc' | 'desc' | null
+        const cursor = url.searchParams.get('cursor')
+        const limit = intParam(url, 'limit', 50)
+
+        const result = await club.listMembers({
+          limit,
+          search: q,
+          disciplineId: disciplineId && disciplineId !== 'all' ? disciplineId : null,
+          branchId: branchId && branchId !== 'all' ? branchId : null,
+          status: status && status !== 'all' ? status : null,
+          quick: quick && quick !== 'all' ? quick : null,
+          sort,
+          sortDir: sortDir ?? (sort === 'name' ? 'asc' : 'desc'),
+          cursor,
+          scope: scopeOf(principal),
         })
-        return json({ members })
+
+        return json({
+          members: result.members,
+          items: result.items,
+          nextCursor: result.nextCursor,
+          hasMore: result.hasMore,
+          limit: result.limit,
+        })
+      }
+
+      if (path === '/api/members/summary' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        const club = clubOf(env, principal)
+        const disciplineId = url.searchParams.get('disciplineId')
+        const branchId = url.searchParams.get('branchId')
+        const summary = await club.memberSummary({
+          disciplineId: disciplineId && disciplineId !== 'all' ? disciplineId : null,
+          branchId: branchId && branchId !== 'all' ? branchId : null,
+          scope: scopeOf(principal),
+        })
+        return json(summary)
+      }
+
+      if (path === '/api/members/export' && method === 'GET') {
+        atLeast(principal, 'viewer')
+        const club = clubOf(env, principal)
+        const disciplineId = url.searchParams.get('disciplineId')
+        const branchId = url.searchParams.get('branchId')
+        const status = url.searchParams.get('status')
+        const sub = url.searchParams.get('sub')
+        const ins = url.searchParams.get('ins')
+        const year = url.searchParams.get('year')
+        const dormant = url.searchParams.get('dormant') === 'true'
+        const noIdDoc = url.searchParams.get('noIdDoc') === 'true'
+
+        const DANGEROUS = /^[=+\-@\t\r]/
+        const escapeCell = (val: unknown): string => {
+          if (val === null || val === undefined) return ''
+          let s = String(val)
+          if (DANGEROUS.test(s)) s = `'${s}`
+          if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
+            return `"${s.replace(/"/g, '""')}"`
+          }
+          return s
+        }
+
+        const formatDay = (iso: unknown) => {
+          if (!iso || typeof iso !== 'string') return ''
+          return iso.slice(0, 10)
+        }
+
+        const stream = new ReadableStream({
+          async start(controller) {
+            const encoder = new TextEncoder()
+            // UTF-8 BOM
+            controller.enqueue(new Uint8Array([0xef, 0xbb, 0xbf]))
+
+            const headers = [
+              'Nom', 'Telephone', 'Email', 'Salle', 'Discipline', 'Grade',
+              'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance',
+              'Piece identite', 'Numero piece',
+            ]
+            controller.enqueue(encoder.encode(headers.map(escapeCell).join(',') + '\r\n'))
+
+            let cursor: string | null = null
+            while (true) {
+              const res = await club.listMembers({
+                disciplineId: disciplineId && disciplineId !== 'all' ? disciplineId : null,
+                branchId: branchId && branchId !== 'all' ? branchId : null,
+                status: status && status !== 'all' ? status : null,
+                quick: (dormant ? 'dormant' : (sub && sub !== 'all' ? sub : (ins && ins !== 'all' ? ins : null))),
+                limit: 100,
+                cursor,
+                scope: scopeOf(principal),
+              })
+
+              let chunk = ''
+              for (const m of res.items) {
+                if (year && year !== 'all' && (!m.join_date || !String(m.join_date).startsWith(year))) continue
+                if (noIdDoc && m.id_doc_key) continue
+
+                const today = new Date().toISOString().slice(0, 10)
+                let subSt = 'Actif'
+                if (m.sub_expiry) {
+                  if (String(m.sub_expiry) < today) subSt = 'Expiré'
+                  else {
+                    const diffDays = Math.ceil((new Date(String(m.sub_expiry)).getTime() - Date.now()) / 86400000)
+                    if (diffDays <= 7) subSt = 'Expire bientôt'
+                  }
+                }
+
+                let insSt = m.is_insured ? 'Assuré' : 'Non assuré'
+                if (m.is_insured && m.ins_expiry) {
+                  if (String(m.ins_expiry) < today) insSt = 'Expirée'
+                  else {
+                    const diffDays = Math.ceil((new Date(String(m.ins_expiry)).getTime() - Date.now()) / 86400000)
+                    if (diffDays <= 30) insSt = 'Expire bientôt'
+                  }
+                }
+
+                const row = [
+                  m.name,
+                  m.phone,
+                  m.email ?? '',
+                  m.branch_name ?? '',
+                  m.discipline_name ?? '',
+                  m.grade_label ?? '',
+                  formatDay(m.join_date),
+                  subSt,
+                  formatDay(m.sub_expiry),
+                  insSt,
+                  m.is_insured ? formatDay(m.ins_expiry) : '',
+                  m.id_doc_type === 'cin' ? 'Carte nationale' : m.id_doc_type === 'passeport' ? 'Passeport' : '',
+                  m.id_doc_number ?? '',
+                ]
+                chunk += row.map(escapeCell).join(',') + '\r\n'
+              }
+              if (chunk.length > 0) {
+                controller.enqueue(encoder.encode(chunk))
+              }
+
+              if (!res.hasMore || !res.nextCursor) break
+              cursor = res.nextCursor
+            }
+            controller.close()
+          },
+        })
+
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': `attachment; filename="membres-${new Date().toISOString().slice(0, 10)}.csv"`,
+            'Cache-Control': 'no-store',
+          },
+        })
       }
 
       if (path === '/api/members' && method === 'POST') {
         atLeast(principal, 'staff', true)
-        const body = await readJson(request)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const club = clubOf(env, principal)
+        await assertMemberCap(env, principal, club, 1)
+        const body = await readJson(request)
         const { id } = await club.addMember({
           name: str(body.name, 'name'),
           phone: str(body.phone, 'phone', 30),
-          email: typeof body.email === 'string' ? normEmail(body.email) : null,
-          branchId: typeof body.branchId === 'string' ? body.branchId : null,
-          disciplineId: typeof body.disciplineId === 'string' ? body.disciplineId : null,
+          email: typeof body.email === 'string' && body.email.trim() ? normEmail(body.email) : null,
+          branchId: typeof body.branchId === 'string' && body.branchId.trim() ? body.branchId : null,
+          disciplineId: typeof body.disciplineId === 'string' && body.disciplineId.trim() ? body.disciplineId : null,
           subExpiry: dateOnly(body.subExpiry, 'subExpiry'),
           joinDate: dateOnly(body.joinDate, 'joinDate'),
           insExpiry: dateOnly(body.insExpiry, 'insExpiry'),
@@ -1299,28 +2349,41 @@ export const api = {
       }
 
       const memberRoute = path.match(/^\/api\/members\/([^/]+)$/)
-      if (memberRoute && (method === 'PATCH' || method === 'DELETE')) {
-        atLeast(principal, 'staff', true)
+      if (memberRoute && (method === 'GET' || method === 'PATCH' || method === 'DELETE')) {
+        const memberId = memberRoute[1]!
         const club = clubOf(env, principal)
+
+        if (method === 'GET') {
+          atLeast(principal, 'viewer')
+          const member = await club.getMember(memberId)
+          if (!member) return fail(404, 'Membre inconnu')
+          assertMemberScope(principal, member as { branch_id?: string | null; discipline_id?: string | null })
+          return json({ member })
+        }
+
+        atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
+
         if (method === 'DELETE') {
           // Archive, jamais supprime : les encaissements doivent rester
           // rattaches a quelqu'un.
-          await club.archiveMember(memberRoute[1]!, { id: principal.userId, name: principal.name })
+          await club.archiveMember(memberId, { id: principal.userId, name: principal.name })
           return json({ ok: true })
         }
         const body = await readJson(request)
-        await club.updateMember(memberRoute[1]!, {
-          name: optional(body.name, 200) ?? undefined,
-          phone: optional(body.phone, 30) ?? undefined,
-          email: optional(body.email, 200),
-          branchId: optional(body.branchId, 60),
-          disciplineId: optional(body.disciplineId, 60),
-          gradeId: optional(body.gradeId, 60),
-          subExpiry: dateOnly(body.subExpiry, 'subExpiry'),
-          insExpiry: dateOnly(body.insExpiry, 'insExpiry'),
-          joinDate: dateOnly(body.joinDate, 'joinDate'),
-          isInsured: typeof body.isInsured === 'boolean' ? body.isInsured : undefined,
-          notes: optional(body.notes, 1000),
+        await club.updateMember(memberId, {
+          name: parseOptionalField(body, 'name', 200) ?? undefined,
+          phone: parseOptionalField(body, 'phone', 30) ?? undefined,
+          email: parseOptionalField(body, 'email', 200),
+          branchId: parseOptionalField(body, 'branchId', 60),
+          disciplineId: parseOptionalField(body, 'disciplineId', 60),
+          gradeId: parseOptionalField(body, 'gradeId', 60),
+          subExpiry: parseOptionalDate(body, 'subExpiry'),
+          insExpiry: parseOptionalDate(body, 'insExpiry'),
+          joinDate: parseOptionalDate(body, 'joinDate'),
+          isInsured: typeof body.isInsured === 'boolean' ? body.isInsured : (body.isInsured === null ? false : undefined),
+          notes: parseOptionalField(body, 'notes', 1000),
           actorId: principal.userId, actorName: principal.name,
         })
         return json({ ok: true })
@@ -1338,6 +2401,8 @@ export const api = {
        */
       if (path === '/api/members/import' && method === 'POST') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         const rows = body.rows
         if (!Array.isArray(rows)) return fail(400, 'rows doit etre une liste')
@@ -1349,6 +2414,8 @@ export const api = {
         }
 
         const club = clubOf(env, principal)
+        await assertMemberCap(env, principal, club, rows.length)
+
         const created: string[] = []
         const rejected: Array<{ line: number; reason: string }> = []
 
@@ -1397,6 +2464,8 @@ export const api = {
       const memberPhoto = path.match(/^\/api\/members\/([^/]+)\/photo$/)
       if (memberPhoto && method === 'PUT') {
         atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const memberId = memberPhoto[1]!
         const club = clubOf(env, principal)
         if (!(await club.getMember(memberId))) return fail(404, 'Membre inconnu')
@@ -1449,6 +2518,8 @@ export const api = {
 
       if (memberPhoto && method === 'DELETE') {
         atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const { previousKey } = await clubOf(env, principal)
           .clearMemberPhoto(memberPhoto[1]!, { id: principal.userId, name: principal.name })
         if (previousKey) await env.MEDIA.delete(previousKey)
@@ -1467,6 +2538,8 @@ export const api = {
       const memberDoc = path.match(/^\/api\/members\/([^/]+)\/document$/)
       if (memberDoc && method === 'PUT') {
         atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const memberId = memberDoc[1]!
         const club = clubOf(env, principal)
         const member = await club.getMember(memberId)
@@ -1534,6 +2607,8 @@ export const api = {
 
       if (memberDoc && method === 'DELETE') {
         atLeast(principal, 'admin', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const { previousKey } = await clubOf(env, principal)
           .clearMemberDocument(memberDoc[1]!, { id: principal.userId, name: principal.name })
         if (previousKey) await env.MEDIA.delete(previousKey)
@@ -1543,6 +2618,8 @@ export const api = {
       const renewRoute = path.match(/^\/api\/members\/([^/]+)\/renew$/)
       if (renewRoute && method === 'POST') {
         atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         const amount = Number(body.amountCents ?? 0)
         if (!Number.isFinite(amount) || amount < 0 || amount > 100_000_000) {
@@ -1568,6 +2645,8 @@ export const api = {
       const insuranceRoute = path.match(/^\/api\/members\/([^/]+)\/insurance$/)
       if (insuranceRoute && method === 'POST') {
         atLeast(principal, 'staff', true)
+        const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const body = await readJson(request)
         const months = Number(body.months ?? 12)
         if (!Number.isInteger(months) || months < 1 || months > 36) {
@@ -1604,6 +2683,8 @@ export const api = {
       if (path === '/api/staff' && method === 'POST') {
         atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
+        await assertStaffCap(env, principal, orgId)
         const body = await readJson(request)
 
         const name = str(body.name, 'name', 120)
@@ -1640,6 +2721,7 @@ export const api = {
       if (staffRoute && (method === 'PATCH' || method === 'DELETE')) {
         atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)
+        await assertEntitledWrite(env, principal, orgId, path, method)
         const membershipId = staffRoute[1]!
 
         const target = await env.CONTROL.prepare(
@@ -1713,6 +2795,47 @@ export const api = {
       }
 
       // Plateforme (superadmin) ------------------------------------------
+
+      if (path === '/api/admin/step-up' && method === 'POST') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!token) return fail(401, 'Session absente')
+
+        const failureCount = await env.CONTROL.prepare(
+          `SELECT COUNT(*) as count FROM login_attempts
+            WHERE identifier = ? AND succeeded = 0
+              AND attempted_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-15 minutes')`,
+        ).bind(principal.email).first<{ count: number }>()
+
+        if ((failureCount?.count ?? 0) >= 10) {
+          return fail(429, 'Trop de tentatives infructueuses. Veuillez patienter.')
+        }
+
+        const body = await readJson(request)
+        const password = str(body.password, 'password', 200)
+        const row = await env.CONTROL.prepare('SELECT password_hash FROM users WHERE id = ?')
+          .bind(principal.userId).first<{ password_hash: string }>()
+
+        if (!row || !(await verifyPassword(password, row.password_hash))) {
+          await env.CONTROL.prepare(
+            `INSERT INTO login_attempts (identifier, ip, succeeded, attempted_at)
+             VALUES (?, ?, 0, strftime('%Y-%m-%dT%H:%M:%SZ','now'))`,
+          ).bind(principal.email, ip).run()
+          return fail(401, 'Mot de passe incorrect')
+        }
+
+        const expiresAt = await grantStepUp(env, token, principal.userId)
+        await env.CONTROL.prepare(
+          "INSERT INTO platform_audit (actor_id, action, detail, ip) VALUES (?, 'step_up', ?, ?)",
+        ).bind(principal.userId, JSON.stringify({ expiresAt }), ip).run()
+
+        return json({ ok: true, expiresAt })
+      }
+
+      if (path === '/api/admin/step-up' && method === 'GET') {
+        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const valid = await hasStepUp(env, token, principal.userId)
+        return json({ ok: true, steppedUp: valid })
+      }
 
       if (path === '/api/admin/clubs' && method === 'GET') {
         if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
@@ -2547,10 +3670,7 @@ export const api = {
         ).bind(orgId).first<{ id: string; name: string }>()
         if (!org) return fail(404, 'Club inconnu')
 
-        // `readOnly` est un choix explicite, pas le defaut : entrer pour
-        // depanner suppose de pouvoir agir.
-        const body = await request.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>))
-        const { expiresAt, canWrite } = await beginSupport(env, token, orgId, body.readOnly === true)
+        const { expiresAt, canWrite } = await beginSupport(env, token, orgId)
 
         await env.CONTROL.prepare(
           "INSERT INTO platform_audit (actor_id, action, org_id, detail, ip) VALUES (?, 'support_enter', ?, ?, ?)",
@@ -2631,7 +3751,13 @@ export const api = {
 
       return fail(404, 'Route inconnue')
     } catch (e) {
-      if (e instanceof HttpError) return fail(e.status, e.message)
+      if (e instanceof HttpError) {
+        return json({
+          error: e.message,
+          ...(e.code ? { code: e.code } : {}),
+          ...(e.extra ?? {}),
+        }, { status: e.status })
+      }
       // Erreurs de validation : le message est ecrit pour l'utilisateur.
       if (e instanceof LayoutError || e instanceof BrandingError) return fail(400, e.message)
       console.error('unhandled', e)

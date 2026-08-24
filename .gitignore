@@ -20,3 +20,6 @@ build
 
 .ai/tasks/*
 !.ai/tasks/.gitkeep
+
+.ai/requests/*.md
+!.ai/requests/.gitkeep

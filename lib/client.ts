@@ -10,18 +10,35 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const financial = (method === 'POST' && (
+    path === '/api/payments' ||
+    /^\/api\/payments\/[^/]+\/reverse$/.test(path) ||
+    /^\/api\/members\/[^/]+\/(renew|insurance)$/.test(path) ||
+    /^\/api\/admin\/billing\/[^/]+\/(invoices|renew)$/.test(path) ||
+    /^\/api\/admin\/proofs\/[^/]+\/(accept|reject)$/.test(path) ||
+    /^\/api\/admin\/invoices\/[^/]+\/paid$/.test(path)
+  )) || (method === 'DELETE' && /^\/api\/admin\/invoices\/[^/]+\/paid$/.test(path))
+  // Conservee pour une eventuelle seconde tentative apres perte de reponse.
+  const idemKey = financial ? crypto.randomUUID() : null
+  const send = () => fetch(path, {
+    method,
+    credentials: 'same-origin',
+    headers: {
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...(idemKey ? { 'Idempotency-Key': idemKey } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
   let res: Response
   try {
-    res = await fetch(path, {
-      method,
-      credentials: 'same-origin',
-      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    })
+    res = await send()
   } catch {
-    // Panne reseau : distinguee d'un refus du serveur, parce que la conduite
-    // a tenir n'est pas la meme pour l'utilisateur.
-    throw new ApiError(0, 'Connexion indisponible. Verifiez votre reseau.')
+    // Une seule reprise, avec la MEME cle : si le premier appel a ete commis
+    // avant la coupure, le serveur rend son resultat original.
+    if (!financial) throw new ApiError(0, 'Connexion indisponible. Verifiez votre reseau.')
+    try { res = await send() } catch {
+      throw new ApiError(0, 'Connexion indisponible. Verifiez votre reseau.')
+    }
   }
 
   const isJson = (res.headers.get('content-type') ?? '').includes('json')
@@ -47,6 +64,16 @@ export const api = {
   // slug y soit repete, faute de quoi un appel direct contournerait la
   // confirmation de l'interface.
   del:  <T>(path: string, body?: unknown) => request<T>('DELETE', path, body),
+}
+
+export async function privileged<T>(action: () => Promise<T>): Promise<T> {
+  try { return await action() } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 403 || error.message !== 'STEP_UP_REQUIRED') throw error
+    const password = window.prompt('Confirmez votre mot de passe Superadmin pour cette action sensible :')
+    if (!password) throw new ApiError(403, 'Confirmation Superadmin annulee')
+    await api.post('/api/admin/step-up', { password })
+    return action()
+  }
 }
 
 /**

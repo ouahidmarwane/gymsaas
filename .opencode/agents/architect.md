@@ -1,6 +1,6 @@
 ---
 description: Read-only GymFlow architecture and implementation planning
-mode: subagent
+mode: primary
 model: opencode/nemotron-3.5-lightning-free
 temperature: 0.1
 permission:
@@ -26,4 +26,4 @@ Inspect only relevant code. Determine relevant files, D1 versus club Durable Obj
 
 Return report content for `architecture.md` beginning with exactly `STATUS: PLAN_READY`, followed by: Task understanding; Existing architecture; Relevant files; Database impact; Auth & authorization; Multi-tenant impact; Cloudflare/runtime impact; Implementation plan; Testing plan; Risks; Unknowns.
 
-If a critical ambiguity prevents a safe plan, begin with exactly `STATUS: BLOCKED` and explain the missing decision. Do not use BLOCKED for provider or quota errors.
+If a critical ambiguity prevents a safe plan, begin with exactly `STATUS: BLOCKED` and explain the missing decision. Do not use BLOCKED for provider or quota errors. The Codex Orchestrator makes one call to this role; do not retry provider failures.

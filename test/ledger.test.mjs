@@ -51,6 +51,9 @@ before(async () => {
   assert.equal((await ops.call('POST', '/api/auth/login', {
     email, password: 'motdepasse-solide-op',
   })).status, 200)
+  assert.equal((await ops.call('POST', '/api/admin/step-up', {
+    password: 'motdepasse-solide-op',
+  })).status, 200)
 })
 
 // 1 — Montant fige ---------------------------------------------------------

@@ -91,6 +91,10 @@ test('passer d un club a l autre ne laisse rien du precedent', async () => {
 
 test('l habillage pose depuis le support appartient au club visite', async () => {
   await ops.call('POST', `/api/admin/clubs/${idB}/support`)
+  assert.equal((await ops.call('POST', '/api/admin/step-up', {
+    password: 'motdepasse-solide-t2',
+  })).status, 200)
+  assert.equal((await ops.call('POST', '/api/admin/support/write')).status, 200)
   const saved = await ops.call('PUT', '/api/branding', { theme: { accent: '#c2410c', skin: 'chaleureux' } })
   assert.equal(saved.status, 200)
   await ops.call('DELETE', '/api/admin/support')

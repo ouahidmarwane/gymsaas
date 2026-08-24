@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   ShieldAlert, LogOut, Check, Activity, Lock, Ban, MapPin, Unlock, ChevronDown,
 } from 'lucide-react'
-import { api, ApiError } from '@/lib/client'
+import { api, ApiError, privileged } from '@/lib/client'
 import ClubsMap, { type MapClub } from '@/components/ClubsMap'
 
 interface Session {
@@ -103,7 +103,7 @@ export default function SupervisionPage() {
 
   async function act(key: string, run: () => Promise<unknown>, done?: string) {
     setBusy(key); setError(null); setNotice(null)
-    try { await run(); await load(); if (done) setNotice(done) }
+    try { await privileged(run); await load(); if (done) setNotice(done) }
     catch (e) { setError(e instanceof ApiError ? e.message : 'Action impossible') }
     finally { setBusy(null) }
   }

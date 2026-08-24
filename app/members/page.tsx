@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus, MessageCircle, Pencil, Trash2, TriangleAlert,
-  ChevronDown, ArrowUp, ArrowDown, Download, Target, Upload, IdCard,
+  ChevronDown, ArrowUp, ArrowDown, Download, Target, Upload, IdCard, Loader2,
 } from 'lucide-react'
 import { useDiscipline } from '@/lib/discipline'
 import { api, ApiError, type Me } from '@/lib/client'
@@ -23,6 +23,15 @@ import {
 
 interface Branch { id: string; name: string }
 interface Discipline { id: string; name: string; has_grading: number }
+interface MemberSummary {
+  total: number
+  active: number
+  expiring: number
+  expired: number
+  uninsured: number
+  ins_expiring: number
+  dormant: number
+}
 
 const AVATAR_COLORS = ['#818cf8', '#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa']
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('fr-FR') : '—')
@@ -36,74 +45,165 @@ export default function MembersPage() {
 
   const [branch, setBranch] = useState('all')
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [quick, setQuick] = useState('all')
   const [sortBy, setSortBy] = useState<'name' | 'sub_expiry' | null>(null)
   const [sortDir, setSortDir] = useState<1 | -1>(1)
+
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [summary, setSummary] = useState<MemberSummary | null>(null)
 
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [editing, setEditing] = useState<MemberRow | null>(null)
   const [adding, setAdding] = useState(false)
-  // La fiche est retenue par son identifiant, pas par la ligne : apres un
-  // rechargement, une copie figee afficherait encore l'ancienne piece
-  // d'identite juste apres l'avoir remplacee.
   const [detailId, setDetailId] = useState<string | null>(null)
+  const [detailMember, setDetailMember] = useState<MemberRow | null>(null)
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
 
+  const searchSeqRef = useRef(0)
+
+  // 250ms debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim())
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [search])
+
+  const fetchMembers = useCallback(async (cursorToUse: string | null = null, append = false) => {
+    const seq = ++searchSeqRef.current
+    if (append) setLoadingMore(true)
+
+    try {
+      const params = new URLSearchParams()
+      params.set('limit', '50')
+      if (active !== 'all') params.set('disciplineId', active)
+      if (branch !== 'all') params.set('branchId', branch)
+      if (debouncedSearch) params.set('q', debouncedSearch)
+      if (quick !== 'all') params.set('quick', quick)
+      if (sortBy) {
+        params.set('sort', sortBy)
+        params.set('sortDir', sortDir === 1 ? 'asc' : 'desc')
+      }
+      if (cursorToUse) params.set('cursor', cursorToUse)
+
+      const res = await api.get<{
+        members: MemberRow[]
+        items?: MemberRow[]
+        nextCursor: string | null
+        hasMore: boolean
+      }>(`/api/members?${params.toString()}`)
+
+      if (seq !== searchSeqRef.current) return
+
+      const fetchedList = res.items ?? res.members ?? []
+      if (append) {
+        setMembers(prev => [...(prev ?? []), ...fetchedList])
+      } else {
+        setMembers(fetchedList)
+      }
+      setNextCursor(res.nextCursor ?? null)
+      setHasMore(Boolean(res.hasMore))
+    } catch (e) {
+      if (seq === searchSeqRef.current) {
+        setError(e instanceof ApiError ? e.message : 'Chargement impossible')
+        if (!append) setMembers([])
+      }
+    } finally {
+      if (append) setLoadingMore(false)
+    }
+  }, [active, branch, debouncedSearch, quick, sortBy, sortDir])
+
+  const fetchSummary = useCallback(async () => {
+    try {
+      const params = new URLSearchParams()
+      if (active !== 'all') params.set('disciplineId', active)
+      if (branch !== 'all') params.set('branchId', branch)
+      const data = await api.get<MemberSummary>(`/api/members/summary?${params.toString()}`)
+      setSummary(data)
+    } catch {
+      // Ignorer l'echec du resume si la liste charge
+    }
+  }, [active, branch])
+
   const reload = useCallback(async () => {
-    const [m, b, d] = await Promise.all([
-      api.get<{ members: MemberRow[] }>(`/api/members?limit=500&disciplineId=${active}`),
+    setNextCursor(null)
+    await Promise.all([
+      fetchMembers(null, false),
+      fetchSummary(),
+    ])
+  }, [fetchMembers, fetchSummary])
+
+  // Initial load
+  useEffect(() => {
+    Promise.all([
+      api.get<Me>('/api/me'),
       api.get<{ branches: Branch[] }>('/api/branches'),
       api.get<{ disciplines: Discipline[] }>('/api/disciplines'),
-    ])
-    setMembers(m.members); setBranches(b.branches); setDisciplines(d.disciplines)
-  }, [active])
+    ]).then(([meData, bData, dData]) => {
+      setMe(meData)
+      setBranches(bData.branches)
+      setDisciplines(dData.disciplines)
+    }).catch(e => {
+      setError(e instanceof ApiError ? e.message : 'Chargement impossible')
+    })
+  }, [])
 
+  // Refetch when filters change
   useEffect(() => {
-    Promise.all([api.get<Me>('/api/me'), reload()])
-      .then(([meData]) => setMe(meData))
-      .catch(e => {
-        setError(e instanceof ApiError ? e.message : 'Chargement impossible')
-        setMembers([])
-      })
+    reload()
   }, [reload])
+
+  // Fetch individual member for detail view
+  useEffect(() => {
+    if (!detailId) {
+      setDetailMember(null)
+      return
+    }
+    const local = members?.find(m => m.id === detailId)
+    if (local) setDetailMember(local)
+
+    api.get<{ member: MemberRow }>(`/api/members/${detailId}`)
+      .then(res => {
+        if (res.member) setDetailMember(res.member)
+      })
+      .catch(() => {})
+  }, [detailId, members])
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore || !hasMore) return
+    await fetchMembers(nextCursor, true)
+  }, [nextCursor, loadingMore, hasMore, fetchMembers])
 
   const canWrite = me
     ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin', 'staff'].includes(me.org?.role ?? ''))
     : false
 
-  // Retirer une piece d'identite est definitif : reserve aux responsables,
-  // pas au comptoir.
   const canManageDocs = me
     ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin'].includes(me.org?.role ?? ''))
     : false
 
   const clubName = me?.branding?.name ?? 'votre club'
   const all = useMemo(() => members ?? [], [members])
-  const detail = useMemo(() => all.find(m => m.id === detailId) ?? null, [all, detailId])
 
-  // La colonne ceinture n'a de sens que si la discipline retenue est gradee.
-  // Un club de boxe ne doit pas voir une colonne vide sur toute sa liste.
   const showBelt = active === 'all'
     ? disciplines.some(d => d.has_grading === 1)
     : disciplines.find(d => d.id === active)?.has_grading === 1
 
-  const inBranch = useMemo(
-    () => (branch === 'all' ? all : all.filter(m => m.branch_id === branch)),
-    [all, branch],
-  )
-
   const counts = useMemo(() => ({
-    all: inBranch.length,
-    active: inBranch.filter(m => subStatus(m) === 'active').length,
-    expiring: inBranch.filter(m => subStatus(m) === 'expiring').length,
-    expired: inBranch.filter(m => subStatus(m) === 'expired').length,
-    uninsured: inBranch.filter(m => insStatus(m) === 'uninsured').length,
-    ins_expiring: inBranch.filter(m => insStatus(m) === 'expiring').length,
-    dormant: inBranch.filter(isDormant).length,
-  }), [inBranch])
+    all: summary?.total ?? all.length,
+    active: summary?.active ?? all.filter(m => subStatus(m) === 'active').length,
+    expiring: summary?.expiring ?? all.filter(m => subStatus(m) === 'expiring').length,
+    expired: summary?.expired ?? all.filter(m => subStatus(m) === 'expired').length,
+    uninsured: summary?.uninsured ?? all.filter(m => insStatus(m) === 'uninsured').length,
+    ins_expiring: summary?.ins_expiring ?? all.filter(m => insStatus(m) === 'expiring').length,
+    dormant: summary?.dormant ?? all.filter(isDormant).length,
+  }), [summary, all])
 
   const filterItems = useMemo(() => [
     { key: 'all', label: <>Tous les résultats <b>{counts.all}</b></> },
@@ -114,29 +214,6 @@ export default function MembersPage() {
     { key: 'ins_expiring', label: <>Assurance expire <b>{counts.ins_expiring}</b></> },
     { key: 'dormant', label: <>Inactifs +3&nbsp;mois <b>{counts.dormant}</b></> },
   ], [counts])
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    const list = inBranch.filter(m => {
-      const matchQ = !q || m.name.toLowerCase().includes(q)
-        || m.phone.includes(q) || (m.email ?? '').toLowerCase().includes(q)
-      const matchF =
-        quick === 'all' ? true
-          : quick === 'uninsured' ? insStatus(m) === 'uninsured'
-          : quick === 'ins_expiring' ? insStatus(m) === 'expiring'
-          : quick === 'dormant' ? isDormant(m)
-          : subStatus(m) === quick
-      return matchQ && matchF
-    })
-    if (sortBy) {
-      list.sort((a, b) => {
-        const va = (sortBy === 'name' ? a.name : a.sub_expiry ?? '') || ''
-        const vb = (sortBy === 'name' ? b.name : b.sub_expiry ?? '') || ''
-        return va.localeCompare(vb, 'fr') * sortDir
-      })
-    }
-    return list
-  }, [inBranch, search, quick, sortBy, sortDir])
 
   function toggleSort(key: 'name' | 'sub_expiry') {
     if (sortBy !== key) { setSortBy(key); setSortDir(1); return }
@@ -151,19 +228,12 @@ export default function MembersPage() {
     finally { setBusy(null) }
   }
 
-  /**
-   * Export de la vue affichee.
-   *
-   * Le BOM et le desamorcage des formules vivent dans `toCsv` : une cellule
-   * qui commence par « = » s'execute a l'ouverture dans un tableur, et un
-   * fichier exporte finit toujours par etre ouvert quelque part.
-   */
   function exportCsv() {
-    if (filtered.length === 0) return
+    if (all.length === 0) return
     const rows: unknown[][] = [
       ['Nom', 'Téléphone', 'E-mail', 'Salle', 'Discipline', 'Grade',
        'Inscription', 'Abonnement', 'Fin abonnement', 'Assurance', 'Fin assurance'],
-      ...filtered.map(m => [
+      ...all.map(m => [
         m.name, m.phone, m.email ?? '', m.branch_name ?? '',
         m.discipline_name ?? '', m.grade_label ?? '',
         day(m.join_date), SUB_LABEL[subStatus(m)], day(m.sub_expiry),
@@ -178,15 +248,15 @@ export default function MembersPage() {
       page="members"
       me={me}
       title="Membres"
-      subtitle={members ? `${all.length} inscrit${all.length > 1 ? 's' : ''}` : 'Chargement…'}
+      subtitle={summary ? `${summary.total} inscrit${summary.total > 1 ? 's' : ''}` : (members ? `${all.length} affiché${all.length > 1 ? 's' : ''}` : 'Chargement…')}
       actions={
         <>
-          <button className="btn-ghost" onClick={exportCsv} disabled={filtered.length === 0}
+          <button className="btn-ghost" onClick={exportCsv} disabled={all.length === 0}
                   title="Exporter la vue affichée">
             <Download size={15} strokeWidth={2.2} /> Exporter CSV
           </button>
           <button className="btn-ghost" onClick={() => setExporting(true)}
-                  disabled={all.length === 0}
+                  disabled={all.length === 0 && (summary?.total ?? 0) === 0}
                   title="Choisir précisément qui exporter">
             <Target size={15} strokeWidth={2.2} /> Export filtré
           </button>
@@ -216,7 +286,7 @@ export default function MembersPage() {
         )}
       </div>
 
-      <AlertsBanner members={inBranch} />
+      <AlertsBanner members={all} />
 
       {/* Filtres : salle, recherche, statut. */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -237,20 +307,20 @@ export default function MembersPage() {
         <div className="members-skeleton-row" style={{ height: 220, border: 'none', borderRadius: 22 }} />
       )}
 
-      {members && filtered.length === 0 && (
+      {members && all.length === 0 && (
         <section className="dz-card">
           <div className="members-empty">
             <div className="members-empty-icon">👥</div>
             <div className="members-empty-text">
-              {all.length === 0
-                ? 'Aucun membre pour l’instant.'
-                : 'Aucun membre ne correspond à ce filtre.'}
+              {debouncedSearch || quick !== 'all' || branch !== 'all'
+                ? 'Aucun membre ne correspond à ce filtre.'
+                : 'Aucun membre pour l’instant.'}
             </div>
           </div>
         </section>
       )}
 
-      {members && filtered.length > 0 && (
+      {members && all.length > 0 && (
         <div className="dz-card members-page-table" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -265,7 +335,7 @@ export default function MembersPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(m => {
+                {all.map(m => {
                   const sub = subStatus(m)
                   const ins = insStatus(m)
                   const wa = whatsappFor(m, clubName)
@@ -275,9 +345,6 @@ export default function MembersPage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
                           <Avatar member={m} />
                           <div style={{ minWidth: 0 }}>
-                            {/* Le nom ouvre la fiche : c'est l'endroit ou l'on
-                                clique d'instinct quand quelqu'un est au
-                                comptoir, et le menu ⋯ demandait un detour. */}
                             <button className="members-name-btn" title="Voir la fiche"
                                     onClick={() => setDetailId(m.id)}
                                     style={{
@@ -301,11 +368,6 @@ export default function MembersPage() {
 
                       {showBelt && (
                         <td style={{ padding: '0.85rem 1rem' }}>
-                          {/* « sans grade » plutot qu'un tiret : le tiret veut
-                              dire « pas d'information », alors qu'ici on sait
-                              exactement ou en est le membre — il n'a pas encore
-                              passe sa premiere ceinture. C'est justement lui
-                              qu'on cherche dans la liste des eligibles. */}
                           <BeltBadge label={m.grade_label ?? 'sans grade'} color={m.grade_color} />
                         </td>
                       )}
@@ -390,18 +452,42 @@ export default function MembersPage() {
               </tbody>
             </table>
           </div>
+
+          {hasMore && (
+            <div style={{
+              display: 'flex', justifyContent: 'center', padding: '16px 20px',
+              borderTop: '1px solid var(--hairline)', background: 'var(--overlay-soft)',
+            }}>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={loadMore}
+                disabled={loadingMore}
+                style={{ minWidth: 200, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
+                {loadingMore ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    Chargement…
+                  </>
+                ) : (
+                  'Charger plus de membres'
+                )}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {detail && (
+      {detailMember && (
         <MemberDetail
-          member={detail}
+          member={detailMember}
           canWrite={canWrite}
           canDelete={canManageDocs}
           clubName={clubName}
           showBelt={showBelt}
-          onClose={() => setDetailId(null)}
-          onEdit={() => { setDetailId(null); setEditing(detail) }}
+          onClose={() => { setDetailId(null); setDetailMember(null) }}
+          onEdit={() => { const d = detailMember; setDetailId(null); setDetailMember(null); setEditing(d) }}
           onChanged={reload}
         />
       )}
@@ -440,8 +526,6 @@ export default function MembersPage() {
   )
 }
 
-// Briques ----------------------------------------------------------------
-
 function Th({ label, sort, sortBy, sortDir, onSort }: {
   label: string
   sort?: 'name' | 'sub_expiry'
@@ -479,8 +563,6 @@ function Avatar({ member }: { member: MemberRow }) {
       display: 'grid', placeItems: 'center',
       background: color, color: '#0b111c', fontWeight: 800, fontSize: '0.8rem',
     }}>
-      {/* La photo quand elle existe, l'initiale sinon : deux lignes voisines
-          doivent rester alignees, donc jamais de cadre vide en attendant. */}
       {photo
         ? <img src={photo} alt="" loading="lazy"
                style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -489,18 +571,6 @@ function Avatar({ member }: { member: MemberRow }) {
   )
 }
 
-/**
- * La ceinture porte sa vraie couleur, declaree par le club.
- * Une pastille grise pour « ceinture noire » ne dit rien a personne.
- *
- * Une seule pastille, et non une par discipline : un membre n'appartient
- * qu'a une discipline (`members.discipline_id`), donc son grade est deja
- * celui de sa discipline. Une colonne multi-pastilles decrirait un modele
- * de donnees qui n'existe pas.
- *
- * Meme source de verite que l'ecran des passages : `members.grade_id`, que
- * la decision d'un passage reussi fait avancer. Aucun calcul parallele.
- */
 function BeltBadge({ label, color }: { label: string; color: string | null }) {
   const tint = color ?? '#94a3b8'
   return (
@@ -517,12 +587,6 @@ function BeltBadge({ label, color }: { label: string; color: string | null }) {
   )
 }
 
-/**
- * Bandeau d'alertes, replie par defaut.
- *
- * Une ligne quand tout va bien serait du bruit permanent : il ne s'affiche
- * que s'il a quelque chose a dire, et le detail par categorie attend le clic.
- */
 function AlertsBanner({ members }: { members: MemberRow[] }) {
   const [open, setOpen] = useState(false)
   const [group, setGroup] = useState<string | null>(null)
