@@ -1,9 +1,30 @@
-# GymFlow
+<p align="center">
+  <img src="./docs/assets/readme-hero.svg" width="100%" alt="GymFlow — plateforme SaaS multi-clubs sur Cloudflare" />
+</p>
 
-GymFlow est une plateforme SaaS multi-clubs de gestion sportive, conçue pour
-Cloudflare. L'application réunit la gestion des membres, paiements, présences,
-grades, équipes, messagerie et abonnements de plateforme dans une architecture
-où les données métier de chaque club sont physiquement isolées.
+<h1 align="center">GymFlow</h1>
+
+<p align="center">
+  <strong>La plateforme qui fait avancer les clubs sportifs.</strong><br />
+  Membres, paiements, grades, équipes et messagerie — réunis dans une expérience rapide, sécurisée et multi-tenant.
+</p>
+
+<p align="center">
+  <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-111827?style=for-the-badge&amp;logo=nextdotjs&amp;logoColor=white" />
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-111827?style=for-the-badge&amp;logo=react&amp;logoColor=61DAFB" />
+  <img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F59E0B?style=for-the-badge&amp;logo=cloudflare&amp;logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Strict-2563EB?style=for-the-badge&amp;logo=typescript&amp;logoColor=white" />
+</p>
+
+<p align="center">
+  <code>Multi-clubs</code> · <code>Edge-first</code> · <code>Secure by design</code> · <code>Made for Morocco 🇲🇦</code>
+</p>
+
+---
+
+GymFlow est une plateforme SaaS de gestion sportive conçue pour Cloudflare.
+Elle réunit les opérations quotidiennes d'un club dans une architecture où les
+données métier de chaque organisation sont physiquement isolées.
 
 ## Stack technique
 
