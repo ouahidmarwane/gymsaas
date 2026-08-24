@@ -1,175 +1,280 @@
-# GymFlow 🏋️
+<p align="center">
+  <img src="./docs/assets/readme-hero.svg" width="100%" alt="GymFlow — plateforme SaaS multi-clubs sur Cloudflare" />
+</p>
 
-Plateforme de gestion de salle de sport — Next.js + Supabase + Vercel.
+<h1 align="center">GymFlow</h1>
 
-## Stack
+<p align="center">
+  <strong>La plateforme qui fait avancer les clubs sportifs.</strong><br />
+  Membres, paiements, grades, équipes et messagerie — réunis dans une expérience rapide, sécurisée et multi-tenant.
+</p>
 
-| Couche | Outil | Coût |
-|--------|-------|------|
-| Frontend | Next.js 14 (App Router) | Gratuit |
-| Hébergement | Vercel | Gratuit |
-| Base de données | Supabase (PostgreSQL) | Gratuit |
-| Auth | Supabase Auth | Gratuit |
-| Emails | Resend (100/jour) | Gratuit |
-| Cron rappels | Supabase Edge Functions | Gratuit |
+<p align="center">
+  <img alt="Next.js 16" src="https://img.shields.io/badge/Next.js-16-111827?style=for-the-badge&amp;logo=nextdotjs&amp;logoColor=white" />
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-111827?style=for-the-badge&amp;logo=react&amp;logoColor=61DAFB" />
+  <img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F59E0B?style=for-the-badge&amp;logo=cloudflare&amp;logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Strict-2563EB?style=for-the-badge&amp;logo=typescript&amp;logoColor=white" />
+</p>
 
-## Fonctionnalités
-
-- ✅ Gestion des membres (CRUD)
-- 📅 Suivi des abonnements mensuels
-- 🛡️ Suivi des assurances annuelles
-- 🔔 Alertes & rappels automatiques (email + plateforme)
-- 👥 Gestion des rôles (Admin / Réceptionniste / Lecteur)
-- 🔐 Row Level Security Supabase
+<p align="center">
+  <code>Multi-clubs</code> · <code>Edge-first</code> · <code>Secure by design</code> · <code>Made for Morocco 🇲🇦</code>
+</p>
 
 ---
 
-## Installation
+GymFlow est une plateforme SaaS de gestion sportive conçue pour Cloudflare.
+Elle réunit les opérations quotidiennes d'un club dans une architecture où les
+données métier de chaque organisation sont physiquement isolées.
 
-### 1. Cloner et installer
+## Stack technique
+
+- Next.js 16 avec App Router et React 19
+- TypeScript
+- Cloudflare Workers via OpenNext
+- Cloudflare D1 pour le plan de contrôle
+- Durable Objects avec stockage SQLite pour les données des clubs
+- Cloudflare R2 pour les logos, bannières et documents
+- Tailwind CSS et styles applicatifs
+- Leaflet et OpenStreetMap pour la carte de supervision
+- SQL paramétré sans ORM
+
+Le point d'entrée déployé est `worker.ts`. Il enveloppe le Worker généré par
+OpenNext, exporte la classe `ClubDatabase` et expose la tâche planifiée de
+rafraîchissement des statistiques.
+
+## Architecture des données
+
+### Plan de contrôle — D1
+
+La base D1 `gymflow-control` contient les données globales de la plateforme :
+
+- comptes utilisateurs et appartenances aux clubs ;
+- sessions, tentatives de connexion et événements de sécurité ;
+- organisations, offres, limites et état des abonnements ;
+- factures de plateforme et informations de facturation ;
+- droits temporaires du support et journal d'audit ;
+- agrégats nécessaires à la supervision multi-clubs ;
+- conversations globales, support et annonces de plateforme.
+
+Elle ne contient pas les membres, paiements ou présences d'un club.
+
+Le schéma initial se trouve dans `src/control-plane/schema.sql`. Les évolutions
+incrémentales sont stockées dans `migrations/` et appliquées par Wrangler.
+
+### Données métier — Durable Objects
+
+Chaque club possède une instance SQLite distincte de `ClubDatabase`, adressée
+côté serveur par `idFromName(orgId)`. Elle contient notamment :
+
+- membres et documents associés ;
+- salles, disciplines et grades ;
+- paiements, registre financier et tarifs ;
+- présences, alertes et statistiques du tableau de bord ;
+- paramètres, disposition des écrans et journal du club ;
+- conversations et messages internes au club.
+
+Le client ne choisit jamais directement le Durable Object. Le Worker résout
+d'abord la session, l'appartenance, le rôle et le club actif, puis dérive
+l'instance autorisée. Un identifiant de club envoyé par le navigateur ne suffit
+donc jamais à accéder aux données d'un autre tenant.
+
+### Fichiers — R2
+
+Le bucket R2 `gymsaas`, exposé par le binding `MEDIA`, stocke les fichiers. Les
+clés sont construites et validées côté serveur avec un préfixe propre au club.
+
+## Authentification et autorisation
+
+GymFlow utilise une authentification interne compatible Workers :
+
+- dérivation PBKDF2-SHA256 des mots de passe avec WebCrypto ;
+- jetons de session opaques dans des cookies sécurisés ;
+- stockage du hash SHA-256 du jeton, jamais du jeton lui-même ;
+- vérification en temps constant ;
+- limitation des tentatives et blocage d'adresses IP ;
+- rôles `owner`, `admin`, `staff` et `viewer` ;
+- compte plateforme séparé via `is_platform_admin` ;
+- mode support limité dans le temps, en lecture seule par défaut ;
+- réauthentification courte (« step-up ») avant les actions sensibles.
+
+Le projet n'utilise ni JWT, ni NextAuth, ni Supabase Auth.
+
+## Organisation du dépôt
+
+```text
+app/                         Pages Next.js et route API catch-all
+  api/[[...path]]/route.ts   Adaptateur Next.js vers le routeur métier
+components/                  Composants React partagés
+lib/                         Utilitaires côté interface
+src/
+  api.ts                     Routeur HTTP et règles d'autorisation
+  auth/                      Crypto, sessions et identité
+  club/                      Durable Object, schéma et logique métier
+  control-plane/schema.sql   Schéma initial D1
+migrations/                  Migrations D1 incrémentales
+scripts/                     Démo, opérateur, entretien et configuration R2
+test/                        Tests fonctionnels, sécurité et isolation
+worker.ts                    Point d'entrée Cloudflare déployé
+wrangler.jsonc               Bindings D1, Durable Object, R2 et cron
+open-next.config.ts          Configuration OpenNext
+```
+
+## Installation locale
+
+### Prérequis
+
+- Node.js 24 (voir `.node-version`)
+- npm
+- les binaires Wrangler installés avec les dépendances du projet
 
 ```bash
-git clone https://github.com/votre-repo/gymflow.git
-cd gymflow
 npm install
-```
-
-### 2. Créer le projet Supabase
-
-1. Aller sur [supabase.com](https://supabase.com) → New Project
-2. Copier l'URL et les clés API depuis Settings → API
-3. Copier `.env.local.example` → `.env.local` et remplir les valeurs
-
-### 3. Initialiser la base de données
-
-Dans Supabase Dashboard → SQL Editor, copier-coller et exécuter :
-```
-supabase/migrations/001_schema.sql
-```
-
-### 4. Créer le premier compte admin
-
-Dans Supabase Dashboard → Authentication → Users → Add User :
-- Email : `admin@votresalle.ma`
-- Password : (choisir un mot de passe fort)
-
-Puis dans SQL Editor :
-```sql
-UPDATE profiles SET role = 'admin' WHERE email = 'admin@votresalle.ma';
-```
-
-### 5. Configurer Resend (emails)
-
-1. Créer un compte sur [resend.com](https://resend.com) (gratuit)
-2. Ajouter et vérifier votre domaine
-3. Créer une clé API → mettre dans `.env.local`
-
-### 6. Déployer la Edge Function
-
-```bash
-# Installer Supabase CLI
-npm install -g supabase
-
-# Login
-supabase login
-
-# Lier au projet
-supabase link --project-ref VOTRE_PROJECT_REF
-
-# Déployer la fonction
-supabase functions deploy send-reminders
-
-# Ajouter les secrets
-supabase secrets set RESEND_API_KEY=re_XXXXXXX
-supabase secrets set FROM_EMAIL="GymFlow <noreply@votresalle.ma>"
-```
-
-### 7. Configurer le cron dans Supabase
-
-Dashboard → Edge Functions → send-reminders → Schedule :
-```
-0 7 * * *
-```
-(08h00 heure Maroc, UTC+1)
-
-### 8. Développement local
-
-```bash
+npm run db:apply:local
+npm run db:migrate:local
 npm run dev
-# → http://localhost:3000
 ```
 
-### 9. Déployer sur Vercel
+L'application complète est ensuite disponible sur :
+
+```text
+http://127.0.0.1:8787
+```
+
+`npm run dev` construit d'abord l'application avec OpenNext, puis la lance dans
+Wrangler/workerd avec les bindings locaux D1, Durable Objects et R2. C'est le
+mode de développement de référence.
+
+Pour travailler uniquement sur l'interface :
 
 ```bash
-# Via CLI
-npx vercel
-
-# Ajouter les variables d'environnement dans Vercel Dashboard :
-# NEXT_PUBLIC_SUPABASE_URL
-# NEXT_PUBLIC_SUPABASE_ANON_KEY
-# SUPABASE_SERVICE_ROLE_KEY
-# RESEND_API_KEY
-# FROM_EMAIL
+npm run dev:ui
 ```
 
----
+Ce mode sert Next.js sur `http://localhost:3000`, mais ne reproduit pas le
+runtime complet. Les routes dépendantes des bindings Cloudflare peuvent y être
+indisponibles. Pour tester une connexion, une API ou une fonctionnalité métier,
+utilisez toujours le port `8787`.
 
-## Structure du projet
+Les variables locales non publiques sont chargées depuis `.dev.vars` et
+`.env.local`. Ces fichiers ne doivent jamais être commités.
 
-```
-gymflow/
-├── app/
-│   ├── (protected)/
-│   │   ├── layout.tsx          ← Layout protégé (auth check)
-│   │   ├── dashboard/page.tsx  ← Vue d'ensemble
-│   │   ├── members/page.tsx    ← Liste & gestion membres
-│   │   ├── alerts/page.tsx     ← Alertes & rappels
-│   │   └── staff/page.tsx      ← Équipe & droits (admin)
-│   ├── login/page.tsx          ← Page de connexion
-│   ├── layout.tsx              ← Root layout
-│   ├── page.tsx                ← Redirect → /dashboard
-│   └── globals.css
-├── components/
-│   └── Sidebar.tsx             ← Navigation latérale
-├── lib/
-│   ├── actions.ts              ← Server Actions
-│   ├── gym.ts                  ← Logique métier (statuts)
-│   └── supabase/
-│       ├── client.ts           ← Client browser
-│       └── server.ts           ← Client serveur
-├── types/index.ts              ← Types TypeScript
-├── middleware.ts               ← Auth middleware
-└── supabase/
-    ├── config.toml             ← Config + cron schedule
-    ├── migrations/
-    │   └── 001_schema.sql      ← Tables + RLS
-    └── functions/
-        └── send-reminders/
-            └── index.ts        ← Cron Edge Function
+## Données de démonstration
+
+Une fois le serveur complet lancé sur le port 8787 :
+
+```bash
+node scripts/seed-demo.mjs
 ```
 
----
+Le script crée trois clubs représentatifs avec salles, disciplines, membres,
+paiements et situations d'abonnement différentes :
 
-## Rôles & permissions
+- `karate@demo.ma` — Noujoum El Chaouia ;
+- `judo@demo.ma` — Judo Club Atlas ;
+- `boxe@demo.ma` — Ring Casablanca.
 
-| Action | Admin | Réceptionniste | Lecteur |
-|--------|-------|----------------|---------|
-| Voir membres | ✓ | ✓ | ✓ |
-| Ajouter / modifier | ✓ | ✓ | ✗ |
-| Supprimer un membre | ✓ | ✗ | ✗ |
-| Envoyer rappels | ✓ | ✓ | ✗ |
-| Voir alertes | ✓ | ✓ | ✓ |
-| Gérer staff | ✓ | ✗ | ✗ |
+Le mot de passe local commun est affiché par le script à la fin de son
+exécution. Ces comptes sont réservés au développement.
 
----
+Le script `scripts/prune-demo-clubs.mjs` permet d'inspecter puis de supprimer
+les clubs jetables créés par les tests. Sans `--apply`, il reste en mode
+simulation.
 
-## Rappels automatiques
+## Fonctionnalités principales
 
-| Événement | Délai | Canal |
-|-----------|-------|-------|
-| Abonnement expire bientôt | J-7 | Email + Plateforme |
-| Abonnement expiré | J+1 | Email + Plateforme |
-| Assurance expire bientôt | J-30 | Email + Plateforme |
-| Assurance expirée | J+1 | Plateforme uniquement |
-| Pas d'assurance | Quotidien | Email + Plateforme |
+- inscription et configuration autonome d'un club ;
+- tableau de bord, statistiques et alertes ;
+- gestion des membres, import/export et documents ;
+- salles, disciplines, grades et passages de grade ;
+- paiements, tarifs, comptabilité et registre financier ;
+- gestion de l'équipe et des permissions ;
+- personnalisation du thème, logo, bannière et disposition ;
+- messagerie directe, groupes, support et annonces ;
+- gestion des abonnements et factures SaaS ;
+- supervision multi-clubs, carte, audit et sécurité ;
+- mode support avec séparation lecture/écriture.
+
+## Commandes utiles
+
+```bash
+npm run dev                 # build OpenNext + serveur local complet, port 8787
+npm run dev:ui              # serveur Next.js UI uniquement, port 3000
+npm run typecheck           # vérification TypeScript
+npm run test:static         # tests statiques rapides
+npm test                    # suite fonctionnelle complète
+npm run build               # build Next.js
+npm run build:ci            # typecheck + statique + build OpenNext
+npm run preview             # aperçu local du bundle OpenNext
+npm run cf-typegen          # types des bindings Cloudflare
+npm run db:apply:local      # applique le schéma initial D1 en local
+npm run db:migrate:local    # applique les migrations D1 locales
+```
+
+Les variantes `db:bootstrap:remote` et `db:migrate:remote` ciblent la base
+distante. Elles ne doivent être lancées qu'explicitement et avec le bon compte
+Cloudflare.
+
+## Tests
+
+La suite utilise un chargeur Cloudflare simulé et couvre notamment :
+
+- isolation négative entre clubs et sélection serveur du tenant ;
+- authentification, sessions, changement de mot de passe et anti-force brute ;
+- autorisation par rôle, support, step-up et Superadmin ;
+- idempotence financière et cohérence des écritures ;
+- provisioning, suppression progressive et migrations ;
+- membres, documents, grades, paiements, messagerie et personnalisation ;
+- accessibilité visuelle, contraste, disposition et écrans principaux ;
+- plafonds d'offre, disponibilité et montée en charge.
+
+Pour la suite complète :
+
+```bash
+npm test
+```
+
+Pour valider un changement avant livraison :
+
+```bash
+npm run typecheck
+npm run test:static
+npm run build
+```
+
+## Déploiement Cloudflare
+
+Les ressources attendues sont déclarées dans `wrangler.jsonc` :
+
+- D1 : binding `CONTROL` ;
+- Durable Object : binding `CLUB`, classe `ClubDatabase` ;
+- R2 : binding `MEDIA` ;
+- Assets : binding `ASSETS` ;
+- cron toutes les cinq minutes pour rafraîchir les agrégats.
+
+Après création et configuration des ressources Cloudflare :
+
+```bash
+npm run db:bootstrap:remote
+npm run db:migrate:remote
+npm run deploy
+```
+
+La création d'un opérateur plateforme se fait avec le script prévu à cet effet,
+hors des routes publiques :
+
+```bash
+node scripts/create-operator.mjs <email> <nom> <mot-de-passe> --remote
+```
+
+Ne lancez jamais une migration distante ou un déploiement en supposant que le
+compte Wrangler actif est le bon : vérifiez d'abord l'environnement ciblé.
+
+## Principes à préserver
+
+- D1 reste réservé au plan de contrôle.
+- Les données métier restent dans le Durable Object du club.
+- Toute opération tenant-scoped valide session, appartenance et rôle.
+- Toute requête SQL reste paramétrée.
+- Les clés R2 restent préfixées et validées par club.
+- Les API Node-only ne sont pas introduites sans vérifier workerd.
+- Les secrets et fichiers `.env*` ne sont jamais commités.

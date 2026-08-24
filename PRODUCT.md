@@ -1,48 +1,61 @@
-# GymFlow
+# Product
 
-Multi-club management platform for martial-arts and sports clubs, sold as a
-SaaS. Built for Morocco first; French and Arabic, dirhams, WhatsApp.
+<!-- impeccable:product-schema 1 -->
 
-**Register:** product. Design serves the task.
+## Platform
 
-## Who uses it
+web
 
-**The receptionist**, at a desk in the entrance hall of a dojo, between 18h and
-21h when classes run. Overhead fluorescent light, a queue of parents, a phone
-in one hand. Their most common question is not "show me a chart" — it's *"is
-this kid's insurance still valid?"* They need an answer in under two seconds,
-readable at arm's length under glare.
+## Users
 
-**The club president**, on a phone, often outdoors, checking this month's
-takings or who is due for a belt grading.
+GymFlow sert les propriétaires, administrateurs et équipes de clubs de sport, ainsi que les Superadmins de la plateforme. Dans la messagerie, ils coordonnent leur équipe, échangent en privé avec des collègues autorisés, contactent le support GymFlow et consultent les annonces officielles.
 
-**The platform operator** (one person, for now), supervising every club from a
-laptop, entering a club's dashboard to diagnose a problem while its owner is on
-the phone.
+## Product Purpose
 
-## What it does
+GymFlow centralise l’exploitation quotidienne de plusieurs clubs dans un SaaS sécurisé. La communication doit rester proche du contexte opérationnel du club afin que les utilisateurs puissent agir rapidement sans quitter la plateforme.
 
-- Members, subscriptions, insurance and *passeport sportif* compliance.
-- Payments and simple accounting, in dirhams.
-- Belt grading, on ladders each club defines for itself.
-- Championships: squads, categories, weights, results.
-- Alerts, with one-click bilingual WhatsApp reminders.
+## Positioning
 
-## Constraints that shape the interface
+Chaque club possède un espace métier et conversationnel physiquement isolé dans son propre Durable Object, tandis que les fonctions plateforme restent dans le plan de contrôle D1. Cette séparation native du stockage est une frontière de sécurité et un mécanisme central du produit.
 
-- **Bilingual FR/AR with full RTL.** Layout mirrors. Nothing may depend on
-  left-to-right reading order.
-- **Phones matter as much as desktops.** Presidents live on their phones.
-- **Density is a feature.** A receptionist scanning 200 members wants rows, not
-  cards.
-- **Every club looks different.** Logo, name, accent colour and dashboard
-  layout are per club. The chrome must stay legible whatever colour it wears.
-- **Support mode must be unmissable.** When the operator is inside a club, the
-  interface has to say so continuously.
+## Operating Context
 
-## Non-goals
+- Utilisation fréquente sur ordinateur pour administrer un club, avec adaptation mobile complète.
+- Conversations directes entre membres autorisés d’un même club, groupes privés et canal interne Équipe.
+- Support privé entre les administrateurs du club et les Superadmins GymFlow.
+- Annonces globales officielles en lecture seule pour les clubs.
+- Cinq thèmes GymFlow, clairs et sombres, configurables par club.
 
-- Free-canvas layout editing. Cards reorder on a grid; nothing positions by
-  pixel. Absolute positioning breaks phones and fights RTL.
-- Class scheduling and door access. That's commercial-gym territory, not what
-  federated clubs ask for.
+## Capabilities and Constraints
+
+- Next.js 16, React 19, TypeScript et Cloudflare Workers via OpenNext.
+- D1 pour le plan de contrôle, un Durable Object SQLite par club pour les données métier et R2 pour les fichiers.
+- Authentification propriétaire existante ; aucun système d’authentification parallèle.
+- Isolation stricte des tenants, autorisation côté serveur, protection IDOR et identité d’expéditeur dérivée de la session.
+- SQL brut paramétré uniquement ; aucun ORM.
+- La messagerie doit préserver les messages, groupes, membres, administrateurs, mentions, réponses, réactions, pièces jointes, pagination, états non lus, support et annonces déjà implémentés.
+- Aucun déploiement ni changement de ressource Cloudflare de production pendant le travail local.
+
+## Brand Commitments
+
+Le produit s’appelle GymFlow. La messagerie doit conserver l’identité et les thèmes GymFlow tout en adoptant la familiarité opérationnelle de Telegram et WhatsApp, sans copier leur marque ni ajouter des fonctions d’appel audio ou vidéo.
+
+## Evidence on Hand
+
+- Architecture et règles de sécurité : `AGENTS.md` et `README.md`.
+- Spécification de la messagerie : `.ai/requests/messaging.md`.
+- Implémentation actuelle : `app/messagerie/page.tsx` et `app/globals.css`.
+- Référence historique de composition : `team-chat-mockup.html` et les captures fournies dans la conversation.
+- Tests de sécurité et de comportement : `test/messaging.test.mjs` et `test/contrast.test.mjs`.
+
+## Product Principles
+
+- La confidentialité et l’isolation d’un club ne sont jamais sacrifiées à la commodité.
+- La communication doit être instantanément compréhensible et rapide à utiliser.
+- Une seule grammaire d’interface doit fonctionner dans tous les thèmes et toutes les tailles d’écran.
+- Les actions visibles doivent être fonctionnelles, autorisées et accompagnées d’états explicites.
+- La plateforme reste GymFlow : les références aux messageries grand public servent l’ergonomie, pas l’identité.
+
+## Accessibility & Inclusion
+
+Les cinq thèmes doivent conserver un contraste lisible, les contrôles doivent rester accessibles au clavier et aux technologies d’assistance, et la mise en page doit fonctionner sans perte de fonctionnalité sur mobile.

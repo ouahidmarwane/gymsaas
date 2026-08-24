@@ -1,8 +1,9 @@
 'use client'
-// components/PopNumber.tsx
-// Chiffres qui apparaissent chiffre par chiffre (transition « number pop-in »
-// de transitions.dev). key force le remontage quand la valeur change,
-// donc l'animation rejoue.
+// Chiffres qui apparaissent caractere par caractere.
+//
+// La cle porte la valeur entiere : React remonte le groupe des qu'elle
+// change, ce qui rejoue l'animation. Sans cela, passer de 700 a 800 ne
+// bougerait pas, la structure du DOM etant identique.
 export default function PopNumber({ value }: { value: number | string }) {
   const chars = String(value).split('')
   return (

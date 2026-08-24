@@ -1,9 +1,12 @@
 'use client'
-// components/SlidingTabs.tsx
-// Segmented control avec pilule glissante (transition « tabs-sliding »
-// de transitions.dev). La pilule est mesurée en JS (offsetLeft/offsetWidth),
-// le tween est en CSS. Premier paint et resize : positionnement sans
-// transition, comme documenté dans la recette.
+// Segmented control avec pilule glissante.
+//
+// La pilule est mesuree en JS (offsetLeft/offsetWidth) et animee en CSS :
+// une transition sur `left`/`width` declencherait un reflow a chaque frame,
+// alors qu'un translateX reste sur le compositeur.
+//
+// Premier paint et resize se positionnent sans transition, sinon la pilule
+// glisserait depuis l'origine au chargement de la page.
 import { useEffect, useRef, type ReactNode } from 'react'
 
 export interface TabItem {
@@ -49,8 +52,9 @@ export default function SlidingTabs({ items, value, onChange, disabled = false }
 
   useEffect(() => { position(true) }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // repositionnement sans animation quand le contenu des onglets change
-  // (ex : compteurs mis à jour après chargement) — items doit être mémoïsé
+  // Repositionnement sans animation quand les onglets eux-memes changent :
+  // les salles arrivent apres le chargement, la pilule doit suivre sans
+  // donner l'impression que l'utilisateur a clique.
   useEffect(() => { position(false) }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (

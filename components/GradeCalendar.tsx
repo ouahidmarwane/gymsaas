@@ -1,120 +1,160 @@
 'use client'
-import { useMemo, useState } from 'react'
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, isSameDay, isToday } from 'date-fns'
-import { fr } from 'date-fns/locale'
-import GradeBadge from '@/components/GradeBadge'
-import type { GradeSession } from '@/types'
 
-interface Props {
-  sessions: GradeSession[]
-  initialDate?: string | null   // ouvre le calendrier sur ce mois (ex : prochaine session)
+import { useEffect, useMemo, useState } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { gradeGrid } from '@/src/club/grade-cycle'
+
+/**
+ * Calendrier des passages.
+ *
+ * Il montre trois choses que le compte a rebours seul ne dit pas : ou tombent
+ * les sessions du cycle, quels jours portent deja des convocations, et ce que
+ * ces convocations sont devenues. Cliquer un jour choisit la date de session
+ * — c'est le meme reglage que le champ date, en plus lisible.
+ *
+ * Les couleurs viennent du theme. L'accent du club marque les jours de cycle
+ * et le jour choisi ; les pastilles de resultat gardent le vert et le rouge
+ * de la plateforme, parce que reussi et echoue veulent dire la meme chose
+ * partout et ne sont pas des accents.
+ *
+ * Tout se calcule sur des chaines « AAAA-MM-JJ ». Aucune arithmetique de
+ * dates : c'est la que se logent les erreurs de fuseau, et un club marocain
+ * qui verrait ses sessions decalees d'un jour n'aurait aucun moyen de
+ * comprendre pourquoi.
+ */
+
+const WEEKDAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'D']
+
+interface Mark {
+  date: string
+  status: 'pending' | 'passed' | 'failed'
+  name: string
 }
 
-const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
+const iso = (y: number, m: number, d: number) =>
+  `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 
-export default function GradeCalendar({ sessions, initialDate }: Props) {
-  const [viewDate, setViewDate] = useState(() => initialDate ? new Date(initialDate) : new Date())
-  const [selected, setSelected] = useState<Date | null>(null)
+/** Jours du mois, precedes des cases vides jusqu'au premier lundi. */
+function monthCells(year: number, month: number): Array<string | null> {
+  const first = new Date(Date.UTC(year, month - 1, 1))
+  // getUTCDay rend 0 pour dimanche ; la semaine francaise commence lundi.
+  const lead = (first.getUTCDay() + 6) % 7
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  return [
+    ...Array<null>(lead).fill(null),
+    ...Array.from({ length: days }, (_, i) => iso(year, month, i + 1)),
+  ]
+}
 
-  const monthStart = startOfMonth(viewDate)
-  const monthEnd = endOfMonth(viewDate)
-  const days = eachDayOfInterval({ start: monthStart, end: monthEnd })
+export default function GradeCalendar({
+  anchorMonth, sessions, selected, today, onPick,
+}: {
+  anchorMonth: number
+  sessions: Mark[]
+  /** Date de session courante, mise en avant. */
+  selected: string
+  today: string
+  onPick: (date: string) => void
+}) {
+  // Le calendrier s'ouvre sur le mois de la session choisie, pas sur le mois
+  // courant : c'est la que l'on a quelque chose a regarder.
+  const [cursor, setCursor] = useState(() => selected.slice(0, 7))
+  const [year, month] = cursor.split('-').map(Number) as [number, number]
 
-  // Monday = 0 offset
-  const startOffset = (getDay(monthStart) + 6) % 7
+  // Et il la SUIT quand elle bouge ailleurs — le champ date, ou le rappel
+  // « + 1 sur une autre date ». Sans cela le calendrier restait sur son mois
+  // et le jour mis en avant se trouvait hors ecran : on croyait regarder la
+  // session choisie alors qu'on regardait un autre mois.
+  useEffect(() => {
+    const target = selected.slice(0, 7)
+    if (target && target !== cursor) setCursor(target)
+    // `cursor` volontairement absent : on ne veut reagir qu'au deplacement de
+    // la selection, pas ramener l'utilisateur en arriere des qu'il feuillette.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected])
 
-  // Group sessions by date string
-  const byDate = useMemo(() => {
-    const map: Record<string, GradeSession[]> = {}
+  const cells = useMemo(() => monthCells(year, month), [year, month])
+  const cycle = useMemo(() => new Set(gradeGrid(anchorMonth, year)), [anchorMonth, year])
+
+  const byDay = useMemo(() => {
+    const map = new Map<string, Mark[]>()
     for (const s of sessions) {
-      if (s.status !== 'pending') continue
-      const key = s.scheduled_date.slice(0, 10)
-      if (!map[key]) map[key] = []
-      map[key].push(s)
+      const d = s.date.slice(0, 10)
+      map.set(d, [...(map.get(d) ?? []), s])
     }
     return map
   }, [sessions])
 
-  const selectedKey = selected ? format(selected, 'yyyy-MM-dd') : null
-  const selectedSessions = selectedKey ? (byDate[selectedKey] ?? []) : []
+  function shift(by: number) {
+    const m = month + by
+    const y = year + Math.floor((m - 1) / 12)
+    const mm = ((m - 1) % 12 + 12) % 12 + 1
+    setCursor(`${y}-${String(mm).padStart(2, '0')}`)
+  }
 
-  const prevMonth = () => setViewDate(d => { const n = new Date(d); n.setMonth(n.getMonth() - 1); return n })
-  const nextMonth = () => setViewDate(d => { const n = new Date(d); n.setMonth(n.getMonth() + 1); return n })
+  const title = new Date(Date.UTC(year, month - 1, 1))
+    .toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 
   return (
-    <div className="grade-cal-shell">
-      {/* Header */}
-      <div className="grade-cal-header">
-        <button className="grade-cal-nav" onClick={prevMonth}>‹</button>
-        <span className="grade-cal-month">{format(viewDate, 'MMMM yyyy', { locale: fr })}</span>
-        <button className="grade-cal-nav" onClick={nextMonth}>›</button>
+    <div className="gcal">
+      <div className="gcal-head">
+        <button className="gcal-nav" onClick={() => shift(-1)} aria-label="Mois précédent">
+          <ChevronLeft size={16} strokeWidth={2.3} />
+        </button>
+        <span className="gcal-title">{title}</span>
+        <button className="gcal-nav" onClick={() => shift(1)} aria-label="Mois suivant">
+          <ChevronRight size={16} strokeWidth={2.3} />
+        </button>
       </div>
 
-      {/* Day labels */}
-      <div className="grade-cal-grid">
-        {DAY_LABELS.map(d => (
-          <div key={d} className="grade-cal-day-label">{d}</div>
+      <div className="gcal-grid" role="grid" aria-label={`Passages de ${title}`}>
+        {WEEKDAYS.map((d, i) => (
+          <span key={i} className="gcal-weekday" aria-hidden="true">{d}</span>
         ))}
 
-        {/* Empty cells before month start */}
-        {Array.from({ length: startOffset }).map((_, i) => (
-          <div key={`empty-${i}`} className="grade-cal-cell grade-cal-empty" />
-        ))}
+        {cells.map((date, i) => {
+          if (!date) return <span key={`v${i}`} className="gcal-cell empty" aria-hidden="true" />
 
-        {/* Day cells */}
-        {days.map(day => {
-          const key = format(day, 'yyyy-MM-dd')
-          const hasSessions = !!byDate[key]?.length
-          const count = byDate[key]?.length ?? 0
-          const isSelected = selected ? isSameDay(day, selected) : false
-          const todayCell = isToday(day)
+          const marks = byDay.get(date) ?? []
+          const classes = ['gcal-cell']
+          if (cycle.has(date)) classes.push('cycle')
+          if (date === selected) classes.push('selected')
+          if (date === today) classes.push('today')
+          if (marks.length > 0) classes.push('has-marks')
+
+          const label = [
+            new Date(`${date}T00:00:00Z`).toLocaleDateString('fr-FR', { timeZone: 'UTC' }),
+            cycle.has(date) ? 'session du cycle' : null,
+            marks.length ? `${marks.length} passage${marks.length > 1 ? 's' : ''}` : null,
+          ].filter(Boolean).join(' — ')
+
           return (
-            <button
-              key={key}
-              className={[
-                'grade-cal-cell',
-                todayCell ? 'grade-cal-today' : '',
-                isSelected ? 'grade-cal-selected' : '',
-                hasSessions ? 'grade-cal-has-sessions' : '',
-              ].join(' ')}
-              onClick={() => setSelected(isSelected ? null : day)}
-            >
-              <span className="grade-cal-day-num">{format(day, 'd')}</span>
-              {hasSessions && (
-                <span className="grade-cal-count">{count}</span>
+            <button key={date} className={classes.join(' ')} role="gridcell"
+                    aria-label={label} title={label}
+                    aria-current={date === selected ? 'date' : undefined}
+                    onClick={() => onPick(date)}>
+              <span className="gcal-num">{Number(date.slice(8, 10))}</span>
+              {marks.length > 0 && (
+                <span className="gcal-dots" aria-hidden="true">
+                  {/* Trois points au plus : au-dela, le compte parle mieux
+                      qu'une rangee de pastilles qu'on ne peut pas denombrer. */}
+                  {marks.slice(0, 3).map((m, k) => (
+                    <span key={k} className={`gcal-dot ${m.status}`} />
+                  ))}
+                  {marks.length > 3 && <span className="gcal-more">+{marks.length - 3}</span>}
+                </span>
               )}
             </button>
           )
         })}
       </div>
 
-      {/* Session detail panel */}
-      {selected && (
-        <div className="grade-cal-detail">
-          <div className="grade-cal-detail-date">
-            {format(selected, 'EEEE d MMMM yyyy', { locale: fr })}
-          </div>
-          {selectedSessions.length === 0 ? (
-            <div className="grade-cal-detail-empty">Aucune session ce jour</div>
-          ) : (
-            <div className="grade-cal-session-list">
-              {selectedSessions.map(s => (
-                <div key={s.id} className="grade-cal-session-row">
-                  <div className="flex-1 min-w-0">
-                    <div className="grade-cal-session-name">{s.members?.name ?? '—'}</div>
-                    <div className="grade-cal-session-phone">{s.members?.phone ?? ''}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <GradeBadge grade={s.grade_before} size="sm" />
-                    <span className="text-slate-400 text-xs">→</span>
-                    <GradeBadge grade={Math.min(s.grade_before + 1, 12)} size="sm" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <div className="gcal-legend">
+        <span><span className="gcal-key cycle" /> session du cycle</span>
+        <span><span className="gcal-dot pending" /> convoqué</span>
+        <span><span className="gcal-dot passed" /> réussi</span>
+        <span><span className="gcal-dot failed" /> échoué</span>
+      </div>
     </div>
   )
 }
