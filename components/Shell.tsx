@@ -242,6 +242,7 @@ function ShellBody({ children }: { children: ReactNode }) {
                 href={item.href}
                 className={`rail-btn${active ? ' active' : ''}`}
                 title={item.label}
+                data-tooltip={item.label}
                 aria-label={item.label}
                 aria-current={active ? 'page' : undefined}
               >
@@ -252,7 +253,7 @@ function ShellBody({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="rail-bottom">
-          <Link href="/account" className="rail-btn" title="Mon compte" aria-label="Mon compte">
+          <Link href="/account" className="rail-btn" title="Mon compte" data-tooltip="Mon compte" aria-label="Mon compte">
             <Settings size={19} strokeWidth={2.1} />
           </Link>
           {me && (
@@ -263,6 +264,7 @@ function ShellBody({ children }: { children: ReactNode }) {
           <button
             className="rail-btn"
             title="Se deconnecter"
+            data-tooltip="Se deconnecter"
             aria-label="Se deconnecter"
             onClick={async () => { await api.post('/api/auth/logout'); router.replace('/login') }}
           >
