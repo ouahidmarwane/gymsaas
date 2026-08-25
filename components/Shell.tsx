@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   LayoutDashboard, Users, Award, Wallet, UserCog, SlidersHorizontal,
   ShieldAlert, Building2, Settings, LogOut, Menu, X, Receipt,
-  MessageCircle, ChevronLeft, ChevronRight,
+  Bell, MessageCircle, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { api, ApiError, privileged, type Me, type Capabilities } from '@/lib/client'
 import { SKINS, DEFAULT_THEME } from '@/src/club/branding'
@@ -29,6 +29,41 @@ interface NavItem {
    */
   needs?: (c: Capabilities, activeHasGrading: boolean) => boolean
 }
+
+type GlobalAnnouncement = {
+  id: string
+  title: string
+  content: string
+  status: string
+  publishedAt: string | null
+  createdAt: string
+  isRead: number
+}
+
+type GlobalConversation = {
+  id: string
+  type: 'dm' | 'group' | 'team'
+  name: string
+  last_body: string | null
+  last_at: string | null
+  updated_at: string
+  unread: number
+}
+
+type GlobalNotice = {
+  id: string
+  kind: 'announcement' | 'conversation'
+  title: string
+  body: string
+  source: string
+  at: string
+  target: { kind: 'announcements' } | { kind: 'conversation'; id: string }
+}
+
+const GLOBAL_NOTICE_MS = 5_000
+const GLOBAL_NOTICE_POLL_MS = 12_000
+const GLOBAL_NOTICE_SEEN_KEY = 'gymflow:global-notice-seen'
+const MESSAGING_TARGET_KEY = 'gymflow:messaging-target'
 
 /** Ecrans d'un club. Ils n'ont de sens que dans un club. */
 const CLUB_NAV: NavItem[] = [
@@ -91,7 +126,10 @@ function ShellBody({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
+  const [notice, setNotice] = useState<(GlobalNotice & { shownAt: number; leaving: boolean }) | null>(null)
+  const [noticeTick, setNoticeTick] = useState(() => Date.now())
   const railRef = useRef<HTMLElement | null>(null)
+  const noticeSeenRef = useRef<Set<string>>(new Set())
 
   function setDesktopRailOpen(next: boolean) {
     setRailOpen(next)
@@ -170,6 +208,101 @@ function ShellBody({ children }: { children: ReactNode }) {
   }, [me])
 
   useEffect(() => { setDrawer(false) }, [pathname])
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(GLOBAL_NOTICE_SEEN_KEY) ?? '[]') as string[]
+      noticeSeenRef.current = new Set(stored.slice(-80))
+    } catch { noticeSeenRef.current = new Set() }
+  }, [])
+
+  useEffect(() => {
+    if (!me || me.isPlatformAdmin || me.scope.mode !== 'member') return
+    if (!['owner', 'admin', 'staff'].includes(me.org?.role ?? '')) return
+
+    let alive = true
+    const remember = (id: string) => {
+      const seen = noticeSeenRef.current
+      seen.add(id)
+      const compact = [...seen].slice(-80)
+      noticeSeenRef.current = new Set(compact)
+      try { localStorage.setItem(GLOBAL_NOTICE_SEEN_KEY, JSON.stringify(compact)) } catch { /* stockage indisponible */ }
+    }
+    const chooseNotice = async () => {
+      try {
+        const [announcementData, conversationData] = await Promise.all([
+          api.get<{ announcements: GlobalAnnouncement[] }>('/api/messaging/announcements'),
+          api.get<{ conversations: GlobalConversation[] }>('/api/messaging/conversations'),
+        ])
+        const announcement = announcementData.announcements
+          .filter(item => item.status === 'published' && !item.isRead)
+          .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))[0]
+        const conversation = conversationData.conversations
+          .filter(item => item.unread > 0 && item.last_body)
+          .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))[0]
+        const candidates: GlobalNotice[] = []
+        if (announcement) {
+          candidates.push({
+            id: `announcement:${announcement.id}`,
+            kind: 'announcement',
+            title: 'Nouvelle annonce GymFlow',
+            body: announcement.title,
+            source: 'Annonces GymFlow',
+            at: announcement.publishedAt ?? announcement.createdAt,
+            target: { kind: 'announcements' },
+          })
+        }
+        if (conversation) {
+          candidates.push({
+            id: `conversation:${conversation.id}:${conversation.last_at ?? conversation.updated_at}:${conversation.unread}`,
+            kind: 'conversation',
+            title: conversation.type === 'team' ? 'Nouveau message équipe' : 'Nouveau message',
+            body: conversation.last_body ?? 'Un nouveau message vous attend.',
+            source: conversation.name,
+            at: conversation.last_at ?? conversation.updated_at,
+            target: { kind: 'conversation', id: conversation.id },
+          })
+        }
+        const next = candidates
+          .filter(item => !noticeSeenRef.current.has(item.id))
+          .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0]
+        if (!alive || !next) return
+        remember(next.id)
+        setNotice({ ...next, shownAt: Date.now(), leaving: false })
+      } catch { /* les notifications ne doivent jamais perturber l'app */ }
+    }
+
+    void chooseNotice()
+    const timer = window.setInterval(() => void chooseNotice(), GLOBAL_NOTICE_POLL_MS)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [me])
+
+  useEffect(() => {
+    if (!notice) return
+    setNoticeTick(Date.now())
+    const tick = window.setInterval(() => setNoticeTick(Date.now()), 250)
+    const close = window.setTimeout(() => {
+      setNotice(current => current ? { ...current, leaving: true } : current)
+    }, GLOBAL_NOTICE_MS)
+    const remove = window.setTimeout(() => setNotice(null), GLOBAL_NOTICE_MS + 560)
+    return () => { window.clearInterval(tick); window.clearTimeout(close); window.clearTimeout(remove) }
+  }, [notice?.id])
+
+  function dismissNotice() {
+    setNotice(current => current ? { ...current, leaving: true } : current)
+    window.setTimeout(() => setNotice(null), 520)
+  }
+
+  async function openNotice(item: GlobalNotice) {
+    try { sessionStorage.setItem(MESSAGING_TARGET_KEY, JSON.stringify(item.target)) } catch { /* stockage indisponible */ }
+    if (item.kind === 'announcement') {
+      const id = item.id.replace(/^announcement:/, '')
+      await api.post(`/api/messaging/announcements/${encodeURIComponent(id)}/read`).catch(() => undefined)
+    }
+    dismissNotice()
+    window.dispatchEvent(new Event('gymflow:messaging-target'))
+    router.push('/messagerie')
+  }
 
   // Un exploitant sans club qui atterrit sur un ecran de club n'a rien a y
   // voir : ces pages n'ont aucune base a ouvrir. On le renvoie a la
@@ -388,6 +521,15 @@ function ShellBody({ children }: { children: ReactNode }) {
         </div>
       )}
 
+      {notice && (
+        <GlobalNoticeCard
+          notice={notice}
+          now={noticeTick}
+          onOpen={() => void openNotice(notice)}
+          onClose={dismissNotice}
+        />
+      )}
+
       <main className={`app-main${pathname.startsWith('/messagerie') ? ' messaging-app-main' : ''}`}>
         {/* Barre du haut : filtre discipline, alertes, historique, reglages.
             Uniquement dans un club — la plateforme n'a ni discipline ni
@@ -458,5 +600,44 @@ function SupportBar({ me, onLeft }: { me: Me; onLeft: () => void }) {
         </button>
       </span>
     </div>
+  )
+}
+
+function GlobalNoticeCard({
+  notice, now, onOpen, onClose,
+}: {
+  notice: GlobalNotice & { shownAt: number; leaving: boolean }
+  now: number
+  onOpen: () => void
+  onClose: () => void
+}) {
+  const elapsed = Math.min(GLOBAL_NOTICE_MS, Math.max(0, now - notice.shownAt))
+  const remaining = Math.max(0, Math.ceil((GLOBAL_NOTICE_MS - elapsed) / 1000))
+  const progress = Math.max(0, 1 - (elapsed / GLOBAL_NOTICE_MS))
+  const Icon = notice.kind === 'announcement' ? Bell : MessageCircle
+
+  return (
+    <aside
+      className={`announcement-notice global-message-notice${notice.leaving ? ' is-leaving' : ''}`}
+      role="status"
+      aria-live="polite"
+      aria-label={notice.title}
+      style={{ '--notice-progress': `${progress * 360}deg` } as CSSProperties}
+    >
+      <button className="global-message-notice-main" onClick={onOpen}>
+        <span className="announcement-notice-icon"><Icon size={19} strokeWidth={2.2} /></span>
+        <span className="global-message-notice-copy">
+          <b>{notice.title}</b>
+          <strong>{notice.source}</strong>
+          <small>{notice.body}</small>
+        </span>
+        <span className="global-message-notice-countdown" aria-label={`Disparait dans ${remaining} secondes`}>
+          {remaining}s
+        </span>
+      </button>
+      <button className="announcement-notice-close" onClick={onClose} aria-label="Fermer la notification">
+        <X size={16} />
+      </button>
+    </aside>
   )
 }

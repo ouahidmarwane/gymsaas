@@ -33,8 +33,7 @@ type GroupInfo = { id: string; type: string; name: string | null; members: Membe
 const EMOJIS = ['👍', '❤️', '😂', '👏']
 const REFRESH_MS = 8_000
 const ANNOUNCEMENT_POLL_MS = 60_000
-const ANNOUNCEMENT_REMINDER_MS = 60 * 60 * 1_000
-const ANNOUNCEMENT_REMINDER_KEY = 'gymflow:announcement-reminders'
+const MESSAGING_TARGET_KEY = 'gymflow:messaging-target'
 
 export default function MessagingPage() {
   const [me, setMe] = useState<Me | null>(null)
@@ -61,7 +60,6 @@ export default function MessagingPage() {
   const [detailsOpen, setDetailsOpen] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [newDialog, setNewDialog] = useState<'dm' | 'group' | null>(null)
-  const [announcementNotice, setAnnouncementNotice] = useState<Announcement | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const didAutoSelect = useRef(false)
@@ -155,33 +153,6 @@ export default function MessagingPage() {
     return () => window.clearInterval(timer)
   }, [me])
 
-  useEffect(() => {
-    if (!me || me.isPlatformAdmin) {
-      setAnnouncementNotice(null)
-      return
-    }
-    const unread = announcements
-      .filter(item => !item.isRead && item.status === 'published')
-      .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))
-    if (unread.length === 0) {
-      setAnnouncementNotice(null)
-      return
-    }
-    const remind = () => {
-      const item = unread[0]!
-      let reminders: Record<string, number> = {}
-      try { reminders = JSON.parse(window.localStorage.getItem(ANNOUNCEMENT_REMINDER_KEY) ?? '{}') as Record<string, number> } catch { reminders = {} }
-      const lastShown = reminders[item.id] ?? 0
-      if (Date.now() - lastShown < ANNOUNCEMENT_REMINDER_MS) return
-      setAnnouncementNotice(item)
-      reminders[item.id] = Date.now()
-      try { window.localStorage.setItem(ANNOUNCEMENT_REMINDER_KEY, JSON.stringify(reminders)) } catch { /* stockage indisponible : le rappel reste fonctionnel pendant la session */ }
-    }
-    remind()
-    const timer = window.setInterval(remind, 60_000)
-    return () => window.clearInterval(timer)
-  }, [announcements, me])
-
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, supportMessages])
 
   const filtered = useMemo(() => {
@@ -201,6 +172,29 @@ export default function MessagingPage() {
       setActive({ kind: 'conversation', id: conversations[0]!.id })
     }
   }, [active, conversations])
+
+  useEffect(() => {
+    if (!me) return
+    const applyTarget = () => {
+      let target: { kind: 'announcements' } | { kind: 'conversation'; id: string } | null = null
+      try { target = JSON.parse(sessionStorage.getItem(MESSAGING_TARGET_KEY) ?? 'null') } catch { target = null }
+      if (!target) return
+      if (target.kind === 'announcements') {
+        didAutoSelect.current = true
+        setActive({ kind: 'announcements' })
+        try { sessionStorage.removeItem(MESSAGING_TARGET_KEY) } catch { /* stockage indisponible */ }
+        return
+      }
+      if (target.kind === 'conversation' && conversations.some(conversation => conversation.id === target.id)) {
+        didAutoSelect.current = true
+        setActive({ kind: 'conversation', id: target.id })
+        try { sessionStorage.removeItem(MESSAGING_TARGET_KEY) } catch { /* stockage indisponible */ }
+      }
+    }
+    applyTarget()
+    window.addEventListener('gymflow:messaging-target', applyTarget)
+    return () => window.removeEventListener('gymflow:messaging-target', applyTarget)
+  }, [conversations, me])
 
   const mentionCandidates = useMemo(() => {
     if (!composer.match(/(?:^|\s)@[\p{L}\p{N} '-]*$/u)) return []
@@ -260,17 +254,6 @@ export default function MessagingPage() {
     finally { setLoadingChat(false) }
   }
 
-  async function consultAnnouncement(item: Announcement) {
-    setAnnouncementNotice(null)
-    setActive({ kind: 'announcements' })
-    if (!item.isRead && item.status === 'published') {
-      try {
-        await api.post(`/api/messaging/announcements/${encodeURIComponent(item.id)}/read`)
-        setAnnouncements(current => current.map(row => row.id === item.id ? { ...row, isRead: 1 } : row))
-      } catch (e) { setError(messageOf(e)) }
-    }
-  }
-
   const selectedConversation = conversations.find(c => c.id === active?.id)
   const showList = !active
 
@@ -292,13 +275,6 @@ export default function MessagingPage() {
       </header>
 
       {error && <div className="messaging-error" role="alert"><span>{error}</span><button onClick={() => setError(null)} aria-label="Fermer"><X size={16} /></button></div>}
-
-      {announcementNotice && !me?.isPlatformAdmin && <aside className="announcement-notice" role="status" aria-live="assertive" aria-label="Nouvelle annonce GymFlow">
-        <span className="announcement-notice-icon"><Bell size={18} /></span>
-        <span><b>Nouvelle annonce GymFlow</b><strong>{announcementNotice.title}</strong><small>Un nouveau message officiel vous attend.</small></span>
-        <button className="announcement-notice-open" onClick={() => void consultAnnouncement(announcementNotice)}>Consulter</button>
-        <button className="announcement-notice-close" onClick={() => setAnnouncementNotice(null)} aria-label="Fermer le rappel"><X size={16} /></button>
-      </aside>}
 
       <section className={`messaging-shell${showList ? '' : ' has-active'}${active && detailsOpen ? ' has-details' : ''}${sidebarOpen ? '' : ' sidebar-collapsed'}`} aria-label="Centre de messagerie">
         <aside className="messaging-sidebar">
@@ -422,7 +398,7 @@ function MessageBubble({ conversationId, message, own, onReply, onReact }: { con
     <Avatar name={message.authorName} small />
     <div className="message-stack">
       <span className="message-author">{own ? 'Moi' : message.authorName}<time>{shortTime(message.createdAt)}</time></span>
-      <div className="message-bubble">
+      <div className={`message-bubble${reactions ? ' has-reactions' : ''}`}>
         {message.replyToId && <div className="quoted-message"><b>{message.replyAuthor}</b><span>{message.replyBody}</span></div>}
         {(!message.attachments || message.attachments.length === 0) && <p>{message.body}</p>}
         {message.attachments?.map(attachment => <AttachmentView key={attachment.id} conversationId={conversationId} attachment={attachment} />)}
@@ -535,7 +511,7 @@ function AnnouncementMessage({ item, platform, onRead, onReact }: { item: Announ
     <span className="message-avatar"><Bell size={16} /></span>
     <div className="message-stack">
       <span className="message-author">GymFlow <time>{longDate(item.publishedAt ?? item.createdAt)}</time></span>
-      <div className="message-bubble announcement-bubble">
+      <div className={`message-bubble announcement-bubble${reactions ? ' has-reactions' : ''}`}>
         <h3>{item.title}</h3>
         <p>{item.content}</p>
         <footer>{item.publisherName ?? 'GymFlow'} · {item.status === 'published' ? 'Annonce officielle' : item.status}</footer>
