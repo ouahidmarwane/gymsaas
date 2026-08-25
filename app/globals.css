@@ -4722,12 +4722,12 @@ input, textarea, select {
 }
 
 @keyframes rail-open-settle {
-  from { clip-path: inset(0 64% 0 0 round var(--radius-xl)); filter: saturate(0.86) brightness(0.92); }
-  to { clip-path: inset(0 0 0 0 round var(--radius-xl)); filter: saturate(1) brightness(1); }
+  from { filter: saturate(0.86) brightness(0.92); }
+  to { filter: saturate(1) brightness(1); }
 }
 @keyframes rail-close-settle {
-  from { clip-path: inset(0 0 0 0 round var(--radius-xl)); filter: saturate(1) brightness(1); }
-  to { clip-path: inset(0 0 0 0 round var(--radius-xl)); filter: saturate(0.96) brightness(0.98); }
+  from { filter: saturate(1) brightness(1); }
+  to { filter: saturate(0.96) brightness(0.98); }
 }
 
 @media (prefers-reduced-motion: reduce) {
