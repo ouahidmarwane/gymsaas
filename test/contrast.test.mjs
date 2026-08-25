@@ -143,6 +143,14 @@ test('aucun jeton ne se refere a lui-meme', () => {
   }
 })
 
+test('les titres des etats vides de la messagerie suivent le texte du theme', () => {
+  assert.match(
+    CSS,
+    /\.messaging-page\s+\.messaging-welcome\s+h2\s*,\s*\.messaging-page\s+\.chat-empty\s+h3\s*\{[^}]*color\s*:\s*var\(--text\)/,
+    'les titres des etats vides doivent utiliser --text, jamais une couleur claire ou sombre en dur',
+  )
+})
+
 for (const [name, palette] of Object.entries(PALETTES)) {
   test(`habillage « ${name} » : tout reste lisible`, () => {
     const t = { ...root, ...(palette ?? {}) }

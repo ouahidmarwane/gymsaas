@@ -7429,6 +7429,8 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
 
 .messaging-page .announcement-readonly{min-height:86px;border-top:1px solid var(--hub-line);background:var(--hub-panel)}
 .messaging-page .announcement-line.unread{background:var(--hub-hover);box-shadow:inset 2px 0 var(--gold)}
+.messaging-page .messaging-welcome h2,
+.messaging-page .chat-empty h3{color:var(--text)}
 .messaging-page *:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .messaging-page ::selection{background:color-mix(in srgb,var(--gold) 72%,transparent);color:#fff}
 
