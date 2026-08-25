@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   LayoutDashboard, Users, Award, Wallet, UserCog, SlidersHorizontal,
   ShieldAlert, Building2, Settings, LogOut, Menu, X, Receipt,
-  MessageCircle,
+  MessageCircle, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { api, ApiError, privileged, type Me, type Capabilities } from '@/lib/client'
 import { SKINS, DEFAULT_THEME } from '@/src/club/branding'
@@ -90,6 +90,7 @@ function ShellBody({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [failed, setFailed] = useState(false)
   const [drawer, setDrawer] = useState(false)
+  const [railOpen, setRailOpen] = useState(true)
 
   useEffect(() => {
     let alive = true
@@ -102,6 +103,12 @@ function ShellBody({ children }: { children: ReactNode }) {
       })
     return () => { alive = false }
   }, [router])
+
+  useEffect(() => {
+    try {
+      setRailOpen(localStorage.getItem('gf-rail-open') !== '0')
+    } catch { /* stockage indisponible */ }
+  }, [])
 
   // La couleur du club ne repeint que --gold : tout le systeme visuel s'y
   // accroche deja (rail actif, barres, graphiques, focus), donc un club change
@@ -223,18 +230,38 @@ function ShellBody({ children }: { children: ReactNode }) {
   const logo = isOperatorView ? null : me?.branding?.logoUrl
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${railOpen ? ' rail-open' : ' rail-closed'}`}>
       {inSupport && me && <SupportBar me={me} onLeft={() => { router.replace('/admin'); router.refresh() }} />}
 
       {/* Rail flottant, desktop */}
-      <aside className="rail-shell rail-desktop" aria-label="Navigation principale">
-        <Link href="/dashboard" className="rail-logo" title={clubName}>
-          {logo
-            ? <img src={logo} alt="" />
-            : <span style={{ fontWeight: 800, fontSize: '0.8rem', color: '#fff' }}>
-                {clubName.slice(0, 2).toUpperCase()}
-              </span>}
-        </Link>
+      <aside className={`rail-shell rail-desktop${railOpen ? ' expanded' : ' collapsed'}`} aria-label="Navigation principale">
+        <div className="rail-head">
+          <Link href="/dashboard" className="rail-logo" title={clubName}>
+            {logo
+              ? <img src={logo} alt="" />
+              : <span>
+                  {clubName.slice(0, 2).toUpperCase()}
+                </span>}
+          </Link>
+          <Link href="/dashboard" className="rail-brand" title={clubName}>
+            <strong>{clubName}</strong>
+            <small>{isOperatorView ? 'Plateforme' : 'Club sportif'}</small>
+          </Link>
+        </div>
+
+        <button
+          className="rail-toggle"
+          type="button"
+          aria-label={railOpen ? 'Replier la navigation' : 'Ouvrir la navigation'}
+          aria-expanded={railOpen}
+          onClick={() => {
+            const next = !railOpen
+            setRailOpen(next)
+            try { localStorage.setItem('gf-rail-open', next ? '1' : '0') } catch { /* stockage indisponible */ }
+          }}
+        >
+          {railOpen ? <ChevronLeft size={16} strokeWidth={2.4} /> : <ChevronRight size={16} strokeWidth={2.4} />}
+        </button>
 
         <nav className="rail-nav">
           {items.map(item => {
@@ -251,6 +278,7 @@ function ShellBody({ children }: { children: ReactNode }) {
                 aria-current={active ? 'page' : undefined}
               >
                 <Icon size={19} strokeWidth={2.1} />
+                <span>{item.label}</span>
               </Link>
             )
           })}
@@ -259,11 +287,18 @@ function ShellBody({ children }: { children: ReactNode }) {
         <div className="rail-bottom">
           <Link href="/account" className="rail-btn" title="Mon compte" data-tooltip="Mon compte" aria-label="Mon compte">
             <Settings size={19} strokeWidth={2.1} />
+            <span>Mon compte</span>
           </Link>
           {me && (
-            <span className="rail-avatar" title={me.user.name} aria-hidden="true">
-              {me.user.name.slice(0, 2).toUpperCase()}
-            </span>
+            <div className="rail-user" title={me.user.name}>
+              <span className="rail-avatar" aria-hidden="true">
+                {me.user.name.slice(0, 2).toUpperCase()}
+              </span>
+              <span className="rail-user-copy">
+                <strong>{me.user.name}</strong>
+                <small>{me.user.email}</small>
+              </span>
+            </div>
           )}
           <button
             className="rail-btn"
@@ -273,6 +308,7 @@ function ShellBody({ children }: { children: ReactNode }) {
             onClick={async () => { await api.post('/api/auth/logout'); router.replace('/login') }}
           >
             <LogOut size={18} strokeWidth={2.1} />
+            <span>Se deconnecter</span>
           </button>
         </div>
       </aside>
