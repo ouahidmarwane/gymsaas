@@ -97,6 +97,13 @@ test('/api/me signale clairement le mode support', async () => {
   assert.equal(me.data.isPlatformAdmin, true)
 })
 
+test('le mode support ne peut pas publier dans le canal annonces', async () => {
+  const publish = await operator.call('POST', '/api/messaging/announcements', {
+    title: 'Interdit depuis support', content: 'Cette annonce ne doit pas exister', status: 'published',
+  })
+  assert.equal(publish.status, 403)
+})
+
 test('le droit d ecriture expire sans fermer la session de support', async () => {
   control("UPDATE support_write_grants SET expires_at = '2000-01-01T00:00:00Z'")
   await waitReady()

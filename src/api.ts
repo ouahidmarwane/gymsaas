@@ -72,6 +72,11 @@ function scopedOrgId(principal: Principal): string {
   return orgId
 }
 
+/** Les actions éditoriales plateforme sont interdites depuis un contexte support. */
+function isPlatformContext(principal: Principal): boolean {
+  return principal.isPlatformAdmin && principal.supportContextOrgId === null
+}
+
 /** Acces superadmin a un club donne. Trace, car il franchit la frontiere. */
 async function clubAsPlatformAdmin(
   env: Env, principal: Principal, orgId: string, action: string, ip: string | null,
@@ -1291,7 +1296,7 @@ export const api = {
       }
 
       if (path === '/api/messaging/support/threads' && method === 'GET') {
-        if (!principal.isPlatformAdmin && !['owner', 'admin'].includes(principal.role ?? '')) {
+        if (!principal.isPlatformAdmin && !['owner', 'admin', 'staff'].includes(principal.role ?? '')) {
           return fail(403, 'Reserve aux responsables')
         }
         if (principal.isPlatformAdmin) {
@@ -1344,7 +1349,7 @@ export const api = {
         const orgId = principal.isPlatformAdmin
           ? str(body.orgId, 'orgId', 80)
           : scopedOrgId(principal)
-        if (!principal.isPlatformAdmin && !['owner', 'admin'].includes(principal.role ?? '')) {
+        if (!principal.isPlatformAdmin && !['owner', 'admin', 'staff'].includes(principal.role ?? '')) {
           return fail(403, 'Reserve aux responsables')
         }
         await assertOrgExists(env, orgId)
@@ -1369,7 +1374,7 @@ export const api = {
       }
 
       if (path === '/api/messaging/announcements' && method === 'GET') {
-        const manage = principal.isPlatformAdmin && url.searchParams.get('manage') === '1'
+        const manage = isPlatformContext(principal) && url.searchParams.get('manage') === '1'
         const { results } = await env.CONTROL.prepare(
           `SELECT a.id, a.title, a.content, a.status,
                   a.published_at AS publishedAt, a.created_at AS createdAt,
@@ -1386,7 +1391,7 @@ export const api = {
       }
 
       if (path === '/api/messaging/announcements' && method === 'POST') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const body = await readJson(request)
         const status = body.status === 'published' ? 'published' : 'draft'
         const title = str(body.title, 'title', 160).trim()
@@ -1413,7 +1418,7 @@ export const api = {
 
       const announcementRoute = path.match(/^\/api\/messaging\/announcements\/([^/]+)$/)
       if (announcementRoute && method === 'PATCH') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const body = await readJson(request)
         await env.CONTROL.prepare(
           `UPDATE platform_announcements

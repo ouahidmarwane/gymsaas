@@ -66,11 +66,13 @@ export default function MessagingPage() {
   const didAutoSelect = useRef(false)
 
   const clubMessaging = me?.scope.mode === 'member' && ['owner', 'admin', 'staff'].includes(me.org?.role ?? '')
-  const canUseSupport = me?.isPlatformAdmin || ['owner', 'admin'].includes(me?.org?.role ?? '')
+  const platformMessaging = Boolean(me?.isPlatformAdmin && me.scope.mode !== 'support')
+  const canUseSupport = platformMessaging || ['owner', 'admin', 'staff'].includes(me?.org?.role ?? '')
 
   const loadNavigation = useCallback(async (identity: Me) => {
+    const platformContext = identity.isPlatformAdmin && identity.scope.mode !== 'support'
     const jobs: Promise<void>[] = [
-      api.get<{ announcements: Announcement[] }>(`/api/messaging/announcements${identity.isPlatformAdmin ? '?manage=1' : ''}`)
+      api.get<{ announcements: Announcement[] }>(`/api/messaging/announcements${platformContext ? '?manage=1' : ''}`)
         .then(data => setAnnouncements(data.announcements)),
     ]
     if (identity.scope.mode === 'member' && ['owner', 'admin', 'staff'].includes(identity.org?.role ?? '')) {
@@ -81,7 +83,7 @@ export default function MessagingPage() {
           .then(data => setPeople(data.people)),
       )
     }
-    if (identity.isPlatformAdmin || ['owner', 'admin'].includes(identity.org?.role ?? '')) {
+    if (platformContext || ['owner', 'admin', 'staff'].includes(identity.org?.role ?? '')) {
       jobs.push(api.get<{ threads: SupportThread[] }>('/api/messaging/support/threads')
         .then(data => setSupportThreads(data.threads)))
     }
@@ -144,7 +146,8 @@ export default function MessagingPage() {
   useEffect(() => {
     if (!me) return
     const timer = window.setInterval(() => {
-      void api.get<{ announcements: Announcement[] }>(`/api/messaging/announcements${me.isPlatformAdmin ? '?manage=1' : ''}`)
+      const manage = me.isPlatformAdmin && me.scope.mode !== 'support' ? '?manage=1' : ''
+      void api.get<{ announcements: Announcement[] }>(`/api/messaging/announcements${manage}`)
         .then(data => setAnnouncements(data.announcements))
         .catch(() => undefined)
     }, ANNOUNCEMENT_POLL_MS)
@@ -152,6 +155,10 @@ export default function MessagingPage() {
   }, [me])
 
   useEffect(() => {
+    if (!me || me.isPlatformAdmin) {
+      setAnnouncementNotice(null)
+      return
+    }
     const unread = announcements
       .filter(item => !item.isRead && item.status === 'published')
       .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))
@@ -172,7 +179,7 @@ export default function MessagingPage() {
     remind()
     const timer = window.setInterval(remind, 60_000)
     return () => window.clearInterval(timer)
-  }, [announcements])
+  }, [announcements, me])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, supportMessages])
 
@@ -285,7 +292,7 @@ export default function MessagingPage() {
 
       {error && <div className="messaging-error" role="alert"><span>{error}</span><button onClick={() => setError(null)} aria-label="Fermer"><X size={16} /></button></div>}
 
-      {announcementNotice && <aside className="announcement-notice" role="status" aria-live="assertive" aria-label="Nouvelle annonce GymFlow">
+      {announcementNotice && !me?.isPlatformAdmin && <aside className="announcement-notice" role="status" aria-live="assertive" aria-label="Nouvelle annonce GymFlow">
         <span className="announcement-notice-icon"><Bell size={18} /></span>
         <span><b>Nouvelle annonce GymFlow</b><strong>{announcementNotice.title}</strong><small>Un nouveau message officiel vous attend.</small></span>
         <button className="announcement-notice-open" onClick={() => void consultAnnouncement(announcementNotice)}>Consulter</button>
@@ -332,7 +339,7 @@ export default function MessagingPage() {
 
         <main className="messaging-conversation">
           {!active ? <MessagingWelcome platform={Boolean(me?.isPlatformAdmin)} /> : active.kind === 'announcements' ? (
-            <AnnouncementsPanel announcements={announcements} platform={Boolean(me?.isPlatformAdmin)} detailsOpen={detailsOpen} onToggleDetails={() => setDetailsOpen(value => !value)} onReload={async () => { if (me) await loadNavigation(me) }} />
+            <AnnouncementsPanel announcements={announcements} platform={platformMessaging} detailsOpen={detailsOpen} onToggleDetails={() => setDetailsOpen(value => !value)} onReload={async () => { if (me) await loadNavigation(me) }} />
           ) : (
             <>
               <div className="conversation-header">

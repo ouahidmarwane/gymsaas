@@ -179,6 +179,15 @@ test('only platform Superadmin can publish announcements', async () => {
   assert.equal((await ownerA.call('PATCH', `/api/messaging/announcements/${item.id}`, { title: 'Piraté' })).status, 403)
 })
 
+test('club staff can contact support without gaining announcement publishing rights', async () => {
+  assert.equal((await staffA.call('POST', '/api/messaging/support', {
+    body: 'Demande envoyee par la reception',
+  })).status, 201)
+  assert.equal((await staffA.call('POST', '/api/messaging/announcements', {
+    title: 'Interdit', content: 'Non', status: 'published',
+  })).status, 403)
+})
+
 test('message validation rejects empty, oversized, invalid reaction and SQL payload safely', async () => {
   assert.equal((await ownerA.call('POST', `/api/messaging/conversations/${dmId}/messages`, { body: '   ' })).status, 400)
   assert.equal((await ownerA.call('POST', `/api/messaging/conversations/${dmId}/messages`, { body: 'x'.repeat(4001) })).status, 400)
