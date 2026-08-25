@@ -62,6 +62,7 @@ type GlobalNotice = {
 
 const GLOBAL_NOTICE_MS = 5_000
 const GLOBAL_NOTICE_POLL_MS = 12_000
+const GLOBAL_NOTICE_LOGIN_DELAY_MS = 5_000
 const GLOBAL_NOTICE_SEEN_KEY = 'gymflow:global-notice-seen'
 const MESSAGING_TARGET_KEY = 'gymflow:messaging-target'
 
@@ -127,6 +128,7 @@ function ShellBody({ children }: { children: ReactNode }) {
   const [drawer, setDrawer] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
   const [notice, setNotice] = useState<(GlobalNotice & { shownAt: number; leaving: boolean }) | null>(null)
+  const [noticeQueue, setNoticeQueue] = useState<GlobalNotice[]>([])
   const [noticeTick, setNoticeTick] = useState(() => Date.now())
   const railRef = useRef<HTMLElement | null>(null)
   const noticeSeenRef = useRef<Set<string>>(new Set())
@@ -210,38 +212,45 @@ function ShellBody({ children }: { children: ReactNode }) {
   useEffect(() => { setDrawer(false) }, [pathname])
 
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(GLOBAL_NOTICE_SEEN_KEY) ?? '[]') as string[]
-      noticeSeenRef.current = new Set(stored.slice(-80))
-    } catch { noticeSeenRef.current = new Set() }
-  }, [])
-
-  useEffect(() => {
-    if (!me || me.isPlatformAdmin || me.scope.mode !== 'member') return
-    if (!['owner', 'admin', 'staff'].includes(me.org?.role ?? '')) return
+    if (!me || me.isPlatformAdmin || me.scope.mode !== 'member') {
+      setNoticeQueue([])
+      noticeSeenRef.current = new Set()
+      return
+    }
+    if (!['owner', 'admin', 'staff'].includes(me.org?.role ?? '')) {
+      setNoticeQueue([])
+      noticeSeenRef.current = new Set()
+      return
+    }
 
     let alive = true
+    const noticeStorageKey = `${GLOBAL_NOTICE_SEEN_KEY}:${me.user.id}:${me.org?.id ?? 'club'}`
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(noticeStorageKey) ?? '[]') as string[]
+      noticeSeenRef.current = new Set(stored.slice(-80))
+    } catch { noticeSeenRef.current = new Set() }
+
     const remember = (id: string) => {
       const seen = noticeSeenRef.current
       seen.add(id)
       const compact = [...seen].slice(-80)
       noticeSeenRef.current = new Set(compact)
-      try { localStorage.setItem(GLOBAL_NOTICE_SEEN_KEY, JSON.stringify(compact)) } catch { /* stockage indisponible */ }
+      try { sessionStorage.setItem(noticeStorageKey, JSON.stringify(compact)) } catch { /* stockage indisponible */ }
     }
-    const chooseNotice = async () => {
+    const enqueueNotices = async () => {
       try {
         const [announcementData, conversationData] = await Promise.all([
           api.get<{ announcements: GlobalAnnouncement[] }>('/api/messaging/announcements'),
           api.get<{ conversations: GlobalConversation[] }>('/api/messaging/conversations'),
         ])
-        const announcement = announcementData.announcements
+        const announcements = announcementData.announcements
           .filter(item => item.status === 'published' && !item.isRead)
-          .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))[0]
-        const conversation = conversationData.conversations
+          .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))
+        const conversations = conversationData.conversations
           .filter(item => item.unread > 0 && item.last_body)
-          .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))[0]
+          .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))
         const candidates: GlobalNotice[] = []
-        if (announcement) {
+        for (const announcement of announcements) {
           candidates.push({
             id: `announcement:${announcement.id}`,
             kind: 'announcement',
@@ -252,7 +261,7 @@ function ShellBody({ children }: { children: ReactNode }) {
             target: { kind: 'announcements' },
           })
         }
-        if (conversation) {
+        for (const conversation of conversations) {
           candidates.push({
             id: `conversation:${conversation.id}:${conversation.last_at ?? conversation.updated_at}:${conversation.unread}`,
             kind: 'conversation',
@@ -263,19 +272,37 @@ function ShellBody({ children }: { children: ReactNode }) {
             target: { kind: 'conversation', id: conversation.id },
           })
         }
-        const next = candidates
+        const pending = candidates
           .filter(item => !noticeSeenRef.current.has(item.id))
-          .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0]
-        if (!alive || !next) return
-        remember(next.id)
-        setNotice({ ...next, shownAt: Date.now(), leaving: false })
+          .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+        if (!alive || pending.length === 0) return
+        for (const item of pending) remember(item.id)
+        setNoticeQueue(current => {
+          const known = new Set(current.map(item => item.id))
+          return [...current, ...pending.filter(item => !known.has(item.id))]
+        })
       } catch { /* les notifications ne doivent jamais perturber l'app */ }
     }
 
-    void chooseNotice()
-    const timer = window.setInterval(() => void chooseNotice(), GLOBAL_NOTICE_POLL_MS)
-    return () => { alive = false; window.clearInterval(timer) }
+    let pollTimer: number | undefined
+    const loginDelay = window.setTimeout(() => {
+      void enqueueNotices()
+      pollTimer = window.setInterval(() => void enqueueNotices(), GLOBAL_NOTICE_POLL_MS)
+    }, GLOBAL_NOTICE_LOGIN_DELAY_MS)
+    return () => {
+      alive = false
+      window.clearTimeout(loginDelay)
+      if (pollTimer) window.clearInterval(pollTimer)
+    }
   }, [me])
+
+  useEffect(() => {
+    if (notice || noticeQueue.length === 0) return
+    const [next, ...rest] = noticeQueue
+    if (!next) return
+    setNoticeQueue(rest)
+    setNotice({ ...next, shownAt: Date.now(), leaving: false })
+  }, [notice, noticeQueue])
 
   useEffect(() => {
     if (!notice) return
