@@ -4437,13 +4437,16 @@ input, textarea, select {
 .rail-desktop { display: none; }
 @media (min-width: 768px) {
   .rail-desktop { display: block; }
-  .app-shell .app-main { margin-left: 116px !important; padding: 28px 36px 40px !important; }
+  .app-shell .app-main {
+    margin-left: 116px !important;
+    padding: 28px 36px 40px !important;
+  }
   .app-shell.rail-open .app-main { margin-left: 292px !important; }
   .app-shell.rail-closed .app-main { margin-left: 116px !important; }
   .mobile-topbar { display: none !important; }
 }
 .rail-shell {
-  position: fixed; left: 20px; top: 20px; bottom: 20px; width: 72px; z-index: 40;
+  position: fixed; left: 20px; top: 20px; bottom: 20px; width: 72px; z-index: 80;
   display: flex; flex-direction: column; align-items: stretch; justify-content: space-between;
   gap: 18px;
   padding: 14px 12px;
@@ -4452,13 +4455,24 @@ input, textarea, select {
   border-radius: var(--radius-xl);
   box-shadow: 0 24px 60px rgba(0,0,0,0.5);
   backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+  overflow: visible;
+  transition:
+    width 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    padding 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-radius 240ms cubic-bezier(0.16, 1, 0.3, 1),
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: width, padding, box-shadow;
 }
 .rail-shell.expanded {
   width: 244px;
   border-radius: var(--radius-xl);
   padding: 18px 16px;
+  box-shadow: 0 28px 70px rgba(0,0,0,0.56);
 }
+.rail-shell.collapsed { animation: rail-close-settle 220ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.rail-shell.expanded { animation: rail-open-settle 260ms cubic-bezier(0.16, 1, 0.3, 1) both; }
 .rail-head {
   position: relative;
   min-height: 48px;
@@ -4493,6 +4507,7 @@ input, textarea, select {
 }
 .rail-logo span { font-weight: 800; font-size: 0.8rem; color: #fff; }
 .rail-brand {
+  max-width: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -4500,10 +4515,22 @@ input, textarea, select {
   color: var(--text);
   opacity: 0;
   transform: translateX(-6px);
+  visibility: hidden;
   pointer-events: none;
-  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  transition:
+    max-width 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 150ms ease,
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 150ms ease;
 }
-.rail-shell.expanded .rail-brand { opacity: 1; transform: translateX(0); pointer-events: auto; }
+.rail-shell.expanded .rail-brand {
+  max-width: 162px;
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 55ms;
+}
 .rail-brand strong {
   display: block;
   max-width: 152px;
@@ -4518,6 +4545,7 @@ input, textarea, select {
   position: absolute;
   top: 26px;
   right: -12px;
+  z-index: 3;
   width: 24px;
   height: 24px;
   display: grid;
@@ -4576,18 +4604,32 @@ input, textarea, select {
 }
 .rail-btn svg { flex: none; }
 .rail-btn>span {
+  max-width: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0;
   transform: translateX(-4px);
-  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  visibility: hidden;
+  transition:
+    max-width 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 150ms ease,
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 150ms ease;
 }
-.rail-shell.expanded .rail-btn>span { opacity: 1; transform: translateX(0); }
-.rail-shell.collapsed .rail-btn>span,
-.rail-shell.collapsed .rail-brand,
-.rail-shell.collapsed .rail-user-copy { display: none; }
+.rail-shell.expanded .rail-btn>span {
+  max-width: 150px;
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  transition-delay: 45ms;
+}
+.rail-shell.expanded .rail-nav .rail-btn:nth-child(2)>span { transition-delay: 60ms; }
+.rail-shell.expanded .rail-nav .rail-btn:nth-child(3)>span { transition-delay: 75ms; }
+.rail-shell.expanded .rail-nav .rail-btn:nth-child(4)>span { transition-delay: 90ms; }
+.rail-shell.expanded .rail-nav .rail-btn:nth-child(5)>span { transition-delay: 105ms; }
+.rail-shell.expanded .rail-nav .rail-btn:nth-child(n+6)>span { transition-delay: 120ms; }
 .rail-shell.collapsed .rail-head,
 .rail-shell.collapsed .rail-bottom { align-items: center; }
 .rail-shell.collapsed .rail-nav { align-items: center; }
@@ -4640,15 +4682,27 @@ input, textarea, select {
   font-weight: 800; font-size: 0.9rem; color: #fff; background: var(--gold); flex-shrink: 0;
 }
 .rail-user-copy {
+  max-width: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
   opacity: 0;
   transform: translateX(-4px);
-  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  visibility: hidden;
+  transition:
+    max-width 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 150ms ease,
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 150ms ease;
 }
-.rail-shell.expanded .rail-user-copy { opacity: 1; transform: translateX(0); }
+.rail-shell.expanded .rail-user-copy {
+  max-width: 150px;
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  transition-delay: 70ms;
+}
 .rail-user-copy strong,
 .rail-user-copy small {
   display: block;
@@ -4665,6 +4719,27 @@ input, textarea, select {
   .rail-logo { width: 42px; height: 42px; }
   .rail-btn { height: 40px; min-width: 40px; }
   .rail-shell.collapsed .rail-btn, .rail-avatar { width: 40px; height: 40px; }
+}
+
+@keyframes rail-open-settle {
+  from { clip-path: inset(0 64% 0 0 round var(--radius-xl)); filter: saturate(0.86) brightness(0.92); }
+  to { clip-path: inset(0 0 0 0 round var(--radius-xl)); filter: saturate(1) brightness(1); }
+}
+@keyframes rail-close-settle {
+  from { clip-path: inset(0 0 0 0 round var(--radius-xl)); filter: saturate(1) brightness(1); }
+  to { clip-path: inset(0 0 0 0 round var(--radius-xl)); filter: saturate(0.96) brightness(0.98); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell .app-main,
+  .rail-shell,
+  .rail-brand,
+  .rail-btn>span,
+  .rail-user-copy {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 /* ── Dashboard façon maquette ── */

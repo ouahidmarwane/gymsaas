@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -91,6 +91,12 @@ function ShellBody({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
+  const railRef = useRef<HTMLElement | null>(null)
+
+  function setDesktopRailOpen(next: boolean) {
+    setRailOpen(next)
+    try { localStorage.setItem('gf-rail-open', next ? '1' : '0') } catch { /* stockage indisponible */ }
+  }
 
   useEffect(() => {
     let alive = true
@@ -109,6 +115,21 @@ function ShellBody({ children }: { children: ReactNode }) {
       setRailOpen(localStorage.getItem('gf-rail-open') !== '0')
     } catch { /* stockage indisponible */ }
   }, [])
+
+  useEffect(() => {
+    if (!railOpen) return
+
+    function closeOnOutsidePointer(event: PointerEvent) {
+      const rail = railRef.current
+      const target = event.target
+      if (!rail || !(target instanceof Node)) return
+      if (window.matchMedia('(max-width: 767px)').matches) return
+      if (!rail.contains(target)) setDesktopRailOpen(false)
+    }
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
+  }, [railOpen])
 
   // La couleur du club ne repeint que --gold : tout le systeme visuel s'y
   // accroche deja (rail actif, barres, graphiques, focus), donc un club change
@@ -234,7 +255,11 @@ function ShellBody({ children }: { children: ReactNode }) {
       {inSupport && me && <SupportBar me={me} onLeft={() => { router.replace('/admin'); router.refresh() }} />}
 
       {/* Rail flottant, desktop */}
-      <aside className={`rail-shell rail-desktop${railOpen ? ' expanded' : ' collapsed'}`} aria-label="Navigation principale">
+      <aside
+        ref={railRef}
+        className={`rail-shell rail-desktop${railOpen ? ' expanded' : ' collapsed'}`}
+        aria-label="Navigation principale"
+      >
         <div className="rail-head">
           <Link href="/dashboard" className="rail-logo" title={clubName}>
             {logo
@@ -254,11 +279,7 @@ function ShellBody({ children }: { children: ReactNode }) {
           type="button"
           aria-label={railOpen ? 'Replier la navigation' : 'Ouvrir la navigation'}
           aria-expanded={railOpen}
-          onClick={() => {
-            const next = !railOpen
-            setRailOpen(next)
-            try { localStorage.setItem('gf-rail-open', next ? '1' : '0') } catch { /* stockage indisponible */ }
-          }}
+          onClick={() => setDesktopRailOpen(!railOpen)}
         >
           {railOpen ? <ChevronLeft size={16} strokeWidth={2.4} /> : <ChevronRight size={16} strokeWidth={2.4} />}
         </button>
