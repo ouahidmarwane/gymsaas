@@ -1,12 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Building2, Dumbbell, Palette, Plus, Trash2 } from 'lucide-react'
+import { Building2, Dumbbell, MapPin, Palette, Plus, Trash2 } from 'lucide-react'
 import { api, ApiError, type Me } from '@/lib/client'
 import ThemePicker from '@/components/ThemePicker'
 import BannerPicker from '@/components/BannerPicker'
 import LogoPicker from '@/components/LogoPicker'
 import LadderEditor from '@/components/LadderEditor'
+import BranchLocationPicker, { type BranchLocation } from '@/components/BranchLocationPicker'
 
 interface Branch { id: string; name: string; is_active: number }
 interface Grade { id: string; rank: number; label: string; color?: string | null }
@@ -32,6 +33,7 @@ export default function SetupPage() {
   const [busy, setBusy] = useState(false)
 
   const [branchName, setBranchName] = useState('')
+  const [branchLocation, setBranchLocation] = useState<BranchLocation | null>(null)
   const [sportName, setSportName] = useState('')
   const [sportGraded, setSportGraded] = useState(false)
 
@@ -173,26 +175,23 @@ export default function SetupPage() {
           )}
         </ul>
 
-        <form
-          style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}
+        <form className="branch-create-form"
           onSubmit={e => {
             e.preventDefault()
-            if (!branchName.trim()) return
-            run(() => api.post('/api/branches', { name: branchName.trim() }))
-              .then(ok => { if (ok) setBranchName('') })
+            if (!branchName.trim() || !branchLocation) return
+            run(() => api.post('/api/branches', { name: branchName.trim(), ...branchLocation }))
+              .then(ok => { if (ok) { setBranchName(''); setBranchLocation(null) } })
           }}
         >
-          <input
-            className="input-dark"
-            style={{ flex: 1, minWidth: 200 }}
-            placeholder="Nom de la salle, ex. Salle Centre"
-            value={branchName}
-            onChange={e => setBranchName(e.target.value)}
-            maxLength={120}
-          />
-          <button className="btn-dark" style={{ background: 'var(--gold)', borderColor: 'transparent' }}
-                  disabled={busy || !branchName.trim()}>
-            <Plus size={15} strokeWidth={2.4} /> Ajouter
+          <div className="branch-create-heading">
+            <div><MapPin size={17} /><span><strong>Ajouter une branche</strong><small>Nommez-la, puis placez-la sur la carte.</small></span></div>
+          </div>
+          <input className="input-dark" placeholder="Nom de la salle, ex. Salle Centre"
+                 value={branchName} onChange={e => setBranchName(e.target.value)} maxLength={120} />
+          <BranchLocationPicker value={branchLocation} onChange={setBranchLocation} />
+          <button className="btn-dark branch-create-submit"
+                  disabled={busy || !branchName.trim() || !branchLocation}>
+            <Plus size={15} strokeWidth={2.4} /> Ajouter la branche
           </button>
         </form>
       </section>

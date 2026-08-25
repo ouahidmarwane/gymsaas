@@ -25,6 +25,10 @@ before(async () => {
   })
   assert.equal(created.status, 201, JSON.stringify(created.data))
   clubId = created.data.orgId
+  const branch = await clubOwner.call('POST', '/api/branches', {
+    name: 'Salle cartographiée', lat: 33.5731, lng: -7.5898, label: 'Casablanca',
+  })
+  assert.equal(branch.status, 201, JSON.stringify(branch.data))
 
   const o = uniq()
   const opEmail = `sup-ops-${o}@example.ma`
@@ -58,6 +62,16 @@ test('les sessions plateforme et club apparaissent sur le meme ecran', async () 
   assert.equal(club.is_platform_admin, 0)
   // Le nom du club permet de reperer d'ou vient la connexion.
   assert.match(club.org_name, /Club Supervise/)
+})
+
+test('la branche placée par le club apparaît sur la carte Superadmin', async () => {
+  const res = await operator.call('GET', '/api/admin/supervision')
+  assert.equal(res.status, 200, JSON.stringify(res.data))
+  const branch = res.data.clubs.find(item => item.org_id === clubId && item.branch_name === 'Salle cartographiée')
+  assert.ok(branch, 'la branche localisée doit figurer dans la supervision')
+  assert.equal(branch.lat, 33.5731)
+  assert.equal(branch.lng, -7.5898)
+  assert.equal(branch.label, 'Casablanca')
 })
 
 test('une rafale d echecs leve une alerte nommant le compte vise', async () => {

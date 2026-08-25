@@ -236,13 +236,13 @@ export default function SupervisionPage() {
           <h2 className="dz-card-title" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <MapPin size={17} strokeWidth={2.1} style={{ color: 'var(--gold)' }} /> Salles abonnees
           </h2>
-          <span className="dz-card-note">{clubs.length} club(s)</span>
+          <span className="dz-card-note">{clubs.length} branche(s) localisée(s)</span>
         </div>
         <ClubsMap
           clubs={clubs}
           onEnter={club => router.push(`/admin?club=${encodeURIComponent(club.slug)}`)}
           onLocate={async (club, at) => {
-            await api.put(`/api/admin/clubs/${club.id}/location`, at)
+            await api.put(`/api/admin/clubs/${club.org_id}/branches/${club.branch_id}/location`, at)
             await load()
           }}
         />

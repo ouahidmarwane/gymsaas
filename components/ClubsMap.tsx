@@ -22,6 +22,10 @@ import 'leaflet/dist/leaflet.css'
 
 export interface MapClub {
   id: string
+  org_id: string
+  branch_id: string
+  club_name: string
+  branch_name: string
   name: string
   slug: string
   lat: number | null
@@ -291,7 +295,8 @@ export default function ClubsMap({
 }
 
 /**
- * Saisie des coordonnees.
+ * Ajustement exceptionnel par la plateforme. Le point initial est normalement
+ * choisi par le responsable du club pendant la création de la branche.
  *
  * Pas de geocodage automatique : le service gratuit de Nominatim interdit
  * l'usage en masse, et il se trompe sur les adresses marocaines mal

@@ -702,6 +702,29 @@ function optional(v: unknown, max = 200): string | null {
   return s || null
 }
 
+type BranchLocationInput = { lat: number; lng: number; label: string | null }
+
+function parseLocation(body: Record<string, unknown>): BranchLocationInput | null {
+  if (body.lat === undefined && body.lng === undefined) return null
+  const lat = Number(body.lat)
+  const lng = Number(body.lng)
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) throw new HttpError(400, 'Latitude invalide')
+  if (!Number.isFinite(lng) || lng < -180 || lng > 180) throw new HttpError(400, 'Longitude invalide')
+  return { lat, lng, label: optional(body.label, 200) }
+}
+
+async function saveBranchLocation(
+  env: Env, orgId: string, branchId: string, branchName: string, location: BranchLocationInput,
+): Promise<void> {
+  await env.CONTROL.prepare(
+    `INSERT INTO branch_locations (org_id, branch_id, branch_name, lat, lng, label)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(org_id, branch_id) DO UPDATE SET
+       branch_name = excluded.branch_name, lat = excluded.lat, lng = excluded.lng,
+       label = excluded.label, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
+  ).bind(orgId, branchId, branchName, location.lat, location.lng, location.label).run()
+}
+
 /** Chaine facultative avec distinction absence (undefined) / mise a null explicite (null). */
 function parseOptionalField(body: Record<string, unknown>, field: string, max = 200): string | null | undefined {
   if (!(field in body) || body[field] === undefined) return undefined
@@ -1453,11 +1476,25 @@ export const api = {
       if (path === '/api/branches' && method === 'POST') {
         atLeast(principal, 'admin', true)
         const body = await readJson(request)
+        const orgId = scopedOrgId(principal)
+        const name = str(body.name, 'name', 120)
+        const location = parseLocation(body)
         const { id } = await clubOf(env, principal).addBranch({
-          name: str(body.name, 'name', 120),
+          name,
           nameAr: optional(body.nameAr, 120),
           address: optional(body.address, 300),
         })
+        if (location) {
+          try {
+            await saveBranchLocation(env, orgId, id, name, location)
+          } catch (error) {
+            // Deux stockages ne partagent pas de transaction. On compense la
+            // création métier pour ne jamais laisser une branche active sans
+            // le point que l'utilisateur vient explicitement de choisir.
+            await clubOf(env, principal).deactivateBranch(id)
+            throw error
+          }
+        }
         return json({ id }, { status: 201 })
       }
 
@@ -1467,13 +1504,25 @@ export const api = {
         const club = clubOf(env, principal)
         if (method === 'DELETE') {
           await club.deactivateBranch(branchRoute[1]!)
+          await env.CONTROL.prepare('DELETE FROM branch_locations WHERE org_id = ? AND branch_id = ?')
+            .bind(scopedOrgId(principal), branchRoute[1]!).run()
         } else {
           const body = await readJson(request)
+          const name = optional(body.name, 120) ?? undefined
           await club.updateBranch(branchRoute[1]!, {
-            name: optional(body.name, 120) ?? undefined,
+            name,
             nameAr: optional(body.nameAr, 120),
             address: optional(body.address, 300),
           })
+          const location = parseLocation(body)
+          if (location) {
+            const current = (await club.listBranches()).find(row => row.id === branchRoute[1])
+            if (current) await saveBranchLocation(env, scopedOrgId(principal), branchRoute[1]!, String(current.name), location)
+          } else if (name) {
+            await env.CONTROL.prepare(
+              'UPDATE branch_locations SET branch_name = ?, updated_at = strftime(\'%Y-%m-%dT%H:%M:%SZ\',\'now\') WHERE org_id = ? AND branch_id = ?',
+            ).bind(name, scopedOrgId(principal), branchRoute[1]!).run()
+          }
         }
         return json({ ok: true })
       }
@@ -2977,12 +3026,16 @@ export const api = {
               LIMIT 200`,
           ).all(),
 
-          // Carte : un club par point, avec de quoi le peindre et savoir s'il
+          // Carte : une branche par point, avec de quoi la peindre et savoir s'il
           // se passe quelque chose. Les agregats sont calcules ici plutot que
           // dans le navigateur — la carte doit rester fluide.
           env.CONTROL.prepare(
-            `SELECT o.id, o.name, o.slug, o.theme, o.status, o.plan,
-                    l.lat, l.lng, l.label,
+            `SELECT o.id AS org_id, bl.branch_id,
+                    o.id || ':' || bl.branch_id AS id,
+                    o.name AS club_name, bl.branch_name,
+                    o.name || ' · ' || bl.branch_name AS name,
+                    o.slug, o.theme, o.status, o.plan,
+                    bl.lat, bl.lng, bl.label,
                     (SELECT MAX(s.last_seen_at) FROM sessions s
                       WHERE s.org_id = o.id AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
                     ) AS last_seen_at,
@@ -2999,8 +3052,8 @@ export const api = {
                         AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%SZ','now')
                     ) AS under_support
                FROM organizations o
-               LEFT JOIN org_locations l ON l.org_id = o.id
-              ORDER BY o.name
+               JOIN branch_locations bl ON bl.org_id = o.id
+              ORDER BY o.name, bl.branch_name
               LIMIT 500`,
           ).bind(isoSeconds(new Date(Date.now() - 130_000)), cutoff).all(),
         ])
@@ -3048,6 +3101,20 @@ export const api = {
              label = excluded.label, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
         ).bind(orgId, lat, lng, optional(body.label, 200)).run()
         return json({ lat, lng })
+      }
+
+      const branchLocationRoute = path.match(/^\/api\/admin\/clubs\/([^/]+)\/branches\/([^/]+)\/location$/)
+      if (branchLocationRoute && method === 'PUT') {
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
+        const [orgId, branchId] = [branchLocationRoute[1]!, branchLocationRoute[2]!]
+        const known = await env.CONTROL.prepare(
+          'SELECT branch_name FROM branch_locations WHERE org_id = ? AND branch_id = ?',
+        ).bind(orgId, branchId).first<{ branch_name: string }>()
+        if (!known) return fail(404, 'Branche inconnue')
+        const location = parseLocation(await readJson(request))
+        if (!location) return fail(400, 'Emplacement requis')
+        await saveBranchLocation(env, orgId, branchId, known.branch_name, location)
+        return json(location)
       }
 
       /**
@@ -3724,11 +3791,17 @@ export const api = {
         const club = await clubAsPlatformAdmin(env, principal, orgId, `${method}_branches`, ip)
         if (method === 'GET') return json({ branches: await club.listBranches() })
         const body = await readJson(request)
+        const name = str(body.name, 'name', 120)
         const { id } = await club.addBranch({
-          name: str(body.name, 'name', 120),
+          name,
           nameAr: optional(body.nameAr, 120),
           address: optional(body.address, 300),
         })
+        const location = parseLocation(body)
+        if (location) {
+          try { await saveBranchLocation(env, orgId, id, name, location) }
+          catch (error) { await club.deactivateBranch(id); throw error }
+        }
         return json({ id }, { status: 201 })
       }
 

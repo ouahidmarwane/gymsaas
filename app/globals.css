@@ -2357,6 +2357,27 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   .docview-layer.is-closing { animation: scrimOut 120ms ease forwards; }
 }
 
+/* Création d'une branche : le point géographique fait partie de la saisie. */
+.branch-create-form{display:grid;gap:12px;margin-top:18px;padding-top:18px;border-top:1px solid var(--hairline)}
+.branch-create-heading>div{display:flex;align-items:center;gap:9px;color:var(--gold)}
+.branch-create-heading span{display:flex;flex-direction:column;color:var(--text)}
+.branch-create-heading strong{font-size:.88rem}
+.branch-create-heading small{margin-top:2px;color:var(--muted);font-size:.75rem;font-weight:400}
+.branch-location-picker{display:grid;gap:10px;padding:12px;border:1px solid var(--hairline);border-radius:16px;background:var(--overlay-soft)}
+.branch-location-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.branch-location-head>div{display:flex;min-width:0;flex-direction:column;gap:3px}
+.branch-location-head strong{display:flex;align-items:center;gap:7px;font-size:.88rem;color:var(--text)}
+.branch-location-head span,.branch-location-status{color:var(--muted);font-size:.75rem;line-height:1.45}
+.branch-location-map{height:clamp(240px,35vh,360px);overflow:hidden;border:1px solid var(--float-border);border-radius:12px;background:var(--surface)}
+.branch-location-label{display:grid;gap:5px}
+.branch-location-label>span{font-size:.75rem;font-weight:700;color:var(--muted)}
+.branch-location-status,.branch-location-error{margin:0}
+.branch-location-error{color:#f87171;font-size:.75rem;font-weight:600}
+.branch-create-submit{justify-self:end;background:var(--gold);border-color:transparent}
+html[data-theme='dark'] .branch-location-map .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.9) saturate(.7)}
+.branch-location-map .leaflet-control-attribution{background:var(--float-bg);color:var(--muted)}
+@media(max-width:680px){.branch-location-head{align-items:stretch;flex-direction:column}.branch-location-head .gf-mini-btn{align-self:flex-start}.branch-create-submit{width:100%;justify-self:stretch}}
+
 .compta-modal {
   background: var(--float-bg);
   backdrop-filter: blur(24px);
