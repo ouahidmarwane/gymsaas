@@ -4556,7 +4556,27 @@ input, textarea, select {
   color: var(--text);
   box-shadow: 0 8px 20px rgba(0,0,0,0.28);
   cursor: pointer;
-  transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+  transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.rail-toggle::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border: 1px solid color-mix(in srgb, var(--gold) 70%, transparent);
+  border-radius: inherit;
+  opacity: 0;
+  transform: scale(0.72);
+  pointer-events: none;
+}
+.rail-shell.collapsed .rail-toggle {
+  animation: rail-toggle-glow 6.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+.rail-shell.collapsed .rail-toggle::after {
+  animation: rail-toggle-pulse 6.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+.rail-shell.expanded .rail-toggle,
+.rail-shell.expanded .rail-toggle::after {
+  animation: none;
 }
 .rail-toggle:hover { transform: translateX(-1px); background: var(--gold); color: #fff; }
 .rail-nav {
@@ -4729,16 +4749,49 @@ input, textarea, select {
   from { filter: saturate(1) brightness(1); }
   to { filter: saturate(0.96) brightness(0.98); }
 }
+@keyframes rail-toggle-glow {
+  0%, 64%, 100% {
+    box-shadow: 0 8px 20px rgba(0,0,0,0.28);
+  }
+  70%, 78% {
+    box-shadow:
+      0 8px 20px rgba(0,0,0,0.28),
+      0 0 0 4px color-mix(in srgb, var(--gold) 22%, transparent),
+      0 0 24px color-mix(in srgb, var(--gold) 30%, transparent);
+  }
+  84% {
+    box-shadow:
+      0 8px 20px rgba(0,0,0,0.28),
+      0 0 0 1px color-mix(in srgb, var(--gold) 8%, transparent);
+  }
+}
+@keyframes rail-toggle-pulse {
+  0%, 64%, 100% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  70% {
+    opacity: 0.82;
+    transform: scale(1);
+  }
+  86% {
+    opacity: 0;
+    transform: scale(1.58);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .app-shell .app-main,
   .rail-shell,
   .rail-brand,
   .rail-btn>span,
+  .rail-toggle,
+  .rail-toggle::after,
   .rail-user-copy {
     transition-duration: 0.01ms !important;
     transition-delay: 0ms !important;
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 
