@@ -558,6 +558,17 @@ CREATE TABLE IF NOT EXISTS announcement_reads (
   PRIMARY KEY (announcement_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS announcement_reactions (
+  announcement_id TEXT NOT NULL REFERENCES platform_announcements(id) ON DELETE CASCADE,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji           TEXT NOT NULL CHECK (emoji IN ('👍','❤️','😂','👏')),
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  PRIMARY KEY (announcement_id, user_id, emoji)
+);
+
+CREATE INDEX IF NOT EXISTS idx_announcement_reactions_summary
+  ON announcement_reactions(announcement_id, emoji);
+
 -- Suivi des suppressions de clubs : processus etape par etape, idempotent et reprenable.
 CREATE TABLE IF NOT EXISTS org_deletion_jobs (
   id                   TEXT PRIMARY KEY,

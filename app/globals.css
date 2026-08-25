@@ -7936,6 +7936,30 @@ html[data-theme='light'] .mdet-problem { color: #b91c1c; }
   font-size:.62rem;
   font-weight:700;
 }
+.messaging-page .announcement-actions{
+  inset-inline-end:-38px;
+  top:-7px;
+}
+.messaging-page .announcement-reaction-picker{
+  inset-inline-end:-96px;
+  top:-38px;
+}
+.messaging-page .announcement-reactions{
+  margin-top:8px;
+  flex-wrap:wrap;
+}
+.messaging-page .announcement-reactions span{
+  display:inline-flex;
+  align-items:center;
+  min-height:26px;
+  border:1px solid color-mix(in srgb,var(--gold) 38%,var(--hub-line));
+  border-radius:var(--radius-sm);
+  padding:2px 8px;
+  background:color-mix(in srgb,var(--gold) 7%,transparent);
+  color:var(--text);
+  font-size:.75rem;
+  font-weight:700;
+}
 
 .announcement-notice{
   position:fixed;

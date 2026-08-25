@@ -24,6 +24,7 @@ type Attachment = { id: string; fileName: string; contentType: string; sizeBytes
 type Announcement = {
   id: string; title: string; content: string; status: string; publishedAt: string | null
   createdAt: string; publisherName: string | null; isRead: number
+  reactions: Array<{ emoji: string; count: number; reacted: number }>
 }
 type SupportThread = { id: string; orgId: string; orgName: string; updatedAt: string; lastBody: string | null; unread: number }
 type SupportMessage = { id: string; authorId: string; authorName: string; authorKind: 'club' | 'support'; body: string; createdAt: string }
@@ -515,14 +516,44 @@ function AnnouncementsPanel({ announcements, platform, detailsOpen, onToggleDeta
   const [content, setContent] = useState('')
   async function publish() { await api.post('/api/messaging/announcements', { title, content, status: 'published' }); setTitle(''); setContent(''); setCreating(false); await onReload() }
   async function markRead(item: Announcement) { if (item.isRead || item.status !== 'published') return; await api.post(`/api/messaging/announcements/${item.id}/read`); await onReload() }
+  async function react(item: Announcement, emoji: string) { if (platform || item.status !== 'published') return; await api.post(`/api/messaging/announcements/${encodeURIComponent(item.id)}/reactions`, { emoji }); await onReload() }
   const unread = announcements.filter(item => !item.isRead && item.status === 'published').length
   return <><div className="conversation-header announcement-chat-header"><span className="message-avatar"><Bell size={18} /></span><div><h2>Annonces GymFlow</h2><p>Canal officiel de la plateforme · lecture seule</p></div>{unread > 0 && <span className="announcement-chat-unread">{unread} non lue{unread > 1 ? 's' : ''}</span>}{platform && <button className="btn-dark announcement-publish" onClick={() => setCreating(!creating)}><Plus size={15} /> Publier</button>}<button className="icon-btn details-toggle" onClick={onToggleDetails} aria-label={detailsOpen ? 'Fermer le panneau Informations' : 'Ouvrir le panneau Informations'} title={detailsOpen ? 'Fermer le panneau Informations' : 'Ouvrir le panneau Informations'}>{detailsOpen ? <PanelRightClose size={19} /> : <PanelRightOpen size={19} />}</button></div>
     <div className="message-scroll announcements-thread" aria-live="polite">
       {creating && <div className="announcement-editor"><input value={title} maxLength={160} onChange={e => setTitle(e.target.value)} placeholder="Titre de l’annonce" /><textarea value={content} maxLength={8000} onChange={e => setContent(e.target.value)} placeholder="Votre message…" /><div><button className="btn-ghost" onClick={() => setCreating(false)}>Annuler</button><button className="btn-dark" disabled={!title.trim() || !content.trim()} onClick={() => void publish()}>Publier maintenant</button></div></div>}
-      {announcements.length === 0 ? <div className="chat-empty"><Bell size={32} /><h3>Aucune annonce</h3><p>Les nouvelles de GymFlow apparaîtront ici.</p></div> : [...announcements].reverse().map(item => <article key={item.id} className={`message-line announcement-line${item.isRead ? '' : ' unread'}`} onClick={() => void markRead(item)}><span className="message-avatar"><Bell size={16} /></span><div className="message-stack"><span className="message-author">GymFlow <time>{longDate(item.publishedAt ?? item.createdAt)}</time></span><div className="message-bubble announcement-bubble"><h3>{item.title}</h3><p>{item.content}</p><footer>{item.publisherName ?? 'GymFlow'} · {item.status === 'published' ? 'Annonce officielle' : item.status}</footer>{!item.isRead && <span className="announcement-new">Nouveau</span>}</div></div></article>)}
+      {announcements.length === 0 ? <div className="chat-empty"><Bell size={32} /><h3>Aucune annonce</h3><p>Les nouvelles de GymFlow apparaîtront ici.</p></div> : [...announcements].reverse().map(item => <AnnouncementMessage key={item.id} item={item} platform={platform} onRead={() => void markRead(item)} onReact={emoji => void react(item, emoji)} />)}
     </div>
     <div className="announcement-readonly"><ShieldCheck size={16} /><span><b>Canal officiel GymFlow</b>Seule la plateforme peut publier dans cette conversation.</span></div>
   </>
+}
+
+function AnnouncementMessage({ item, platform, onRead, onReact }: { item: Announcement; platform: boolean; onRead: () => void; onReact: (emoji: string) => void }) {
+  const [reactions, setReactions] = useState(false)
+  const canReact = !platform && item.status === 'published'
+  const announcementReactions = item.reactions ?? []
+  return <article className={`message-line announcement-line${item.isRead ? '' : ' unread'}`} onClick={onRead}>
+    <span className="message-avatar"><Bell size={16} /></span>
+    <div className="message-stack">
+      <span className="message-author">GymFlow <time>{longDate(item.publishedAt ?? item.createdAt)}</time></span>
+      <div className="message-bubble announcement-bubble">
+        <h3>{item.title}</h3>
+        <p>{item.content}</p>
+        <footer>{item.publisherName ?? 'GymFlow'} · {item.status === 'published' ? 'Annonce officielle' : item.status}</footer>
+        {canReact && <div className="message-actions announcement-actions">
+          <button onClick={event => { event.stopPropagation(); setReactions(value => !value) }} aria-label="Réagir à l’annonce"><SmilePlus size={14} /></button>
+        </div>}
+        {reactions && <div className="reaction-picker announcement-reaction-picker" onClick={event => event.stopPropagation()}>
+          {EMOJIS.map(emoji => <button key={emoji} onClick={() => { onReact(emoji); setReactions(false) }}>{emoji}</button>)}
+        </div>}
+        {!item.isRead && <span className="announcement-new">Nouveau</span>}
+      </div>
+      {announcementReactions.length > 0 && <div className="reaction-row announcement-reactions" onClick={event => event.stopPropagation()}>
+        {announcementReactions.map(reaction => canReact
+          ? <button key={reaction.emoji} className={reaction.reacted ? 'mine' : ''} onClick={() => onReact(reaction.emoji)}>{reaction.emoji} {reaction.count}</button>
+          : <span key={reaction.emoji}>{reaction.emoji} {reaction.count}</span>)}
+      </div>}
+    </div>
+  </article>
 }
 
 function AnnouncementDetails({ announcements, onClose }: { announcements: Announcement[]; onClose: () => void }) {

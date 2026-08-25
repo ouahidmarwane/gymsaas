@@ -156,6 +156,7 @@ async function auditSupport(
 }
 
 type MessagingPerson = { id: string; name: string; role: string }
+const MESSAGE_REACTIONS = ['👍', '❤️', '😂', '👏'] as const
 
 function messagingAllowed(principal: Principal): void {
   atLeast(principal, 'staff')
@@ -1410,7 +1411,28 @@ export const api = {
             ORDER BY COALESCE(a.published_at, a.created_at) DESC, a.id DESC
             LIMIT 100`,
         ).bind(principal.userId).all()
-        return json({ announcements: results })
+        const announcements = results as Array<Record<string, unknown> & { id: string }>
+        const ids = announcements.map(row => row.id)
+        const reactions = new Map<string, Array<{ emoji: string; count: number; reacted: number }>>()
+        if (ids.length > 0) {
+          const placeholders = ids.map(() => '?').join(',')
+          const reactionRows = await env.CONTROL.prepare(
+            `SELECT announcement_id AS announcementId, emoji, COUNT(*) AS count,
+                    MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS reacted
+               FROM announcement_reactions
+              WHERE announcement_id IN (${placeholders})
+              GROUP BY announcement_id, emoji
+              ORDER BY emoji`,
+          ).bind(principal.userId, ...ids).all<{
+            announcementId: string; emoji: string; count: number; reacted: number
+          }>()
+          for (const row of reactionRows.results) {
+            const current = reactions.get(row.announcementId) ?? []
+            current.push({ emoji: row.emoji, count: Number(row.count), reacted: Number(row.reacted) })
+            reactions.set(row.announcementId, current)
+          }
+        }
+        return json({ announcements: announcements.map(row => ({ ...row, reactions: reactions.get(row.id) ?? [] })) })
       }
 
       if (path === '/api/messaging/announcements' && method === 'POST') {
@@ -1436,6 +1458,35 @@ export const api = {
            ON CONFLICT(announcement_id, user_id) DO UPDATE SET
              read_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
         ).bind(principal.userId, decodeURIComponent(announcementRead[1]!)).run()
+        return json({ ok: true })
+      }
+
+      const announcementReaction = path.match(/^\/api\/messaging\/announcements\/([^/]+)\/reactions$/)
+      if (announcementReaction && method === 'POST') {
+        if (principal.isPlatformAdmin) return fail(403, 'Les reactions sont reservees aux clubs')
+        messagingAllowed(principal)
+        const body = await readJson(request)
+        const emoji = str(body.emoji, 'emoji', 8)
+        if (!MESSAGE_REACTIONS.includes(emoji as (typeof MESSAGE_REACTIONS)[number])) {
+          return fail(400, 'Reaction invalide')
+        }
+        const announcementId = decodeURIComponent(announcementReaction[1]!)
+        const exists = await env.CONTROL.prepare(
+          "SELECT id FROM platform_announcements WHERE id = ? AND status = 'published'",
+        ).bind(announcementId).first<{ id: string }>()
+        if (!exists) return fail(404, 'Annonce introuvable')
+        const current = await env.CONTROL.prepare(
+          'SELECT 1 FROM announcement_reactions WHERE announcement_id = ? AND user_id = ? AND emoji = ?',
+        ).bind(announcementId, principal.userId, emoji).first()
+        if (current) {
+          await env.CONTROL.prepare(
+            'DELETE FROM announcement_reactions WHERE announcement_id = ? AND user_id = ? AND emoji = ?',
+          ).bind(announcementId, principal.userId, emoji).run()
+        } else {
+          await env.CONTROL.prepare(
+            'INSERT INTO announcement_reactions (announcement_id, user_id, emoji) VALUES (?, ?, ?)',
+          ).bind(announcementId, principal.userId, emoji).run()
+        }
         return json({ ok: true })
       }
 
