@@ -175,7 +175,7 @@ export default function ClubsMap({
         // On n'ecrit que si la valeur change : reaffecter la meme classe
         // relancerait l'animation a chaque rafraichissement.
         if (el.dataset.state !== state) el.dataset.state = state
-        el.style.setProperty('--pin', club.theme?.accent ?? '#2f6bff')
+        el.style.setProperty('--pin', club.theme?.accent ?? '#f05a28')
         el.setAttribute('aria-label', `${club.name}, entrer`)
 
         const badge = badgeOf(club)
@@ -229,7 +229,7 @@ export default function ClubsMap({
         {shown.map(club => {
           const state = stateOf(club)
           return (
-            <li key={club.id} style={{ '--pin': club.theme?.accent ?? '#2f6bff' } as React.CSSProperties}>
+            <li key={club.id} style={{ '--pin': club.theme?.accent ?? '#f05a28' } as React.CSSProperties}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
                 <button type="button" className="gf-map-row" data-state={state}
                         onClick={() => onEnter(club)}>

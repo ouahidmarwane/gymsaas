@@ -34,6 +34,9 @@
   --surface-soft: rgba(13,18,32,0.9);
   --gold: #f05a28;
   --gold-soft: #ff9a73;
+  --accent-ink: #a93611;
+  --action-bg: #c94718;
+  --action-fg: #ffffff;
   --blue: #f56a36;
   --violet: #ff8a5c;
   --text: #f5f3ef;
@@ -253,19 +256,19 @@ html[data-theme='light'] .activity-header a {
 
 /* ── Buttons ── */
 html[data-theme='light'] .btn-ghost {
-  background: rgba(56,98,214,0.08) !important;
-  color: #1e40af !important;
-  border-color: rgba(56,98,214,0.16) !important;
+  background: rgba(240,90,40,0.08) !important;
+  color: #a93611 !important;
+  border-color: rgba(240,90,40,0.16) !important;
 }
 html[data-theme='light'] .btn-ghost:hover:not(:disabled) {
-  background: rgba(56,98,214,0.14) !important;
+  background: rgba(240,90,40,0.14) !important;
 }
 html[data-theme='light'] .btn-dark {
-  background-color: #1e3a8a !important;
-  border-color: #1e3a8a !important;
+  background-color: #c94718 !important;
+  border-color: #c94718 !important;
   color: #ffffff !important;
 }
-html[data-theme='light'] .btn-dark:hover:not(:disabled) { background-color: #1e40af !important; }
+html[data-theme='light'] .btn-dark:hover:not(:disabled) { background-color: #a93611 !important; }
 html[data-theme='light'] .btn-gold { color: #111827 !important; }
 
 /* ── Inputs ── */
@@ -277,8 +280,8 @@ html[data-theme='light'] .input {
 html[data-theme='light'] .input::placeholder { color: #94a3b8 !important; }
 html[data-theme='light'] .input:focus,
 html[data-theme='light'] .input:focus-visible {
-  border-color: #3b82f6 !important;
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.15) !important;
+  border-color: #f05a28 !important;
+  box-shadow: 0 0 0 3px rgba(240,90,40,0.15) !important;
 }
 
 /* ── Members table ── */
@@ -316,7 +319,7 @@ html[data-theme='light'] .badge.text-emerald-700  { color: #065f46 !important; b
 html[data-theme='light'] .member-row .badge.text-red-700,
 html[data-theme='light'] .badge.text-red-700      { color: #991b1b !important; background: #fee2e2 !important; }
 html[data-theme='light'] .member-row .badge.text-amber-700,
-html[data-theme='light'] .badge.text-amber-700    { color: #1e40af !important; background: #fef3c7 !important; }
+html[data-theme='light'] .badge.text-amber-700    { color: #7a4800 !important; background: #fef3c7 !important; }
 html[data-theme='light'] .member-row .badge.text-purple-700,
 html[data-theme='light'] .badge.text-purple-700   { color: #5b21b6 !important; background: #ede9fe !important; }
 
@@ -366,7 +369,7 @@ html[data-theme='light'] .history-item-time,
 html[data-theme='light'] .history-item-performer,
 html[data-theme='light'] .history-date-label  { color: #64748b !important; }
 html[data-theme='light'] .notif-item { border-bottom-color: rgba(15,23,42,0.06) !important; }
-html[data-theme='light'] .notif-item-unread   { background: rgba(59,130,246,0.04) !important; }
+html[data-theme='light'] .notif-item-unread   { background: rgba(240,90,40,0.04) !important; }
 html[data-theme='light'] .notif-separator     { color: #94a3b8 !important; border-color: rgba(15,23,42,0.06) !important; }
 html[data-theme='light'] .notif-dropdown-footer {
   background: rgba(15,23,42,0.03) !important;
@@ -374,7 +377,7 @@ html[data-theme='light'] .notif-dropdown-footer {
   border-top-color: rgba(15,23,42,0.06) !important;
 }
 html[data-theme='light'] .history-filter-chip { background: rgba(15,23,42,0.06) !important; color: #475569 !important; border-color: rgba(15,23,42,0.10) !important; }
-html[data-theme='light'] .history-filter-chip-active { background: rgba(217,75,28,0.14) !important; color: #1e40af !important; border-color: rgba(217,75,28,0.3) !important; }
+html[data-theme='light'] .history-filter-chip-active { background: rgba(217,75,28,0.14) !important; color: #a93611 !important; border-color: rgba(217,75,28,0.3) !important; }
 html[data-theme='light'] .history-branch-badge { background: rgba(15,23,42,0.06) !important; color: #475569 !important; }
 html[data-theme='light'] .history-item:hover  { background: rgba(15,23,42,0.03) !important; }
 
@@ -640,7 +643,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   .btn-gold {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition-all duration-200 ease-out;
     letter-spacing: -0.01em;
-    background: linear-gradient(135deg, rgba(240,90,40,0.95), rgba(126,165,255,0.98));
+    background: linear-gradient(135deg, rgba(240,90,40,0.95), rgba(255,138,92,0.98));
     color: #090b10;
     box-shadow: 0 18px 44px rgba(240,90,40,0.22);
   }
@@ -657,7 +660,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   .btn-ghost {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-300 ease-out ring-1;
     background-color: rgba(56, 98, 214, 0.08);
-    color: #1e40af;
+    color: #a93611;
     border-color: rgba(56, 98, 214, 0.18);
   }
 
@@ -667,13 +670,13 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 
   .btn-dark {
     @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold transition-all duration-300 ease-out;
-    background-color: #1e3a8a;
+    background-color: #c94718;
     color: #ffffff;
-    border: 1px solid #1e3a8a;
+    border: 1px solid #c94718;
   }
 
   .btn-dark:hover:not(:disabled) {
-    background-color: #1e40af;
+    background-color: #a93611;
   }
 
   /*
@@ -726,7 +729,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   textarea.input-dark { border-radius: 1.25rem; }
 
   input[type="date"].input {
-    accent-color: #1e3a8a;
+    accent-color: #f05a28;
   }
 
   input[type="date"].input::-webkit-calendar-picker-indicator {
@@ -2466,7 +2469,7 @@ html[data-theme='dark'] .branch-location-map .leaflet-tile-pane{filter:invert(1)
 }
 .datepicker-trigger:hover { border-color: rgba(255,255,255,0.25); }
 .datepicker-placeholder { color: var(--muted); }
-.datepicker-value { color: #1e3a8a; font-weight: 500; }
+.datepicker-value { color: var(--accent-ink); font-weight: 500; }
 .datepicker-icon {
   flex-shrink: 0;
   width: 16px;
@@ -3749,7 +3752,7 @@ input, textarea, select {
   width: 3.25rem;
   height: 3.25rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6, #7c3aed);
+  background: linear-gradient(135deg, #f05a28, #b63a12);
   color: #fff;
   display: flex;
   align-items: center;
@@ -3873,7 +3876,7 @@ input, textarea, select {
   width: 2.25rem;
   height: 2.25rem;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6, #7c3aed);
+  background: linear-gradient(135deg, #f05a28, #b63a12);
   color: #fff;
   display: flex;
   align-items: center;
@@ -3902,7 +3905,7 @@ input, textarea, select {
 }
 .chatbot-attach-btn:hover:not(:disabled) {
   background: rgba(99,102,241,0.15);
-  color: #818cf8;
+  color: #f05a28;
   border-color: rgba(99,102,241,0.3);
 }
 .chatbot-attach-btn:disabled { opacity: 0.4; cursor: default; }
@@ -6098,7 +6101,7 @@ html[data-theme='light'] .grade-chip { filter: saturate(1.1) brightness(0.82); }
   background: linear-gradient(105deg,
     transparent 0%,
     rgba(255,255,255,0.10) 40%,
-    rgba(126,165,255,0.16) 55%,
+    rgba(255,138,92,0.16) 55%,
     transparent 100%);
   animation: glossSweep 2.6s ease-in-out infinite;
   pointer-events: none;
@@ -6358,7 +6361,7 @@ html[data-theme='light'] .grade-chip { filter: saturate(1.1) brightness(0.82); }
     white-space: nowrap; text-decoration: none;
   }
   .member-card-btn.is-whatsapp { background: #25D366; border-color: #25D366; color: #06281a; }
-  .member-card-btn.is-renew    { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .member-card-btn.is-renew    { background: #c94718; border-color: #c94718; color: #fff; }
   .member-card-btn:disabled    { opacity: 0.5; }
 
   html[data-theme='light'] .member-card {
@@ -7069,7 +7072,7 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   background:
     radial-gradient(40% 32% at 32% 24%, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0) 72%),
     radial-gradient(80% 80% at 76% 76%, color-mix(in srgb, #e879f9 42%, transparent), transparent 64%),
-    radial-gradient(80% 80% at 24% 78%, color-mix(in srgb, #38bdf8 36%, transparent), transparent 62%),
+    radial-gradient(80% 80% at 24% 78%, color-mix(in srgb, #f05a28 36%, transparent), transparent 62%),
     radial-gradient(100% 100% at 50% 50%, color-mix(in srgb, var(--gold) 22%, transparent), transparent 74%);
   mix-blend-mode: screen;
   pointer-events: none;
@@ -7307,7 +7310,7 @@ html:not([data-theme='light']) .gsm-flag { color: #fbbf24; }
   content: ''; position: fixed; inset: -20%; pointer-events: none;
   background:
     radial-gradient(38rem 38rem at 22% 18%,
-      color-mix(in srgb, var(--mdet-tint, #818cf8) 26%, transparent), transparent 62%),
+      color-mix(in srgb, var(--mdet-tint, #f05a28) 26%, transparent), transparent 62%),
     radial-gradient(32rem 32rem at 82% 88%,
       color-mix(in srgb, var(--gold) 20%, transparent), transparent 60%);
   filter: blur(28px);
@@ -8585,6 +8588,9 @@ html[data-theme='dark'] {
   --surface-soft: rgba(23, 20, 18, 0.94);
   --gold: #f56a36;
   --gold-soft: #ff9a73;
+  --accent-ink: #ffae91;
+  --action-bg: #f56a36;
+  --action-fg: #211814;
   --blue: #f56a36;
   --violet: #e45323;
   --text: #fff7ef;
@@ -8640,21 +8646,114 @@ html[data-theme='dark'] .app-main { background: transparent !important; color: v
   color: var(--text) !important;
 }
 
-:where(.btn-dark, .btn-primary, .grade-btn.primary, .member-card-btn.is-renew,
-  .announcement-publish, .dz-tab.active) {
-  background: var(--gold) !important;
-  border-color: var(--gold) !important;
-  color: #fff !important;
+.btn-dark,
+.btn-primary,
+.grade-btn.primary,
+.member-card-btn.is-renew,
+.announcement-publish,
+.dz-tab.active {
+  background: var(--action-bg) !important;
+  border-color: var(--action-bg) !important;
+  color: var(--action-fg) !important;
   box-shadow: 0 10px 24px color-mix(in srgb, var(--gold) 24%, transparent);
 }
 
-:where(.btn-dark, .btn-primary, .grade-btn.primary, .member-card-btn.is-renew,
-  .announcement-publish):hover:not(:disabled) {
-  background: color-mix(in srgb, var(--gold) 86%, #7f250b) !important;
+.btn-dark:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
+.grade-btn.primary:hover:not(:disabled),
+.member-card-btn.is-renew:hover:not(:disabled),
+.announcement-publish:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--action-bg) 86%, #7f250b) !important;
+}
+
+.btn-ghost,
+.compta-price-btn {
+  background: color-mix(in srgb, var(--gold) 8%, transparent) !important;
+  border-color: color-mix(in srgb, var(--gold) 38%, transparent) !important;
+  color: var(--accent-ink) !important;
+}
+.btn-ghost:hover:not(:disabled),
+.compta-price-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gold) 15%, transparent) !important;
+  border-color: color-mix(in srgb, var(--gold) 55%, transparent) !important;
 }
 
 :where(.input, .input-dark, .members-search-input, .members-filter-select,
   input, textarea, select) { caret-color: var(--gold); }
+
+/* Champs de travail : jamais de texte blanc sur une surface claire. */
+html[data-theme='light'] .app-main :is(.input, .input-dark, .members-search-input,
+  .members-filter-select, .compta-select, .compta-modal-input,
+  input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='file']),
+  textarea, select) {
+  background-color: var(--surface) !important;
+  border-color: rgba(67, 42, 29, 0.2) !important;
+  color: var(--text) !important;
+  -webkit-text-fill-color: var(--text);
+  box-shadow: none !important;
+}
+html[data-theme='light'] .app-main :is(.input, .input-dark, .members-search-input,
+  .members-filter-select, .compta-select, .compta-modal-input,
+  input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='file']),
+  textarea, select)::placeholder {
+  color: var(--muted) !important;
+  -webkit-text-fill-color: var(--muted);
+  opacity: 1;
+}
+html[data-theme='light'] .app-main :is(.input, .input-dark, .members-search-input,
+  .members-filter-select, .compta-select, .compta-modal-input,
+  input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='file']),
+  textarea, select):focus {
+  border-color: var(--gold) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent) !important;
+  outline: none;
+}
+html[data-theme='light'] .app-main select option {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+}
+html[data-theme='light'] .app-main input[type='date'] {
+  color-scheme: light;
+  accent-color: var(--gold);
+}
+html[data-theme='light'] .app-main input[type='date']::-webkit-calendar-picker-indicator {
+  opacity: .78;
+  filter: invert(39%) sepia(83%) saturate(2200%) hue-rotate(349deg) brightness(94%) contrast(92%);
+}
+
+/* Pastilles : les anciennes classes Tailwind -300 etaient prevues pour le
+   sombre et devenaient presque blanches sur creme. */
+html[data-theme='light'] .badge { color: #51463f !important; background: rgba(67,42,29,.065) !important; }
+html[data-theme='light'] .badge[class*='text-emerald'] {
+  color: #11613e !important; background: #d8f3e6 !important; border-color: #78c9a2 !important;
+}
+html[data-theme='light'] .badge[class*='text-amber'] {
+  color: #7a4800 !important; background: #fff0c9 !important; border-color: #e6b95c !important;
+}
+html[data-theme='light'] .badge[class*='text-red'] {
+  color: #9f251d !important; background: #ffe2de !important; border-color: #e89a91 !important;
+}
+html[data-theme='light'] .badge[class*='text-purple'],
+html[data-theme='light'] .badge[class*='text-violet'] {
+  color: #61338c !important; background: #f0e4ff !important; border-color: #c9a6eb !important;
+}
+
+/* Texte pose sur une photo : blanc force, independamment du mode de page. */
+.mdet-hero-caption .mdet-name,
+.mdet-hero-caption .mdet-surname,
+.mdet-hero-caption .mdet-hero-phone { color: #fff !important; }
+.mdet-hero-caption .mdet-hero-phone b { color: #fff !important; }
+.dz-hero-content .dz-hello { color: #fff !important; }
+.dz-hero-content .dz-sub { color: rgba(255,255,255,.86) !important; }
+
+/* Les onglets inactifs restent neutres : l'orange est reserve a la selection. */
+html[data-theme='light'] :is(.t-tab:not([aria-selected='true']), .dz-tab:not(.active)) {
+  color: #62564e !important;
+}
+
+/* Les KPI de comptabilite n'utilisent plus de liseres bleus herites. */
+.compta-kpi-card { border-left-color: var(--gold) !important; }
+.compta-kpi-icon { color: var(--accent-ink) !important; background: color-mix(in srgb, var(--gold) 13%, transparent) !important; }
 
 /* Les blocs encore marqués text-white par l'ancien thème reçoivent l'encre
    sémantique en mode jour. Les boutons orange gardent explicitement le blanc. */

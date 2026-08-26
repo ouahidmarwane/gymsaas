@@ -100,7 +100,7 @@ const STAGE_LABEL: Record<Exclude<Stage, null>, string> = {
   j7: 'J-7', j3: 'J-3', jour: 'Jour J', j3plus: 'J+3 impayé',
 }
 const STAGE_COLOR: Record<Exclude<Stage, null>, string> = {
-  j7: '#38bdf8', j3: '#f59e0b', jour: '#f97316', j3plus: '#ef4444',
+  j7: '#f05a28', j3: '#f59e0b', jour: '#f97316', j3plus: '#ef4444',
 }
 
 const MONTHS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc']
@@ -159,7 +159,7 @@ const STATE_LABEL: Record<State, string> = {
   active: 'À jour', unset: 'Pas d’abonnement',
 }
 const STATE_COLOR: Record<State, string> = {
-  expired: '#ef4444', renew: '#38bdf8', soon: '#f59e0b',
+  expired: '#ef4444', renew: '#f05a28', soon: '#f59e0b',
   active: '#16a34a', unset: '#64748b',
 }
 
@@ -312,7 +312,7 @@ export default function FacturationPage() {
              sub={`${data?.mrr.payingClubs ?? 0} club(s) · ${dh(cashed)} sur ${dh(billed)} en ${year}`} />
         <Kpi label="Reste à encaisser" value={dh(outstanding)} icon={Clock} color="#f59e0b"
              sub={`${clubs.reduce((s, c) => s + c.unpaid_count, 0)} échéance(s) ouverte(s)`} />
-        <Kpi label="Clubs à jour" value={String(counts.active)} icon={CheckCircle2} color="#2f6bff"
+        <Kpi label="Clubs à jour" value={String(counts.active)} icon={CheckCircle2} color="#f05a28"
              sub={`${counts.unset} sans abonnement défini`} />
         <Kpi label="À traiter" value={String(counts.expired + counts.renew + counts.soon)}
              icon={AlertTriangle} color="#ef4444"
@@ -337,7 +337,7 @@ export default function FacturationPage() {
                        contentStyle={{ background: 'var(--surface)', border: '1px solid var(--card-border)',
                                        borderRadius: 10, color: 'var(--text)' }} />
               <Legend wrapperStyle={{ fontSize: 12, color: '#8c95a8', paddingTop: 8 }} />
-              <Bar dataKey="Facturé" fill="#4d8cff" radius={[4, 4, 0, 0]} maxBarSize={28} />
+              <Bar dataKey="Facturé" fill="#f05a28" radius={[4, 4, 0, 0]} maxBarSize={28} />
               <Bar dataKey="Encaissé" fill="#16a34a" radius={[4, 4, 0, 0]} maxBarSize={28} />
             </BarChart>
           </ResponsiveContainer>
@@ -691,7 +691,7 @@ function RenewButton({ club, busy, onRenew }: {
   return (
     <button
       className="gf-mini-btn"
-      style={{ background: 'rgba(56,189,248,0.14)', borderColor: 'rgba(56,189,248,0.35)', color: '#38bdf8' }}
+      style={{ background: 'rgba(240,90,40,0.14)', borderColor: 'rgba(240,90,40,0.35)', color: '#f05a28' }}
       disabled={busy !== null || club.price_cents === null}
       title={club.price_cents === null ? 'Définissez d’abord le tarif' : 'Renouveler et encaisser'}
       onClick={() => onRenew(`r-${club.id}`, async () => {

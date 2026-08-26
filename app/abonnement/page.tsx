@@ -225,7 +225,7 @@ export default function AbonnementPage() {
                           Payé le {day(inv.paid_at)}
                         </span>
                       ) : inv.proof_status === 'pending' ? (
-                        <span style={{ color: '#38bdf8', fontWeight: 700 }}>
+                        <span style={{ color: 'var(--gold)', fontWeight: 700 }}>
                           <Clock size={13} strokeWidth={2.4}
                                  style={{ verticalAlign: '-2px', marginInlineEnd: 5 }} />
                           Justificatif en vérification

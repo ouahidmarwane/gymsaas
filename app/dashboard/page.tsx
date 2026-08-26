@@ -62,7 +62,7 @@ export default function DashboardPage() {
       {/* Un club sans salle ni sport ne peut rien faire d'utile : on le dit
           avant d'afficher une grille de zeros. */}
       {configured === false && (
-        <section className="dz-card" style={{ borderColor: 'rgba(47,107,255,0.4)' }}>
+        <section className="dz-card" style={{ borderColor: 'rgba(240,90,40,0.4)' }}>
           <h2 className="dz-card-title">Configurons votre club</h2>
           <p className="dz-card-note" style={{ margin: '8px 0 16px', maxWidth: '52ch' }}>
             Indiquez vos salles et les sports que vous enseignez. Rien n&apos;est presuppose :

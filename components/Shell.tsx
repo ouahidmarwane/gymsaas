@@ -9,7 +9,7 @@ import {
   Bell, MessageCircle, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { api, ApiError, privileged, type Me, type Capabilities } from '@/lib/client'
-import { DEFAULT_THEME } from '@/src/club/branding'
+import { DEFAULT_THEME, normalizeAccent } from '@/src/club/branding'
 import TopBar from '@/components/TopBar'
 import ThemeModeToggle from '@/components/ThemeModeToggle'
 import { DisciplineProvider, useDiscipline } from '@/lib/discipline'
@@ -202,7 +202,7 @@ function ShellBody({ children }: { children: ReactNode }) {
     // exactement la frontiere que le mode support existe pour marquer.
     const root = document.documentElement
     const theme = me.branding?.theme
-    const accent = theme?.accent ?? DEFAULT_THEME.accent
+    const accent = normalizeAccent(theme?.accent ?? DEFAULT_THEME.accent)
     root.style.setProperty('--gold', accent)
     root.style.setProperty('--tabs-pill-bg', accent)
 

@@ -33,7 +33,7 @@ interface MemberSummary {
   dormant: number
 }
 
-const AVATAR_COLORS = ['#818cf8', '#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa']
+const AVATAR_COLORS = ['#f05a28', '#ff8a5c', '#34d399', '#fbbf24', '#f472b6', '#a78bfa']
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('fr-FR') : '—')
 
 export default function MembersPage() {

@@ -72,12 +72,12 @@ const TYPE_LABEL: Record<string, string> = {
   monthly: 'Abonnement', insurance: 'Assurance', registration: 'Inscription', other: 'Autre',
 }
 
-const COLORS = { ins: '#9b72ff', reg: '#22c55e', total: '#7ea5ff' }
+const COLORS = { ins: '#9b72ff', reg: '#22c55e', total: '#f05a28' }
 
 // Le club definit ses salles ; la palette doit donc en couvrir un nombre
 // inconnu. Elle demarre sur le bleu de la marque et boucle au-dela — mieux
 // vaut deux salles de la meme teinte que des barres sans couleur.
-const BRANCH_COLORS = ['#2f6bff', '#4d8cff', '#9b72ff', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#f43f5e']
+const BRANCH_COLORS = ['#f05a28', '#ff8a5c', '#9b72ff', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#f43f5e']
 const branchColor = (i: number) => BRANCH_COLORS[i % BRANCH_COLORS.length]!
 
 const dh = (cents: number) => `${Math.round(cents / 100).toLocaleString('fr-FR')} DH`
@@ -602,13 +602,13 @@ export default function ComptabilitePage() {
       <div className="compta-shell">
         {/* Estimations tarifaires */}
         <div className="compta-kpi-grid">
-          <KpiCard label="Revenu mensuel" value={dh(monthlyTotal)} icon={Wallet} color="#2f6bff"
+          <KpiCard label="Revenu mensuel" value={dh(monthlyTotal)} icon={Wallet} color="#f05a28"
                    sub={`${scope.total} membres × ${prices.monthlyCents / 100} DH`} />
           <KpiCard label="Assurances" value={dh(insTotal)} icon={ShieldCheck} color="#9b72ff"
                    sub={`${scope.insured} assurés × ${prices.insuranceCents / 100} DH`} />
           <KpiCard label="Inscriptions" value={dh(regTotal)} icon={Receipt} color="#22c55e"
                    sub={`${scope.registrations} inscriptions × ${prices.registrationCents / 100} DH`} />
-          <KpiCard label="Total général" value={dh(grandTotal)} icon={BarChart3} color="#4d8cff"
+          <KpiCard label="Total général" value={dh(grandTotal)} icon={BarChart3} color="#ff8a5c"
                    sub="Abonnements + Assurances + Inscriptions" />
         </div>
 

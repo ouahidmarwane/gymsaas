@@ -52,6 +52,38 @@ const MODES = new Set(['light', 'dark', 'system'])
 
 export class BrandingError extends Error {}
 
+/**
+ * Les anciens clubs pouvaient enregistrer n'importe quel bleu comme accent.
+ * La nouvelle identite GymFlow est orange : on convertit donc toute teinte
+ * bleue/cyan/indigo suffisamment saturee, pas seulement deux anciennes
+ * valeurs litterales. Les couleurs semantiques (vert, ambre, rouge) et les
+ * gris restent intactes.
+ */
+export function normalizeAccent(value: string): string {
+  const accent = value.toLowerCase()
+  if (!HEX.test(accent)) return DEFAULT_THEME.accent
+
+  const r = Number.parseInt(accent.slice(1, 3), 16) / 255
+  const g = Number.parseInt(accent.slice(3, 5), 16) / 255
+  const b = Number.parseInt(accent.slice(5, 7), 16) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const delta = max - min
+  const saturation = max === 0 ? 0 : delta / max
+  let hue = 0
+
+  if (delta > 0) {
+    if (max === r) hue = 60 * (((g - b) / delta) % 6)
+    else if (max === g) hue = 60 * ((b - r) / delta + 2)
+    else hue = 60 * ((r - g) / delta + 4)
+  }
+  if (hue < 0) hue += 360
+
+  return saturation >= 0.3 && hue >= 185 && hue <= 250
+    ? DEFAULT_THEME.accent
+    : accent
+}
+
 export function parseTheme(input: unknown): Theme {
   if (input === null || input === undefined) return DEFAULT_THEME
   if (typeof input !== 'object') throw new BrandingError('Theme invalide')
@@ -76,9 +108,7 @@ export function parseTheme(input: unknown): Theme {
   }
 
   // Reconstruit, jamais copie : aucune cle supplementaire ne survit.
-  const normalizedAccent = ['#2f6bff', '#1d4ed8'].includes(accent.toLowerCase())
-    ? DEFAULT_THEME.accent
-    : accent.toLowerCase()
+  const normalizedAccent = normalizeAccent(accent)
   return { accent: normalizedAccent, mode: mode as Theme['mode'], skin: skin as SkinKey }
 }
 

@@ -25,7 +25,7 @@ export interface Stats {
 }
 
 const dh = (cents: number) => `${(cents / 100).toLocaleString('fr-MA')} DH`
-const AVATAR_COLORS = ['#2f6bff', '#4d8cff', '#9b72ff', '#7ea5ff', '#8b5cf6', '#16a34a']
+const AVATAR_COLORS = ['#f05a28', '#ff8a5c', '#9b72ff', '#d94b1c', '#8b5cf6', '#16a34a']
 
 export function renderCard(id: string, stats: Stats, label: string) {
   switch (id) {
@@ -170,7 +170,7 @@ function Bars({ label, values, captions, format }: {
                style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
             <div style={{
               height: `${Math.max((v / max) * 100, 2)}%`,
-              background: 'linear-gradient(180deg, var(--gold), rgba(47,107,255,0.35))',
+              background: 'linear-gradient(180deg, var(--gold), rgba(255,138,92,0.35))',
               borderRadius: '5px 5px 0 0', minHeight: 3,
             }} />
           </div>
@@ -281,7 +281,7 @@ function BranchSplit({ label, branches }: {
   if (total === 0) {
     return <Frame label={label}><Empty>Aucun membre rattache a une salle.</Empty></Frame>
   }
-  const palette = ['#2f6bff', '#9b72ff', '#16a34a', '#f59e0b', '#ef4444', '#0d9488']
+  const palette = ['#f05a28', '#9b72ff', '#16a34a', '#f59e0b', '#ef4444', '#0d9488']
 
   return (
     <Frame label={label} footer={`${total} membres au total`}>

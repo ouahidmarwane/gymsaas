@@ -15,7 +15,7 @@ import {
   SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
 } from '@/lib/member-status'
 
-const AVATAR_COLORS = ['#818cf8', '#38bdf8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa']
+const AVATAR_COLORS = ['#f05a28', '#ff8a5c', '#34d399', '#fbbf24', '#f472b6', '#a78bfa']
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('fr-FR') : '—')
 
 /** Les deux seules pieces qu'un club peut demander ici. */
@@ -119,7 +119,7 @@ export default function MemberDetail({
         {/* Les gestes du quotidien, en pastilles, a cheval sur la photo. */}
         <div className="mdet-quick">
           <QuickAction href={`tel:${member.phone.replace(/[^\d+]/g, '')}`}
-                       label="Appeler" tone="#3b82f6">
+                       label="Appeler" tone="#f05a28">
             <Phone size={17} strokeWidth={2.2} />
           </QuickAction>
           <QuickAction href={waLink(member.phone, wa.message)} external
@@ -709,4 +709,3 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     </div>
   )
 }
-

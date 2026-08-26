@@ -23,7 +23,7 @@ export default function ClubHero({
   canEdit: boolean
 }) {
   const banner = branding?.bannerUrl ?? null
-  const accent = branding?.theme.accent ?? '#2f6bff'
+  const accent = branding?.theme.accent ?? '#f05a28'
 
   return (
     <div className="dz-hero-banner" style={{ animation: 'fadeUp 0.5s var(--ease-out) forwards' }}>

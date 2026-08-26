@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { api, ApiError, type Branding } from '@/lib/client'
-import { SKINS, SKIN_KEYS, type SkinKey } from '@/src/club/branding'
+import { normalizeAccent, SKINS, SKIN_KEYS, type SkinKey } from '@/src/club/branding'
 
 /**
  * Choix de l'habillage et de la couleur du club.
@@ -66,7 +66,7 @@ export default function ThemePicker({ initial, onSaved }: {
   initial: Branding | null
   onSaved?: (b: Branding) => void
 }) {
-  const [accent, setAccent] = useState(initial?.theme.accent ?? '#f05a28')
+  const [accent, setAccent] = useState(normalizeAccent(initial?.theme.accent ?? '#f05a28'))
   const [skin, setSkin] = useState<SkinKey>(
     initial?.theme.skin === 'sombre' || initial?.theme.skin === 'clair'
       ? 'default'
@@ -103,9 +103,10 @@ export default function ThemePicker({ initial, onSaved }: {
   // La couleur s'applique en direct : on juge une teinte sur l'interface,
   // pas dans une pastille de seize pixels.
   function paint(next: string) {
-    setAccent(next)
-    document.documentElement.style.setProperty('--gold', next)
-    document.documentElement.style.setProperty('--tabs-pill-bg', next)
+    const normalized = normalizeAccent(next)
+    setAccent(normalized)
+    document.documentElement.style.setProperty('--gold', normalized)
+    document.documentElement.style.setProperty('--tabs-pill-bg', normalized)
   }
 
   /**

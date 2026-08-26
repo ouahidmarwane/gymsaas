@@ -146,6 +146,7 @@ test('un club change son propre habillage, sans passer par la plateforme', async
       theme: { accent: '#2f6bff', skin, mode: 'system' },
     })
     assert.equal(r.status, 200, `habillage refuse au club : ${skin}`)
+    assert.equal(r.data.theme.accent, '#f05a28', 'un ancien accent bleu doit devenir orange')
   }
 })
 
