@@ -4469,7 +4469,8 @@ input, textarea, select {
     background var(--transition-fast),
     border-color var(--transition-fast),
     box-shadow 240ms cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: width, padding, box-shadow;
+  transform-origin:left center;
+  will-change: width, padding, box-shadow, transform, filter;
 }
 .rail-shell.expanded {
   width: 244px;
@@ -4477,8 +4478,8 @@ input, textarea, select {
   padding: 18px 16px;
   box-shadow: 0 28px 70px rgba(0,0,0,0.56);
 }
-.rail-shell.collapsed { animation: rail-close-settle 220ms cubic-bezier(0.16, 1, 0.3, 1) both; }
-.rail-shell.expanded { animation: rail-open-settle 260ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.rail-shell.collapsed { animation: rail-close-settle 360ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.rail-shell.expanded { animation: rail-open-settle 420ms cubic-bezier(0.16, 1, 0.3, 1) both; }
 .rail-head {
   position: relative;
   min-height: 48px;
@@ -4648,6 +4649,38 @@ input, textarea, select {
   backdrop-filter: blur(16px) saturate(138%);
   -webkit-backdrop-filter: blur(16px) saturate(138%);
 }
+.rail-shell.collapsed .rail-btn::before {
+  content:"";
+  position:absolute;
+  inset:2px;
+  z-index:-1;
+  border-radius:inherit;
+  background:
+    radial-gradient(circle at 30% 18%,color-mix(in srgb,var(--text) 18%,transparent),transparent 30%),
+    radial-gradient(circle at 70% 82%,color-mix(in srgb,var(--gold) 12%,transparent),transparent 36%);
+  opacity:.72;
+  pointer-events:none;
+  transition:
+    opacity 260ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-radius 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rail-shell.collapsed .rail-btn::after {
+  content:"";
+  position:absolute;
+  inset:7px;
+  z-index:-2;
+  border-radius:999px;
+  background:color-mix(in srgb,var(--gold) 10%,transparent);
+  opacity:0;
+  filter:blur(9px);
+  transform:scale(.72);
+  pointer-events:none;
+  transition:
+    opacity 260ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
 .rail-btn svg {
   position: relative;
   z-index: 1;
@@ -4753,6 +4786,14 @@ input, textarea, select {
   pointer-events:none;
   animation: rail-liquid-bubble-flow 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+.rail-btn.active::after{
+  content:"";
+  position:absolute;
+  z-index:-2;
+  pointer-events:none;
+  opacity:.92;
+  animation: rail-liquid-shadow-swell 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
 .rail-shell.collapsed .rail-btn.active{
   color:#fff;
   width:46px;
@@ -4763,10 +4804,46 @@ input, textarea, select {
   display:grid;
   place-items:center;
   grid-template: 1fr / 1fr;
+  overflow:visible;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb,#fff 42%,transparent),
+    inset 0 -16px 24px color-mix(in srgb,var(--bg) 26%,transparent),
+    0 18px 34px color-mix(in srgb,var(--gold) 32%,transparent);
+}
+.rail-shell.collapsed .rail-btn.active::before{
+  inset:-1px -15px -1px -1px;
+  border-radius:999px 26px 26px 999px;
+  background:
+    radial-gradient(circle at 25% 22%,color-mix(in srgb,#fff 44%,transparent),transparent 30%),
+    radial-gradient(circle at 78% 76%,color-mix(in srgb,var(--gold) 34%,transparent),transparent 36%),
+    linear-gradient(120deg,color-mix(in srgb,var(--surface) 82%,transparent),color-mix(in srgb,var(--gold) 30%,var(--bg) 70%));
+}
+.rail-shell.collapsed .rail-btn.active::after{
+  inset:3px -21px 3px 13px;
+  border-radius:999px;
+  background:
+    radial-gradient(circle at 20% 50%,color-mix(in srgb,var(--gold) 34%,transparent),transparent 42%),
+    linear-gradient(90deg,color-mix(in srgb,var(--gold) 28%,transparent),transparent);
+  filter:blur(13px);
 }
 .rail-shell.expanded .rail-btn.active{
   border-radius:999px;
   justify-content:flex-start;
+  overflow:visible;
+}
+.rail-shell.expanded .rail-btn.active::before{
+  inset:-2px;
+  border-radius:999px;
+  background:
+    radial-gradient(circle at 14% 50%,color-mix(in srgb,#fff 30%,transparent),transparent 24%),
+    radial-gradient(circle at 90% 55%,color-mix(in srgb,var(--gold) 22%,transparent),transparent 36%),
+    linear-gradient(100deg,color-mix(in srgb,var(--surface) 72%,transparent),color-mix(in srgb,var(--gold) 18%,var(--bg) 82%));
+}
+.rail-shell.expanded .rail-btn.active::after{
+  inset:5px 18px 5px 8px;
+  border-radius:999px;
+  background:color-mix(in srgb,var(--gold) 24%,transparent);
+  filter:blur(16px);
 }
 .rail-badge {
   position: absolute; top: -3px; right: -3px; min-width: 17px; height: 17px;
@@ -4830,12 +4907,28 @@ input, textarea, select {
 }
 
 @keyframes rail-open-settle {
-  from { filter: saturate(0.86) brightness(0.92); }
-  to { filter: saturate(1) brightness(1); }
+  from {
+    transform: translateX(-6px) scaleX(.82);
+    filter: blur(.8px) saturate(0.86) brightness(0.92);
+  }
+  68% {
+    transform: translateX(1px) scaleX(1.025);
+    filter: blur(0) saturate(1.08) brightness(1.02);
+  }
+  to {
+    transform: translateX(0) scaleX(1);
+    filter: blur(0) saturate(1) brightness(1);
+  }
 }
 @keyframes rail-close-settle {
-  from { filter: saturate(1) brightness(1); }
-  to { filter: saturate(0.96) brightness(0.98); }
+  from {
+    transform: translateX(2px) scaleX(1.06);
+    filter: blur(0) saturate(1) brightness(1);
+  }
+  to {
+    transform: translateX(0) scaleX(1);
+    filter: blur(0) saturate(0.96) brightness(0.98);
+  }
 }
 @keyframes rail-toggle-glow {
   0%, 64%, 100% {
@@ -4896,6 +4989,20 @@ input, textarea, select {
   to {
     opacity: 0.78;
     transform: translateX(0) scaleX(1);
+  }
+}
+@keyframes rail-liquid-shadow-swell {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(.72);
+  }
+  62% {
+    opacity: .98;
+    transform: translateX(3px) scale(1.08);
+  }
+  to {
+    opacity: .92;
+    transform: translateX(0) scale(1);
   }
 }
 
