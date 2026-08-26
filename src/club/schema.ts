@@ -449,7 +449,7 @@ MIGRATIONS.push({
     `CREATE TABLE IF NOT EXISTS message_reactions (
        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
        user_id    TEXT NOT NULL,
-       emoji      TEXT NOT NULL CHECK (emoji IN ('👍','❤️','😂','👏')),
+       emoji      TEXT NOT NULL CHECK (emoji IN ('👍','❤️','😂','👏','🔥','💪','😍','😮','😢','🙏','✅','🎉')),
        created_at TEXT NOT NULL DEFAULT (${NOW}),
        PRIMARY KEY (message_id, user_id, emoji)
      )`,
@@ -502,6 +502,27 @@ MIGRATIONS.push({
      )`,
     `CREATE INDEX idx_financial_idempotency_created
        ON financial_idempotency(created_at)`,
+  ],
+})
+
+MIGRATIONS.push({
+  version: 12,
+  name: 'reactions-messagerie-etendues',
+  statements: [
+    `CREATE TABLE message_reactions_next (
+       message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+       user_id    TEXT NOT NULL,
+       emoji      TEXT NOT NULL CHECK (emoji IN ('👍','❤️','😂','👏','🔥','💪','😍','😮','😢','🙏','✅','🎉')),
+       created_at TEXT NOT NULL DEFAULT (${NOW}),
+       PRIMARY KEY (message_id, user_id, emoji)
+     )`,
+    `INSERT OR IGNORE INTO message_reactions_next (message_id, user_id, emoji, created_at)
+       SELECT message_id, user_id, emoji, MIN(created_at)
+         FROM message_reactions
+        WHERE emoji IN ('👍','❤️','😂','👏','🔥','💪','😍','😮','😢','🙏','✅','🎉')
+        GROUP BY message_id, user_id`,
+    `DROP TABLE message_reactions`,
+    `ALTER TABLE message_reactions_next RENAME TO message_reactions`,
   ],
 })
 

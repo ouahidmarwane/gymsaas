@@ -156,7 +156,7 @@ async function auditSupport(
 }
 
 type MessagingPerson = { id: string; name: string; role: string }
-const MESSAGE_REACTIONS = ['👍', '❤️', '😂', '👏'] as const
+const MESSAGE_REACTIONS = ['👍', '❤️', '😂', '👏', '🔥', '💪', '😍', '😮', '😢', '🙏', '✅', '🎉'] as const
 
 function messagingAllowed(principal: Principal): void {
   atLeast(principal, 'staff')
@@ -1476,13 +1476,16 @@ export const api = {
         ).bind(announcementId).first<{ id: string }>()
         if (!exists) return fail(404, 'Annonce introuvable')
         const current = await env.CONTROL.prepare(
-          'SELECT 1 FROM announcement_reactions WHERE announcement_id = ? AND user_id = ? AND emoji = ?',
-        ).bind(announcementId, principal.userId, emoji).first()
-        if (current) {
+          'SELECT emoji FROM announcement_reactions WHERE announcement_id = ? AND user_id = ? LIMIT 1',
+        ).bind(announcementId, principal.userId).first<{ emoji: string }>()
+        if (current?.emoji === emoji) {
           await env.CONTROL.prepare(
-            'DELETE FROM announcement_reactions WHERE announcement_id = ? AND user_id = ? AND emoji = ?',
-          ).bind(announcementId, principal.userId, emoji).run()
+            'DELETE FROM announcement_reactions WHERE announcement_id = ? AND user_id = ?',
+          ).bind(announcementId, principal.userId).run()
         } else {
+          await env.CONTROL.prepare(
+            'DELETE FROM announcement_reactions WHERE announcement_id = ? AND user_id = ?',
+          ).bind(announcementId, principal.userId).run()
           await env.CONTROL.prepare(
             'INSERT INTO announcement_reactions (announcement_id, user_id, emoji) VALUES (?, ?, ?)',
           ).bind(announcementId, principal.userId, emoji).run()

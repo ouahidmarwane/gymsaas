@@ -561,7 +561,7 @@ CREATE TABLE IF NOT EXISTS announcement_reads (
 CREATE TABLE IF NOT EXISTS announcement_reactions (
   announcement_id TEXT NOT NULL REFERENCES platform_announcements(id) ON DELETE CASCADE,
   user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  emoji           TEXT NOT NULL CHECK (emoji IN ('👍','❤️','😂','👏')),
+  emoji           TEXT NOT NULL CHECK (emoji IN ('👍','❤️','😂','👏','🔥','💪','😍','😮','😢','🙏','✅','🎉')),
   created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
   PRIMARY KEY (announcement_id, user_id, emoji)
 );

@@ -2440,18 +2440,22 @@ export class ClubDatabase extends DurableObject<Env> {
 
   reactToMessage(conversationId: string, messageId: string, userId: string, emoji: string): void {
     this.requireConversationMember(conversationId, userId)
-    if (!['👍', '❤️', '😂', '👏'].includes(emoji)) throw new Error('INVALID_REACTION')
+    if (!['👍', '❤️', '😂', '👏', '🔥', '💪', '😍', '😮', '😢', '🙏', '✅', '🎉'].includes(emoji)) throw new Error('INVALID_REACTION')
     const message = this.sql.exec<{ id: string }>(
       'SELECT id FROM messages WHERE id = ? AND conversation_id = ?',
       messageId, conversationId,
     ).toArray()[0]
     if (!message) throw new Error('CONVERSATION_NOT_FOUND')
     const existing = this.sql.exec<{ emoji: string }>(
-      'SELECT emoji FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
-      messageId, userId, emoji,
+      'SELECT emoji FROM message_reactions WHERE message_id = ? AND user_id = ? LIMIT 1',
+      messageId, userId,
     ).toArray()[0]
-    if (existing) this.sql.exec('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?', messageId, userId, emoji)
-    else this.sql.exec('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)', messageId, userId, emoji)
+    if (existing?.emoji === emoji) {
+      this.sql.exec('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?', messageId, userId)
+    } else {
+      this.sql.exec('DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?', messageId, userId)
+      this.sql.exec('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)', messageId, userId, emoji)
+    }
   }
 
   renameConversation(conversationId: string, userId: string, name: string): void {
