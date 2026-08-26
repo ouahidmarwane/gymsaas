@@ -8670,13 +8670,34 @@ html[data-theme='dark'] .app-main { background: transparent !important; color: v
 .btn-ghost,
 .compta-price-btn {
   background: color-mix(in srgb, var(--gold) 8%, transparent) !important;
-  border-color: color-mix(in srgb, var(--gold) 38%, transparent) !important;
+  border-color: var(--gold) !important;
   color: var(--accent-ink) !important;
+  --tw-ring-color: transparent !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  box-shadow: none !important;
 }
 .btn-ghost:hover:not(:disabled),
 .compta-price-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--gold) 15%, transparent) !important;
-  border-color: color-mix(in srgb, var(--gold) 55%, transparent) !important;
+  border-color: var(--gold) !important;
+}
+
+html[data-theme='light'] .app-main .btn-ghost,
+html[data-theme='light'] .app-main .compta-price-btn {
+  border: 1px solid var(--gold) !important;
+  --tw-ring-color: transparent !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  box-shadow: none !important;
+}
+html[data-theme='light'] .app-main .btn-ghost:hover:not(:disabled),
+html[data-theme='light'] .app-main .compta-price-btn:hover:not(:disabled) {
+  border-color: var(--gold) !important;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--gold) 14%, transparent) !important;
+}
+html[data-theme='light'] .app-main :is(.btn-ghost, .compta-price-btn):focus-visible {
+  outline: 2px solid var(--gold) !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--gold) 16%, transparent) !important;
 }
 
 /* En mode nuit, les anciennes surcharges de boutons etaient plus specifiques
@@ -8685,14 +8706,17 @@ html[data-theme='dark'] .app-main .btn-ghost,
 html[data-theme='dark'] .app-main .compta-price-btn,
 html[data-theme='dark'] .app-main .gf-mini-btn:not([data-tone='danger']) {
   background: color-mix(in srgb, var(--gold) 9%, transparent) !important;
-  border-color: color-mix(in srgb, var(--gold) 44%, transparent) !important;
+  border-color: var(--gold) !important;
   color: var(--accent-ink) !important;
+  --tw-ring-color: transparent !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  box-shadow: none !important;
 }
 html[data-theme='dark'] .app-main .btn-ghost:hover:not(:disabled),
 html[data-theme='dark'] .app-main .compta-price-btn:hover:not(:disabled),
 html[data-theme='dark'] .app-main .gf-mini-btn:not([data-tone='danger']):hover:not(:disabled) {
   background: color-mix(in srgb, var(--gold) 18%, transparent) !important;
-  border-color: color-mix(in srgb, var(--gold) 62%, transparent) !important;
+  border-color: var(--gold) !important;
   color: #ffd5c5 !important;
 }
 
