@@ -19,7 +19,7 @@ import { SKINS, SKIN_KEYS, type SkinKey } from '@/src/club/branding'
 
 // Palette proposee. Le club peut coller n'importe quelle teinte, mais la
 // plupart des proprietaires veulent choisir, pas composer.
-const SWATCHES = ['#2f6bff', '#9b72ff', '#16a34a', '#f59e0b', '#ef4444', '#0d9488', '#db2777', '#64748b']
+const SWATCHES = ['#f05a28', '#d94b1c', '#ff8a5c', '#16a34a', '#f59e0b', '#ef4444', '#0d9488', '#64748b']
 
 /**
  * Vignettes d'apercu.
@@ -30,6 +30,11 @@ const SWATCHES = ['#2f6bff', '#9b72ff', '#16a34a', '#f59e0b', '#ef4444', '#0d948
  * seraient identiques.
  */
 const PREVIEW: Record<SkinKey, { bg: string; card: string; note: string }> = {
+  default: {
+    bg: '#eee4db',
+    card: 'linear-gradient(180deg, #fffaf5, #f7eee7)',
+    note: 'Crème, noir et orange GymFlow.',
+  },
   sombre: {
     bg: '#080b12',
     card: 'linear-gradient(180deg, rgba(24,26,34,0.92), rgba(15,17,24,0.95))',
@@ -61,8 +66,12 @@ export default function ThemePicker({ initial, onSaved }: {
   initial: Branding | null
   onSaved?: (b: Branding) => void
 }) {
-  const [accent, setAccent] = useState(initial?.theme.accent ?? '#2f6bff')
-  const [skin, setSkin] = useState<SkinKey>(initial?.theme.skin ?? 'sombre')
+  const [accent, setAccent] = useState(initial?.theme.accent ?? '#f05a28')
+  const [skin, setSkin] = useState<SkinKey>(
+    initial?.theme.skin === 'sombre' || initial?.theme.skin === 'clair'
+      ? 'default'
+      : (initial?.theme.skin ?? 'default'),
+  )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -110,7 +119,6 @@ export default function ThemePicker({ initial, onSaved }: {
   function chooseSkin(next: SkinKey) {
     setSkin(next)
     const root = document.documentElement
-    root.setAttribute('data-theme', SKINS[next].base)
     root.setAttribute('data-skin', next)
     try { localStorage.setItem('gf-skin', next) } catch { /* mode prive */ }
     paint(SKINS[next].accent)

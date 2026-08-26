@@ -24,7 +24,7 @@ Chaque club possède un espace métier et conversationnel physiquement isolé da
 - Conversations directes entre membres autorisés d’un même club, groupes privés et canal interne Équipe.
 - Support privé entre les administrateurs du club et les Superadmins GymFlow.
 - Annonces globales officielles en lecture seule pour les clubs.
-- Cinq thèmes GymFlow, clairs et sombres, configurables par club.
+- Un thème principal clair crème/noir/orange, des habillages de club configurables et un mode nuit personnel disponible partout.
 
 ## Capabilities and Constraints
 
@@ -58,4 +58,4 @@ Le produit s’appelle GymFlow. La messagerie doit conserver l’identité et le
 
 ## Accessibility & Inclusion
 
-Les cinq thèmes doivent conserver un contraste lisible, les contrôles doivent rester accessibles au clavier et aux technologies d’assistance, et la mise en page doit fonctionner sans perte de fonctionnalité sur mobile.
+Les modes jour et nuit doivent conserver un contraste lisible, les contrôles doivent rester accessibles au clavier et aux technologies d’assistance, et la mise en page doit fonctionner sans perte de fonctionnalité sur mobile.

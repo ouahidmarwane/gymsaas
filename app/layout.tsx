@@ -26,8 +26,8 @@ export const metadata = {
 const SKIN_BASES = JSON.stringify(
   Object.fromEntries(Object.entries(SKINS).map(([key, s]) => [key, s.base])),
 )
-const APPLY_SKIN = `try{var b=${SKIN_BASES},s=localStorage.getItem('gf-skin');
-if(s&&b[s]){var e=document.documentElement;e.setAttribute('data-skin',s);e.setAttribute('data-theme',b[s])}}catch(_){}`
+const APPLY_SKIN = `try{var b=${SKIN_BASES},s=localStorage.getItem('gf-skin'),m=localStorage.getItem('gf-color-mode');
+var e=document.documentElement;e.setAttribute('data-skin',s&&b[s]?s:'default');e.setAttribute('data-theme',m==='dark'?'dark':'light')}catch(_){document.documentElement.setAttribute('data-skin','default');document.documentElement.setAttribute('data-theme','light')}`
 
 // La langue et la direction sont posees par le client une fois le club connu :
 // un club arabophone bascule en RTL sans que la coquille change.

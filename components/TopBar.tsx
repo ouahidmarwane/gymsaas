@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/client'
 import SlidingTabs from '@/components/SlidingTabs'
+import ThemeModeToggle from '@/components/ThemeModeToggle'
 import { useDiscipline } from '@/lib/discipline'
 
 /**
@@ -99,6 +100,7 @@ export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
 
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
                     gap: 10, justifyContent: 'flex-end' }}>
+        <ThemeModeToggle />
         <Dropdown
           label="Alertes"
           icon={<Bell size={17} strokeWidth={2.1} />}

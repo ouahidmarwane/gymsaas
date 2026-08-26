@@ -23,15 +23,19 @@
  * pourquoi elle vit ici et non dans le CSS — une seule source de verite.
  */
 export const SKINS = {
-  sombre:     { base: 'dark',  accent: '#2f6bff', label: 'Sombre' },
-  clair:      { base: 'light', accent: '#1d4ed8', label: 'Clair' },
+  default:    { base: 'light', accent: '#f05a28', label: 'Default Theme' },
+  // Compatibilite de lecture avec les clubs crees avant la refonte 2026.
+  // Ces deux cles ne sont plus exposees dans le selecteur d'habillage : le
+  // clair/sombre est desormais une preference d'affichage personnelle.
+  sombre:     { base: 'dark',  accent: '#f05a28', label: 'Sombre (ancien)' },
+  clair:      { base: 'light', accent: '#f05a28', label: 'Clair (ancien)' },
   chaleureux: { base: 'light', accent: '#c2410c', label: 'Chaleureux' },
   sport:      { base: 'dark',  accent: '#16a34a', label: 'Sport' },
   tatami:     { base: 'dark',  accent: '#b91c1c', label: 'Tatami' },
 } as const
 
 export type SkinKey = keyof typeof SKINS
-export const SKIN_KEYS = Object.keys(SKINS) as SkinKey[]
+export const SKIN_KEYS: SkinKey[] = ['default', 'chaleureux', 'sport', 'tatami']
 
 export interface Theme {
   accent: string
@@ -39,9 +43,9 @@ export interface Theme {
   skin: SkinKey
 }
 
-// Le bleu du systeme visuel d'origine (--gold dans globals.css). Un club qui
-// ne choisit rien doit ressembler a l'application, pas a une variante.
-export const DEFAULT_THEME: Theme = { accent: '#2f6bff', mode: 'system', skin: 'sombre' }
+// L'orange du système visuel principal (--gold dans globals.css). Un club qui
+// ne choisit rien utilise le thème clair crème, pas une ancienne variante.
+export const DEFAULT_THEME: Theme = { accent: '#f05a28', mode: 'light', skin: 'default' }
 
 const HEX = /^#[0-9a-f]{6}$/i
 const MODES = new Set(['light', 'dark', 'system'])
@@ -72,7 +76,10 @@ export function parseTheme(input: unknown): Theme {
   }
 
   // Reconstruit, jamais copie : aucune cle supplementaire ne survit.
-  return { accent: accent.toLowerCase(), mode: mode as Theme['mode'], skin: skin as SkinKey }
+  const normalizedAccent = ['#2f6bff', '#1d4ed8'].includes(accent.toLowerCase())
+    ? DEFAULT_THEME.accent
+    : accent.toLowerCase()
+  return { accent: normalizedAccent, mode: mode as Theme['mode'], skin: skin as SkinKey }
 }
 
 export function readTheme(stored: string | null): Theme {

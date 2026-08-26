@@ -222,14 +222,14 @@ test('la marque renvoie une URL de logo proxifiee, jamais une cle brute', async 
   assert.match(res.data.theme.accent, /^#[0-9a-f]{6}$/i)
 })
 
-test('un club neuf demarre sur l habillage d origine', async () => {
+test('un club neuf demarre sur le theme par defaut', async () => {
   const res = await owner.call('GET', '/api/branding')
-  assert.equal(res.data.theme.skin, 'sombre',
-    'sans choix, un club doit ressembler a l application, pas a une variante')
+  assert.equal(res.data.theme.skin, 'default',
+    'sans choix, un club doit utiliser le thème clair principal')
 })
 
-test('les cinq habillages sont acceptes et relus', async () => {
-  for (const skin of ['clair', 'chaleureux', 'sport', 'tatami', 'sombre']) {
+test('les quatre habillages visibles sont acceptes et relus', async () => {
+  for (const skin of ['default', 'chaleureux', 'sport', 'tatami']) {
     const saved = await owner.call('PUT', '/api/branding', { theme: { accent: '#2f6bff', skin } })
     assert.equal(saved.status, 200, `${skin} refuse : ${JSON.stringify(saved.data)}`)
     assert.equal(saved.data.theme.skin, skin)
@@ -245,7 +245,7 @@ test('un habillage inconnu est refuse', async () => {
     assert.equal(res.status, 400, `accepte a tort : ${JSON.stringify(skin)}`)
   }
   // Et l'habillage precedent n'a pas bouge.
-  assert.equal((await owner.call('GET', '/api/branding')).data.theme.skin, 'sombre')
+  assert.equal((await owner.call('GET', '/api/branding')).data.theme.skin, 'tatami')
 })
 
 test('entrer dans un club puis en sortir depuis l interface', async () => {

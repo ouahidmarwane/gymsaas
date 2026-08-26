@@ -48,7 +48,7 @@ test('changer l habillage d un club ne touche pas le voisin', async () => {
   assert.equal(a.status, 200, JSON.stringify(a.data))
 
   const b = await clubB.call('GET', '/api/branding')
-  assert.equal(b.data.theme.skin, 'sombre', 'le club B doit garder son habillage')
+  assert.equal(b.data.theme.skin, 'default', 'le club B doit garder le thème par défaut')
   assert.notEqual(b.data.theme.accent, '#16a34a', 'la couleur du club A ne doit pas fuir')
 
   // Et l'inverse : B se met en tatami sans deranger A.
@@ -139,9 +139,9 @@ test('un club change son propre habillage, sans passer par la plateforme', async
   assert.equal(me.data.branding.theme.skin, 'sport')
   assert.equal(me.data.branding.theme.accent, '#16a34a')
 
-  // Les cinq habillages de la plateforme, tous acceptes cote club : le
-  // client n'a pas un sous-ensemble.
-  for (const skin of ['sombre', 'clair', 'chaleureux', 'sport', 'tatami']) {
+  // Les quatre habillages visibles de la plateforme, tous acceptes cote club.
+  // Jour/nuit est désormais un réglage personnel dans la barre supérieure.
+  for (const skin of ['default', 'chaleureux', 'sport', 'tatami']) {
     const r = await owner.call('PUT', '/api/branding', {
       theme: { accent: '#2f6bff', skin, mode: 'system' },
     })

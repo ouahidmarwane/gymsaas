@@ -9,8 +9,9 @@ import {
   Bell, MessageCircle, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { api, ApiError, privileged, type Me, type Capabilities } from '@/lib/client'
-import { SKINS, DEFAULT_THEME } from '@/src/club/branding'
+import { DEFAULT_THEME } from '@/src/club/branding'
 import TopBar from '@/components/TopBar'
+import ThemeModeToggle from '@/components/ThemeModeToggle'
 import { DisciplineProvider, useDiscipline } from '@/lib/discipline'
 
 // Coquille de l'application : le rail flottant en pilule de 78px, exactement
@@ -205,12 +206,12 @@ function ShellBody({ children }: { children: ReactNode }) {
     root.style.setProperty('--gold', accent)
     root.style.setProperty('--tabs-pill-bg', accent)
 
-    // Deux attributs, deux roles. data-theme porte la base claire ou sombre,
-    // que la feuille d'origine connait deja ; data-skin porte la palette
-    // par-dessus. Separer les deux evite de dupliquer la feuille claire.
+    // Deux attributs, deux roles. data-theme est maintenant la preference
+    // jour/nuit de cet appareil ; data-skin reste l'habillage du club.
+    // Changer de club ne doit donc jamais forcer un retour en mode sombre.
     const skin = theme?.skin ?? DEFAULT_THEME.skin
-    root.setAttribute('data-theme', SKINS[skin]?.base ?? 'dark')
     root.setAttribute('data-skin', skin)
+    if (!root.hasAttribute('data-theme')) root.setAttribute('data-theme', 'light')
     // Memorise pour que le prochain chargement complet peigne juste du
     // premier coup (voir le script de app/layout.tsx).
     try { localStorage.setItem('gf-skin', skin) } catch { /* mode prive */ }
@@ -589,7 +590,7 @@ function ShellBody({ children }: { children: ReactNode }) {
             className="mobile-drawer"
             onClick={e => e.stopPropagation()}
             style={{
-              background: 'linear-gradient(180deg, rgba(23,25,32,0.98), rgba(14,16,22,0.99))',
+              background: 'var(--rail-bg)',
               padding: '1.5rem 1.25rem',
               display: 'flex',
               flexDirection: 'column',
@@ -632,6 +633,12 @@ function ShellBody({ children }: { children: ReactNode }) {
               onClose={() => dismissNotice(item.id)}
             />
           ))}
+        </div>
+      )}
+
+      {me && (pathname.startsWith('/messagerie') || (!inSupport && !me.org)) && (
+        <div className={`shell-mode-toggle-floating${pathname.startsWith('/messagerie') ? ' on-messaging' : ''}`}>
+          <ThemeModeToggle />
         </div>
       )}
 
