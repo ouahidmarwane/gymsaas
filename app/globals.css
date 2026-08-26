@@ -723,7 +723,8 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   }
   .input-dark:focus,
   .input-dark:focus-visible {
-    @apply ring-2 ring-blue-500/40 border-blue-400/40;
+    border-color: color-mix(in srgb, var(--gold) 58%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
   }
   select.input-dark option { background: #12141c; color: #ffffff; }
   textarea.input-dark { border-radius: 1.25rem; }
@@ -5751,7 +5752,7 @@ html[data-theme='light'] .dz-banner { border-color: rgba(15,23,42,0.12); }
   text-shadow: 0 4px 24px rgba(0,0,0,0.65);
 }
 .dz-banner-sub {
-  color: #4db2ff;
+  color: var(--gold);
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.14em;
@@ -8676,6 +8677,29 @@ html[data-theme='dark'] .app-main { background: transparent !important; color: v
 .compta-price-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--gold) 15%, transparent) !important;
   border-color: color-mix(in srgb, var(--gold) 55%, transparent) !important;
+}
+
+/* En mode nuit, les anciennes surcharges de boutons etaient plus specifiques
+   que la classe partagee et pouvaient encore rendre le bleu historique. */
+html[data-theme='dark'] .app-main .btn-ghost,
+html[data-theme='dark'] .app-main .compta-price-btn,
+html[data-theme='dark'] .app-main .gf-mini-btn:not([data-tone='danger']) {
+  background: color-mix(in srgb, var(--gold) 9%, transparent) !important;
+  border-color: color-mix(in srgb, var(--gold) 44%, transparent) !important;
+  color: var(--accent-ink) !important;
+}
+html[data-theme='dark'] .app-main .btn-ghost:hover:not(:disabled),
+html[data-theme='dark'] .app-main .compta-price-btn:hover:not(:disabled),
+html[data-theme='dark'] .app-main .gf-mini-btn:not([data-tone='danger']):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gold) 18%, transparent) !important;
+  border-color: color-mix(in srgb, var(--gold) 62%, transparent) !important;
+  color: #ffd5c5 !important;
+}
+
+html[data-theme='dark'] .app-main :is(.btn-ghost, .compta-price-btn, .gf-mini-btn):focus-visible {
+  outline: 2px solid var(--gold) !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--gold) 18%, transparent) !important;
 }
 
 :where(.input, .input-dark, .members-search-input, .members-filter-select,
