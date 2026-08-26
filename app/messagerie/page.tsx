@@ -30,10 +30,10 @@ type SupportThread = { id: string; orgId: string; orgName: string; updatedAt: st
 type SupportMessage = { id: string; authorId: string; authorName: string; authorKind: 'club' | 'support'; body: string; createdAt: string }
 type GroupInfo = { id: string; type: string; name: string | null; members: Member[] }
 
-const EMOJIS = ['👍', '❤️', '😂', '👏']
 const REFRESH_MS = 8_000
 const ANNOUNCEMENT_POLL_MS = 60_000
 const MESSAGING_TARGET_KEY = 'gymflow:messaging-target'
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '👏', '🔥', '💪', '😍', '😮', '😢', '🙏', '✅', '🎉']
 
 export default function MessagingPage() {
   const [me, setMe] = useState<Me | null>(null)
@@ -176,7 +176,7 @@ export default function MessagingPage() {
   useEffect(() => {
     if (!me) return
     const applyTarget = () => {
-      let target: { kind: 'announcements' } | { kind: 'conversation'; id: string } | null = null
+      let target: { kind: 'announcements' } | { kind: 'conversation'; id: string } | { kind: 'support'; orgId?: string } | null = null
       try { target = JSON.parse(sessionStorage.getItem(MESSAGING_TARGET_KEY) ?? 'null') } catch { target = null }
       if (!target) return
       if (target.kind === 'announcements') {
@@ -188,6 +188,11 @@ export default function MessagingPage() {
       if (target.kind === 'conversation' && conversations.some(conversation => conversation.id === target.id)) {
         didAutoSelect.current = true
         setActive({ kind: 'conversation', id: target.id })
+        try { sessionStorage.removeItem(MESSAGING_TARGET_KEY) } catch { /* stockage indisponible */ }
+      }
+      if (target.kind === 'support') {
+        didAutoSelect.current = true
+        setActive({ kind: 'support', id: target.orgId })
         try { sessionStorage.removeItem(MESSAGING_TARGET_KEY) } catch { /* stockage indisponible */ }
       }
     }
@@ -394,21 +399,44 @@ function Avatar({ name, team, small }: { name: string; team?: boolean; small?: b
 
 function MessageBubble({ conversationId, message, own, onReply, onReact }: { conversationId: string; message: Message; own: boolean; onReply: () => void; onReact: (emoji: string) => void }) {
   const [reactions, setReactions] = useState(false)
+  const bubbleRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!reactions) return
+    function closeOutside(event: PointerEvent) {
+      const target = event.target
+      if (bubbleRef.current && target instanceof Node && !bubbleRef.current.contains(target)) setReactions(false)
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setReactions(false)
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [reactions])
   return <article className={`message-line${own ? ' own' : ''}`}>
     <Avatar name={message.authorName} small />
     <div className="message-stack">
       <span className="message-author">{own ? 'Moi' : message.authorName}<time>{shortTime(message.createdAt)}</time></span>
-      <div className={`message-bubble${reactions ? ' has-reactions' : ''}`}>
+      <div ref={bubbleRef} className={`message-bubble${reactions ? ' has-reactions' : ''}`}>
         {message.replyToId && <div className="quoted-message"><b>{message.replyAuthor}</b><span>{message.replyBody}</span></div>}
         {(!message.attachments || message.attachments.length === 0) && <p>{message.body}</p>}
         {message.attachments?.map(attachment => <AttachmentView key={attachment.id} conversationId={conversationId} attachment={attachment} />)}
         <time>{shortTime(message.createdAt)}{own && <Check size={12} />}</time>
         <div className="message-actions"><button onClick={onReply} aria-label="Répondre"><Reply size={14} /></button><button onClick={() => setReactions(!reactions)} aria-label="Réagir"><SmilePlus size={14} /></button></div>
-        {reactions && <div className="reaction-picker">{EMOJIS.map(emoji => <button key={emoji} onClick={() => { onReact(emoji); setReactions(false) }}>{emoji}</button>)}</div>}
+        {reactions && <ReactionPicker onPick={emoji => { onReact(emoji); setReactions(false) }} />}
       </div>
       {message.reactions.length > 0 && <div className="reaction-row">{message.reactions.map(reaction => <button key={reaction.emoji} className={reaction.reacted ? 'mine' : ''} onClick={() => onReact(reaction.emoji)}>{reaction.emoji} {reaction.count}</button>)}</div>}
     </div>
   </article>
+}
+
+function ReactionPicker({ className = '', onPick }: { className?: string; onPick: (emoji: string) => void }) {
+  return <div className={`reaction-picker liquid-reaction-picker${className ? ` ${className}` : ''}`} onClick={event => event.stopPropagation()}>
+    {REACTION_EMOJIS.map(emoji => <button key={emoji} type="button" onClick={() => onPick(emoji)}>{emoji}</button>)}
+  </div>
 }
 
 function AttachmentView({ conversationId, attachment }: { conversationId: string; attachment: Attachment }) {
@@ -505,22 +533,37 @@ function AnnouncementsPanel({ announcements, platform, detailsOpen, onToggleDeta
 
 function AnnouncementMessage({ item, platform, onRead, onReact }: { item: Announcement; platform: boolean; onRead: () => void; onReact: (emoji: string) => void }) {
   const [reactions, setReactions] = useState(false)
+  const bubbleRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!reactions) return
+    function closeOutside(event: PointerEvent) {
+      const target = event.target
+      if (bubbleRef.current && target instanceof Node && !bubbleRef.current.contains(target)) setReactions(false)
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setReactions(false)
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [reactions])
   const canReact = !platform && item.status === 'published'
   const announcementReactions = item.reactions ?? []
   return <article className={`message-line announcement-line${item.isRead ? '' : ' unread'}`} onClick={onRead}>
     <span className="message-avatar"><Bell size={16} /></span>
     <div className="message-stack">
       <span className="message-author">GymFlow <time>{longDate(item.publishedAt ?? item.createdAt)}</time></span>
-      <div className={`message-bubble announcement-bubble${reactions ? ' has-reactions' : ''}`}>
+      <div ref={bubbleRef} className={`message-bubble announcement-bubble${reactions ? ' has-reactions' : ''}`}>
         <h3>{item.title}</h3>
         <p>{item.content}</p>
         <footer>{item.publisherName ?? 'GymFlow'} · {item.status === 'published' ? 'Annonce officielle' : item.status}</footer>
         {canReact && <div className="message-actions announcement-actions">
           <button onClick={event => { event.stopPropagation(); setReactions(value => !value) }} aria-label="Réagir à l’annonce"><SmilePlus size={14} /></button>
         </div>}
-        {reactions && <div className="reaction-picker announcement-reaction-picker" onClick={event => event.stopPropagation()}>
-          {EMOJIS.map(emoji => <button key={emoji} onClick={() => { onReact(emoji); setReactions(false) }}>{emoji}</button>)}
-        </div>}
+        {reactions && <ReactionPicker className="announcement-reaction-picker" onPick={emoji => { onReact(emoji); setReactions(false) }} />}
         {!item.isRead && <span className="announcement-new">Nouveau</span>}
       </div>
       {announcementReactions.length > 0 && <div className="reaction-row announcement-reactions" onClick={event => event.stopPropagation()}>

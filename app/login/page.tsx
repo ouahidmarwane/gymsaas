@@ -7,6 +7,8 @@ import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck } from 'lucide-
 import { api, ApiError } from '@/lib/client'
 import { JUST_LOGGED_IN, LOGIN_EVENT } from '@/components/WelcomeSplash'
 
+const GLOBAL_NOTICE_LOGIN_KEY = 'gymflow:notice-login-at'
+
 export default function LoginPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
@@ -26,7 +28,10 @@ export default function LoginPage() {
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
       const remainingAnimation = reducedMotion ? 0 : Math.max(0, 1500 - (performance.now() - animationStartedAt))
       if (remainingAnimation > 0) await new Promise(resolve => window.setTimeout(resolve, remainingAnimation))
-      try { sessionStorage.setItem(JUST_LOGGED_IN, '1') } catch { /* mode prive */ }
+      try {
+        sessionStorage.setItem(JUST_LOGGED_IN, '1')
+        sessionStorage.setItem(GLOBAL_NOTICE_LOGIN_KEY, String(Date.now()))
+      } catch { /* mode prive */ }
       window.dispatchEvent(new Event(LOGIN_EVENT))
       router.replace(orgId ? '/dashboard' : '/admin')
       router.refresh()

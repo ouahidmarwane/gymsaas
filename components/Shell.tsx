@@ -50,20 +50,32 @@ type GlobalConversation = {
   unread: number
 }
 
+type GlobalSupportThread = {
+  id: string
+  orgId: string
+  orgName: string
+  updatedAt: string
+  lastBody: string | null
+  unread: number
+}
+
 type GlobalNotice = {
   id: string
-  kind: 'announcement' | 'conversation'
+  kind: 'announcement' | 'conversation' | 'support'
   title: string
   body: string
   source: string
   at: string
-  target: { kind: 'announcements' } | { kind: 'conversation'; id: string }
+  target: { kind: 'announcements' } | { kind: 'conversation'; id: string } | { kind: 'support'; orgId?: string }
 }
 
-const GLOBAL_NOTICE_MS = 5_000
-const GLOBAL_NOTICE_POLL_MS = 12_000
+type ActiveGlobalNotice = GlobalNotice & { shownAt: number; leaving: boolean }
+
+const GLOBAL_NOTICE_MS = 8_000
+const GLOBAL_NOTICE_POLL_MS = 4_000
 const GLOBAL_NOTICE_LOGIN_DELAY_MS = 5_000
 const GLOBAL_NOTICE_SEEN_KEY = 'gymflow:global-notice-seen'
+const GLOBAL_NOTICE_LOGIN_KEY = 'gymflow:notice-login-at'
 const MESSAGING_TARGET_KEY = 'gymflow:messaging-target'
 
 /** Ecrans d'un club. Ils n'ont de sens que dans un club. */
@@ -127,11 +139,11 @@ function ShellBody({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
-  const [notice, setNotice] = useState<(GlobalNotice & { shownAt: number; leaving: boolean }) | null>(null)
-  const [noticeQueue, setNoticeQueue] = useState<GlobalNotice[]>([])
+  const [notices, setNotices] = useState<ActiveGlobalNotice[]>([])
   const [noticeTick, setNoticeTick] = useState(() => Date.now())
   const railRef = useRef<HTMLElement | null>(null)
   const noticeSeenRef = useRef<Set<string>>(new Set())
+  const noticeTimersRef = useRef<Map<string, number[]>>(new Map())
 
   function setDesktopRailOpen(next: boolean) {
     setRailOpen(next)
@@ -211,37 +223,101 @@ function ShellBody({ children }: { children: ReactNode }) {
 
   useEffect(() => { setDrawer(false) }, [pathname])
 
-  useEffect(() => {
-    if (!me || me.isPlatformAdmin || me.scope.mode !== 'member') {
-      setNoticeQueue([])
-      noticeSeenRef.current = new Set()
-      return
+  useEffect(() => () => {
+    for (const timers of noticeTimersRef.current.values()) {
+      for (const timer of timers) window.clearTimeout(timer)
     }
-    if (!['owner', 'admin', 'staff'].includes(me.org?.role ?? '')) {
-      setNoticeQueue([])
+    noticeTimersRef.current.clear()
+  }, [])
+
+  function scheduleNoticeLifecycle(id: string) {
+    const existing = noticeTimersRef.current.get(id)
+    if (existing) for (const timer of existing) window.clearTimeout(timer)
+    const leave = window.setTimeout(() => {
+      setNotices(current => current.map(item => item.id === id ? { ...item, leaving: true } : item))
+    }, GLOBAL_NOTICE_MS)
+    const remove = window.setTimeout(() => {
+      setNotices(current => current.filter(item => item.id !== id))
+      noticeTimersRef.current.delete(id)
+    }, GLOBAL_NOTICE_MS + 560)
+    noticeTimersRef.current.set(id, [leave, remove])
+  }
+
+  function showNotices(items: GlobalNotice[]) {
+    if (items.length === 0) return
+    const shownAt = Date.now()
+    const added: string[] = []
+    setNotices(current => {
+      const known = new Set(current.map(item => item.id))
+      const next = items
+        .filter(item => !known.has(item.id))
+        .map(item => {
+          added.push(item.id)
+          return { ...item, shownAt, leaving: false }
+        })
+      return next.length ? [...next, ...current].slice(0, 5) : current
+    })
+    for (const id of added) scheduleNoticeLifecycle(id)
+  }
+
+  function dismissNotice(id: string) {
+    setNotices(current => current.map(item => item.id === id ? { ...item, leaving: true } : item))
+    const existing = noticeTimersRef.current.get(id)
+    if (existing) for (const timer of existing) window.clearTimeout(timer)
+    const remove = window.setTimeout(() => {
+      setNotices(current => current.filter(item => item.id !== id))
+      noticeTimersRef.current.delete(id)
+    }, 520)
+    noticeTimersRef.current.set(id, [remove])
+  }
+
+  useEffect(() => {
+    for (const item of notices) {
+      if (!item.leaving && !noticeTimersRef.current.has(item.id)) scheduleNoticeLifecycle(item.id)
+    }
+  }, [notices])
+
+  useEffect(() => {
+    const canReceiveClubNotices = me?.scope.mode === 'member' && ['owner', 'admin', 'staff'].includes(me.org?.role ?? '')
+    const canReceivePlatformSupport = Boolean(me?.isPlatformAdmin && me.scope.mode !== 'support')
+    if (!me || (!canReceiveClubNotices && !canReceivePlatformSupport)) {
+      setNotices([])
       noticeSeenRef.current = new Set()
       return
     }
 
     let alive = true
-    const noticeStorageKey = `${GLOBAL_NOTICE_SEEN_KEY}:${me.user.id}:${me.org?.id ?? 'club'}`
+    const noticeStorageKey = `${GLOBAL_NOTICE_SEEN_KEY}:${me.user.id}:${me.org?.id ?? 'platform'}`
+    let justLoggedIn = false
     try {
-      const stored = JSON.parse(sessionStorage.getItem(noticeStorageKey) ?? '[]') as string[]
-      noticeSeenRef.current = new Set(stored.slice(-80))
+      justLoggedIn = Boolean(sessionStorage.getItem(GLOBAL_NOTICE_LOGIN_KEY))
+      if (justLoggedIn) {
+        sessionStorage.removeItem(GLOBAL_NOTICE_LOGIN_KEY)
+        sessionStorage.removeItem(noticeStorageKey)
+        noticeSeenRef.current = new Set()
+      } else {
+        const stored = JSON.parse(sessionStorage.getItem(noticeStorageKey) ?? '[]') as string[]
+        noticeSeenRef.current = new Set(stored.slice(-120))
+      }
     } catch { noticeSeenRef.current = new Set() }
 
     const remember = (id: string) => {
       const seen = noticeSeenRef.current
       seen.add(id)
-      const compact = [...seen].slice(-80)
+      const compact = [...seen].slice(-120)
       noticeSeenRef.current = new Set(compact)
       try { sessionStorage.setItem(noticeStorageKey, JSON.stringify(compact)) } catch { /* stockage indisponible */ }
     }
     const enqueueNotices = async () => {
       try {
-        const [announcementData, conversationData] = await Promise.all([
-          api.get<{ announcements: GlobalAnnouncement[] }>('/api/messaging/announcements'),
-          api.get<{ conversations: GlobalConversation[] }>('/api/messaging/conversations'),
+        const [announcementData, conversationData, supportData] = await Promise.all([
+          canReceiveClubNotices
+            ? api.get<{ announcements: GlobalAnnouncement[] }>('/api/messaging/announcements')
+            : Promise.resolve({ announcements: [] }),
+          canReceiveClubNotices
+            ? api.get<{ conversations: GlobalConversation[] }>('/api/messaging/conversations')
+            : Promise.resolve({ conversations: [] }),
+          api.get<{ threads: GlobalSupportThread[] }>('/api/messaging/support/threads'),
         ])
         const announcements = announcementData.announcements
           .filter(item => item.status === 'published' && !item.isRead)
@@ -249,6 +325,9 @@ function ShellBody({ children }: { children: ReactNode }) {
         const conversations = conversationData.conversations
           .filter(item => item.unread > 0 && item.last_body)
           .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))
+        const supportThreads = supportData.threads
+          .filter(item => item.unread > 0 && item.lastBody)
+          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
         const candidates: GlobalNotice[] = []
         for (const announcement of announcements) {
           candidates.push({
@@ -272,53 +351,46 @@ function ShellBody({ children }: { children: ReactNode }) {
             target: { kind: 'conversation', id: conversation.id },
           })
         }
+        for (const thread of supportThreads) {
+          candidates.push({
+            id: `support:${thread.id}:${thread.updatedAt}:${thread.unread}`,
+            kind: 'support',
+            title: canReceivePlatformSupport ? 'Nouveau message support' : 'Nouveau message GymFlow Support',
+            body: thread.lastBody ?? 'Un nouveau message support vous attend.',
+            source: canReceivePlatformSupport ? thread.orgName : 'GymFlow Support',
+            at: thread.updatedAt,
+            target: { kind: 'support', ...(canReceivePlatformSupport ? { orgId: thread.orgId } : {}) },
+          })
+        }
         const pending = candidates
           .filter(item => !noticeSeenRef.current.has(item.id))
           .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
         if (!alive || pending.length === 0) return
         for (const item of pending) remember(item.id)
-        setNoticeQueue(current => {
-          const known = new Set(current.map(item => item.id))
-          return [...current, ...pending.filter(item => !known.has(item.id))]
-        })
+        showNotices(pending)
       } catch { /* les notifications ne doivent jamais perturber l'app */ }
     }
 
     let pollTimer: number | undefined
-    const loginDelay = window.setTimeout(() => {
+    const startPolling = () => {
       void enqueueNotices()
       pollTimer = window.setInterval(() => void enqueueNotices(), GLOBAL_NOTICE_POLL_MS)
-    }, GLOBAL_NOTICE_LOGIN_DELAY_MS)
+    }
+    const loginDelay = justLoggedIn ? window.setTimeout(startPolling, GLOBAL_NOTICE_LOGIN_DELAY_MS) : undefined
+    if (!justLoggedIn) startPolling()
     return () => {
       alive = false
-      window.clearTimeout(loginDelay)
+      if (loginDelay) window.clearTimeout(loginDelay)
       if (pollTimer) window.clearInterval(pollTimer)
     }
   }, [me])
 
   useEffect(() => {
-    if (notice || noticeQueue.length === 0) return
-    const [next, ...rest] = noticeQueue
-    if (!next) return
-    setNoticeQueue(rest)
-    setNotice({ ...next, shownAt: Date.now(), leaving: false })
-  }, [notice, noticeQueue])
-
-  useEffect(() => {
-    if (!notice) return
+    if (notices.length === 0) return
     setNoticeTick(Date.now())
     const tick = window.setInterval(() => setNoticeTick(Date.now()), 250)
-    const close = window.setTimeout(() => {
-      setNotice(current => current ? { ...current, leaving: true } : current)
-    }, GLOBAL_NOTICE_MS)
-    const remove = window.setTimeout(() => setNotice(null), GLOBAL_NOTICE_MS + 560)
-    return () => { window.clearInterval(tick); window.clearTimeout(close); window.clearTimeout(remove) }
-  }, [notice?.id])
-
-  function dismissNotice() {
-    setNotice(current => current ? { ...current, leaving: true } : current)
-    window.setTimeout(() => setNotice(null), 520)
-  }
+    return () => window.clearInterval(tick)
+  }, [notices.length])
 
   async function openNotice(item: GlobalNotice) {
     try { sessionStorage.setItem(MESSAGING_TARGET_KEY, JSON.stringify(item.target)) } catch { /* stockage indisponible */ }
@@ -326,7 +398,7 @@ function ShellBody({ children }: { children: ReactNode }) {
       const id = item.id.replace(/^announcement:/, '')
       await api.post(`/api/messaging/announcements/${encodeURIComponent(id)}/read`).catch(() => undefined)
     }
-    dismissNotice()
+    dismissNotice(item.id)
     window.dispatchEvent(new Event('gymflow:messaging-target'))
     router.push('/messagerie')
   }
@@ -548,13 +620,19 @@ function ShellBody({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {notice && (
-        <GlobalNoticeCard
-          notice={notice}
-          now={noticeTick}
-          onOpen={() => void openNotice(notice)}
-          onClose={dismissNotice}
-        />
+      {notices.length > 0 && (
+        <div className="global-message-notice-stack" aria-live="polite" aria-label="Notifications">
+          {notices.map((item, index) => (
+            <GlobalNoticeCard
+              key={item.id}
+              notice={item}
+              index={index}
+              now={noticeTick}
+              onOpen={() => void openNotice(item)}
+              onClose={() => dismissNotice(item.id)}
+            />
+          ))}
+        </div>
       )}
 
       <main className={`app-main${pathname.startsWith('/messagerie') ? ' messaging-app-main' : ''}`}>
@@ -631,9 +709,10 @@ function SupportBar({ me, onLeft }: { me: Me; onLeft: () => void }) {
 }
 
 function GlobalNoticeCard({
-  notice, now, onOpen, onClose,
+  notice, index, now, onOpen, onClose,
 }: {
-  notice: GlobalNotice & { shownAt: number; leaving: boolean }
+  notice: ActiveGlobalNotice
+  index: number
   now: number
   onOpen: () => void
   onClose: () => void
@@ -647,9 +726,11 @@ function GlobalNoticeCard({
     <aside
       className={`announcement-notice global-message-notice${notice.leaving ? ' is-leaving' : ''}`}
       role="status"
-      aria-live="polite"
       aria-label={notice.title}
-      style={{ '--notice-progress': `${progress * 360}deg` } as CSSProperties}
+      style={{
+        '--notice-progress': `${progress * 360}deg`,
+        '--notice-index': index,
+      } as CSSProperties}
     >
       <button className="global-message-notice-main" onClick={onOpen}>
         <span className="announcement-notice-icon"><Icon size={19} strokeWidth={2.2} /></span>
