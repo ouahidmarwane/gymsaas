@@ -4478,7 +4478,14 @@ input, textarea, select {
   padding: 18px 16px;
   box-shadow: 0 28px 70px rgba(0,0,0,0.56);
 }
-.rail-shell.collapsed { animation: rail-close-settle 360ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+.rail-shell.collapsed {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: rail-close-settle 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
 .rail-shell.expanded { animation: rail-open-settle 420ms cubic-bezier(0.16, 1, 0.3, 1) both; }
 .rail-head {
   position: relative;
@@ -5139,6 +5146,13 @@ html[data-theme='light'] .rail-shell {
     inset 0 1px 0 rgba(255,255,255,0.78),
     inset 0 -18px 34px rgba(15,23,42,0.04),
     0 24px 60px rgba(15,23,42,0.14);
+}
+html[data-theme='light'] .rail-shell.collapsed {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 html[data-theme='light'] .rail-btn { color: #475569; }
 html[data-theme='light'] .rail-shell.collapsed .rail-btn { background: rgba(15,23,42,0.05); border-color: rgba(15,23,42,0.08); }
