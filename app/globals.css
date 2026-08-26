@@ -4618,6 +4618,7 @@ input, textarea, select {
   line-height: 1.1;
   text-align: start;
   cursor: pointer;
+  isolation: isolate;
   transition:
     color var(--transition-fast),
     background var(--transition-fast),
@@ -4632,17 +4633,33 @@ input, textarea, select {
   padding: 0;
   display: grid;
   place-items: center;
+  grid-template: 1fr / 1fr;
   justify-content: center;
   align-items: center;
   border-radius: 50%;
-  background: var(--overlay-soft);
-  border-color: var(--overlay-soft);
+  background:
+    radial-gradient(circle at 28% 20%,color-mix(in srgb,var(--text) 12%,transparent),transparent 32%),
+    linear-gradient(145deg,color-mix(in srgb,var(--surface) 42%,transparent),color-mix(in srgb,var(--bg) 72%,transparent));
+  border-color: color-mix(in srgb,var(--text) 11%,var(--card-border));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb,var(--text) 13%,transparent),
+    inset 0 -12px 18px color-mix(in srgb,var(--bg) 24%,transparent),
+    0 8px 22px rgba(0,0,0,0.2);
+  backdrop-filter: blur(16px) saturate(138%);
+  -webkit-backdrop-filter: blur(16px) saturate(138%);
 }
 .rail-btn svg {
   position: relative;
   z-index: 1;
   flex: none;
   margin: 0;
+}
+.rail-shell.collapsed .rail-btn svg {
+  grid-area: 1 / 1;
+  justify-self: center;
+  align-self: center;
+  width: 20px;
+  height: 20px;
 }
 .rail-btn>span {
   max-width: 0;
@@ -4658,6 +4675,9 @@ input, textarea, select {
     opacity 150ms ease,
     transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
     visibility 150ms ease;
+}
+.rail-shell.collapsed .rail-btn>span {
+  display: none;
 }
 .rail-shell.expanded .rail-btn>span {
   max-width: 150px;
@@ -4696,7 +4716,14 @@ input, textarea, select {
 .rail-btn[data-tooltip]:focus-visible::after {
   translate: 0 -50%; opacity: 1; visibility: visible;
 }
-.rail-btn:hover { color: var(--text); background: var(--overlay); transform: translateY(-1px); }
+.rail-btn:hover {
+  color: var(--text);
+  background:
+    radial-gradient(circle at 30% 18%,color-mix(in srgb,var(--text) 16%,transparent),transparent 34%),
+    linear-gradient(145deg,color-mix(in srgb,var(--surface) 56%,transparent),color-mix(in srgb,var(--bg) 62%,transparent));
+  border-color: color-mix(in srgb,var(--text) 16%,var(--card-border));
+  transform: translateY(-1px);
+}
 .rail-btn.active {
   color: var(--text);
   isolation:isolate;
@@ -4735,6 +4762,7 @@ input, textarea, select {
   transform:translateZ(0);
   display:grid;
   place-items:center;
+  grid-template: 1fr / 1fr;
 }
 .rail-shell.expanded .rail-btn.active{
   border-radius:999px;
