@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
-  Bell, History, Settings, ShieldAlert, CalendarClock, UserPlus, Trash2,
+  Bell, ChevronUp, History, MessageCircle, Settings, ShieldAlert, CalendarClock, UserPlus, Trash2,
   Pencil, CreditCard, Award, Check,
 } from 'lucide-react'
 import { api } from '@/lib/client'
@@ -49,14 +49,50 @@ interface Entry {
   created_at: string
 }
 
+interface ConversationPreview {
+  id: string
+  type: 'dm' | 'group' | 'team'
+  name: string
+  last_body: string | null
+  last_at: string | null
+  updated_at: string
+  unread: number
+}
+
+interface AnnouncementPreview {
+  id: string
+  title: string
+  content: string
+  status: string
+  publishedAt: string | null
+  createdAt: string
+  isRead: number
+}
+
+interface SupportThreadPreview {
+  id: string
+  orgId: string
+  orgName: string
+  updatedAt: string
+  lastBody: string | null
+  unread: number
+}
+
 const REFRESH_MS = 60_000
+const MESSAGING_TARGET_KEY = 'gymflow:messaging-target'
 
 export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
   const pathname = usePathname()
+  const router = useRouter()
   const { active, setActive, disciplines, visible } = useDiscipline()
   const [open, setOpen] = useState<'alerts' | 'history' | null>(null)
+  const [centerOpen, setCenterOpen] = useState(false)
+  const [centerLoading, setCenterLoading] = useState(false)
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [entries, setEntries] = useState<Entry[]>([])
+  const [conversations, setConversations] = useState<ConversationPreview[]>([])
+  const [announcements, setAnnouncements] = useState<AnnouncementPreview[]>([])
+  const [supportThreads, setSupportThreads] = useState<SupportThreadPreview[]>([])
   const [now, setNow] = useState(() => Date.now())
 
   // La pastille se charge partout : c'est son interet, alerter depuis
@@ -71,6 +107,41 @@ export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
     return () => { alive = false; clearInterval(timer) }
   }, [pathname])
 
+  const loadMessageSummaries = useCallback(async (withSpinner = false) => {
+    if (withSpinner) setCenterLoading(true)
+    try {
+      const [conversationData, announcementData, supportData] = await Promise.all([
+        api.get<{ conversations: ConversationPreview[] }>('/api/messaging/conversations')
+          .catch(() => ({ conversations: [] })),
+        api.get<{ announcements: AnnouncementPreview[] }>('/api/messaging/announcements')
+          .catch(() => ({ announcements: [] })),
+        api.get<{ threads: SupportThreadPreview[] }>('/api/messaging/support/threads')
+          .catch(() => ({ threads: [] })),
+      ])
+      setConversations(conversationData.conversations)
+      setAnnouncements(announcementData.announcements)
+      setSupportThreads(supportData.threads)
+      setNow(Date.now())
+    } finally {
+      if (withSpinner) setCenterLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadMessageSummaries()
+    const timer = setInterval(() => void loadMessageSummaries(), REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [loadMessageSummaries, pathname])
+
+  useEffect(() => {
+    if (!centerOpen) return
+    setOpen(null)
+    void loadMessageSummaries(true)
+    const esc = (event: KeyboardEvent) => { if (event.key === 'Escape') setCenterOpen(false) }
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [centerOpen, loadMessageSummaries])
+
   useEffect(() => {
     if (open !== 'history' || !canSeeHistory) return
     api.get<{ entries: Entry[] }>('/api/audit')
@@ -78,7 +149,42 @@ export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
   }, [open, canSeeHistory])
 
   const showFilter = visible && !NO_FILTER.some(p => pathname.startsWith(p))
-  const unread = alerts.length
+  const unreadMessages = useMemo(() => (
+    conversations.reduce((sum, item) => sum + item.unread, 0)
+    + announcements.filter(item => item.status === 'published' && !item.isRead).length
+    + supportThreads.reduce((sum, item) => sum + item.unread, 0)
+  ), [announcements, conversations, supportThreads])
+  const unread = alerts.length + unreadMessages
+  const recentConversations = useMemo(() => (
+    conversations
+      .filter(item => item.last_body)
+      .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))
+      .slice(0, 8)
+  ), [conversations])
+  const recentAnnouncements = useMemo(() => (
+    announcements
+      .filter(item => item.status === 'published')
+      .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))
+      .slice(0, 5)
+  ), [announcements])
+  const recentSupport = useMemo(() => (
+    supportThreads
+      .filter(item => item.lastBody)
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .slice(0, 4)
+  ), [supportThreads])
+
+  function openMessagingTarget(target: { kind: 'announcements' } | { kind: 'conversation'; id: string } | { kind: 'support'; orgId?: string }) {
+    try { sessionStorage.setItem(MESSAGING_TARGET_KEY, JSON.stringify(target)) } catch { /* stockage indisponible */ }
+    window.dispatchEvent(new Event('gymflow:messaging-target'))
+    setCenterOpen(false)
+    router.push('/messagerie')
+  }
+
+  function openAlert(href: string | null) {
+    setCenterOpen(false)
+    if (href) router.push(href)
+  }
 
   return (
     <div className="page-actions" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -101,38 +207,16 @@ export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
                     gap: 10, justifyContent: 'flex-end' }}>
         <ThemeModeToggle />
-        <Dropdown
-          label="Alertes"
-          icon={<Bell size={17} strokeWidth={2.1} />}
-          count={unread}
-          isOpen={open === 'alerts'}
-          onToggle={() => setOpen(open === 'alerts' ? null : 'alerts')}
-          title="Alertes"
-          note={unread === 0 ? 'Rien a signaler' : `${unread} a traiter`}
-          footer={{ href: '/members', label: 'Voir les membres' }}
+        <button
+          className="icon-btn notification-center-trigger"
+          onClick={() => setCenterOpen(true)}
+          aria-label="Ouvrir le centre de notifications"
+          aria-expanded={centerOpen}
+          aria-haspopup="dialog"
         >
-          {alerts.length === 0 ? (
-            <p className="notif-empty">
-              Rien a signaler. Une echeance qui approche, une assurance manquante ou une
-              connexion inhabituelle apparaitrait ici.
-            </p>
-          ) : alerts.map(a => (
-            <Link key={a.id} href={a.href ?? '#'} className="notif-item notif-item-unread"
-                  onClick={() => setOpen(null)}>
-              <span className="notif-item-icon" style={{ color: toneOf(a.severity) }}>
-                {a.kind === 'subscription' ? <CreditCard size={15} strokeWidth={2.2} />
-                  : a.kind === 'security' ? <ShieldAlert size={15} strokeWidth={2.2} />
-                  : <CalendarClock size={15} strokeWidth={2.2} />}
-              </span>
-              <span className="notif-item-body">
-                <span className="notif-item-name">{a.title}</span>
-                <span className="notif-item-msg">
-                  {[a.detail, a.at ? relative(a.at, now) : null].filter(Boolean).join(' · ')}
-                </span>
-              </span>
-            </Link>
-          ))}
-        </Dropdown>
+          <Bell size={17} strokeWidth={2.1} />
+          {unread > 0 && <span className="notif-count-badge">{unread > 99 ? '99+' : unread}</span>}
+        </button>
 
         {canSeeHistory && (
           <Dropdown
@@ -169,6 +253,145 @@ export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
           <Settings size={17} strokeWidth={2.1} />
         </Link>
       </div>
+
+      {centerOpen && (
+        <NotificationCenter
+          alerts={alerts}
+          conversations={recentConversations}
+          announcements={recentAnnouncements}
+          supportThreads={recentSupport}
+          loading={centerLoading}
+          now={now}
+          onClose={() => setCenterOpen(false)}
+          onOpenAlert={openAlert}
+          onOpenConversation={id => openMessagingTarget({ kind: 'conversation', id })}
+          onOpenAnnouncements={() => openMessagingTarget({ kind: 'announcements' })}
+          onOpenSupport={orgId => openMessagingTarget({ kind: 'support', ...(orgId ? { orgId } : {}) })}
+        />
+      )}
+    </div>
+  )
+}
+
+function NotificationCenter({
+  alerts, conversations, announcements, supportThreads, loading, now, onClose,
+  onOpenAlert, onOpenConversation, onOpenAnnouncements, onOpenSupport,
+}: {
+  alerts: Alert[]
+  conversations: ConversationPreview[]
+  announcements: AnnouncementPreview[]
+  supportThreads: SupportThreadPreview[]
+  loading: boolean
+  now: number
+  onClose: () => void
+  onOpenAlert: (href: string | null) => void
+  onOpenConversation: (id: string) => void
+  onOpenAnnouncements: () => void
+  onOpenSupport: (orgId?: string) => void
+}) {
+  const totalItems = alerts.length + conversations.length + announcements.length + supportThreads.length
+
+  return (
+    <section className="notification-center" role="dialog" aria-modal="true" aria-label="Centre de notifications">
+      <button className="notification-center-row" type="button" onClick={onClose} aria-label="Fermer le centre de notifications">
+        <span className="notification-center-grip" aria-hidden="true" />
+        <span>Centre de notifications</span>
+        <ChevronUp size={18} strokeWidth={2.2} />
+      </button>
+
+      <div className="notification-center-clock" aria-hidden="true">
+        <strong>{new Date(now).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</strong>
+        <span>{new Date(now).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+      </div>
+
+      <div className="notification-center-stack">
+        <NotificationCenterGroup title="Alertes" note={alerts.length === 0 ? 'Rien a traiter' : `${alerts.length} a traiter`}>
+          {alerts.length === 0 ? (
+            <p className="notification-center-empty">Aucune alerte active pour le moment.</p>
+          ) : alerts.slice(0, 8).map(alert => (
+            <button key={alert.id} className="notification-center-card" type="button" onClick={() => onOpenAlert(alert.href)}>
+              <span className="notification-center-icon" style={{ color: toneOf(alert.severity) }}>
+                {alert.kind === 'subscription' ? <CreditCard size={18} strokeWidth={2.2} />
+                  : alert.kind === 'security' ? <ShieldAlert size={18} strokeWidth={2.2} />
+                  : <CalendarClock size={18} strokeWidth={2.2} />}
+              </span>
+              <span className="notification-center-copy">
+                <span className="notification-center-meta">
+                  <b>GymFlow</b>
+                  {alert.at && <time>{relative(alert.at, now)}</time>}
+                </span>
+                <strong>{alert.title}</strong>
+                {alert.detail && <small>{alert.detail}</small>}
+              </span>
+            </button>
+          ))}
+        </NotificationCenterGroup>
+
+        <NotificationCenterGroup title="Messagerie" note={conversations.length === 0 && announcements.length === 0 && supportThreads.length === 0 ? 'Aucun message recent' : 'Messages et annonces'}>
+          {loading && totalItems === 0 ? <p className="notification-center-empty">Chargement des messages...</p> : null}
+          {announcements.map(item => (
+            <button key={`announcement-${item.id}`} className={`notification-center-card${item.isRead ? '' : ' unread'}`} type="button" onClick={onOpenAnnouncements}>
+              <span className="notification-center-icon"><Bell size={18} strokeWidth={2.2} /></span>
+              <span className="notification-center-copy">
+                <span className="notification-center-meta">
+                  <b>Annonces GymFlow</b>
+                  <time>{relative(item.publishedAt ?? item.createdAt, now)}</time>
+                </span>
+                <strong>{item.title}</strong>
+                <small>{item.content}</small>
+              </span>
+            </button>
+          ))}
+          {supportThreads.map(item => (
+            <button key={`support-${item.id}`} className={`notification-center-card${item.unread > 0 ? ' unread' : ''}`} type="button" onClick={() => onOpenSupport(item.orgId)}>
+              <span className="notification-center-icon"><ShieldAlert size={18} strokeWidth={2.2} /></span>
+              <span className="notification-center-copy">
+                <span className="notification-center-meta">
+                  <b>GymFlow Support</b>
+                  <time>{relative(item.updatedAt, now)}</time>
+                </span>
+                <strong>{item.orgName}</strong>
+                <small>{item.lastBody}</small>
+              </span>
+            </button>
+          ))}
+          {conversations.map(item => (
+            <button key={`conversation-${item.id}`} className={`notification-center-card${item.unread > 0 ? ' unread' : ''}`} type="button" onClick={() => onOpenConversation(item.id)}>
+              <span className="notification-center-icon"><MessageCircle size={18} strokeWidth={2.2} /></span>
+              <span className="notification-center-copy">
+                <span className="notification-center-meta">
+                  <b>{item.type === 'team' ? 'Canal equipe' : item.type === 'group' ? 'Groupe' : 'Message prive'}</b>
+                  <time>{relative(item.last_at ?? item.updated_at, now)}</time>
+                </span>
+                <strong>{item.name}</strong>
+                <small>{item.last_body}</small>
+              </span>
+              {item.unread > 0 && <span className="notification-center-unread">{item.unread > 99 ? '99+' : item.unread}</span>}
+            </button>
+          ))}
+          {!loading && conversations.length === 0 && announcements.length === 0 && supportThreads.length === 0 && (
+            <p className="notification-center-empty">Aucun message recent dans la messagerie.</p>
+          )}
+        </NotificationCenterGroup>
+      </div>
+    </section>
+  )
+}
+
+function NotificationCenterGroup({
+  title, note, children,
+}: {
+  title: string
+  note: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="notification-center-group">
+      <header className="notification-center-group-head">
+        <h2>{title}</h2>
+        <span>{note}</span>
+      </header>
+      <div className="notification-center-list">{children}</div>
     </div>
   )
 }

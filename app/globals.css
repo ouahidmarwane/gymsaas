@@ -1906,6 +1906,271 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   color: #ff9a73;
 }
 
+/* ─── Notification Center plein écran ────────────────────────── */
+.notification-center-trigger { position: relative; }
+
+.notification-center {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  padding: 18px clamp(18px, 4vw, 56px) 54px;
+  background:
+    radial-gradient(52rem 34rem at 50% -12%,
+      color-mix(in srgb, var(--gold) 22%, transparent), transparent 66%),
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--bg) 72%, rgba(10, 14, 22, 0.78) 28%),
+      color-mix(in srgb, var(--bg) 82%, rgba(10, 14, 22, 0.86) 18%));
+  backdrop-filter: blur(26px) saturate(1.14);
+  -webkit-backdrop-filter: blur(26px) saturate(1.14);
+  animation: notification-center-drop .34s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.notification-center-row {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-width: min(520px, calc(100vw - 36px));
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--text);
+  box-shadow: 0 16px 42px color-mix(in srgb, var(--text) 13%, transparent);
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.notification-center-row:hover {
+  transform: translateY(1px);
+  background: color-mix(in srgb, var(--surface) 88%, var(--gold) 12%);
+}
+
+.notification-center-grip {
+  position: absolute;
+  top: 7px;
+  width: 54px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+}
+
+.notification-center-clock {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  margin: clamp(22px, 5vh, 58px) 0 clamp(20px, 4vh, 42px);
+  color: var(--text);
+  text-align: center;
+}
+
+.notification-center-clock strong {
+  font-size: clamp(3.2rem, 11vw, 7.2rem);
+  font-weight: 300;
+  line-height: .9;
+  letter-spacing: -0.06em;
+}
+
+.notification-center-clock span {
+  color: var(--muted);
+  font-size: clamp(1rem, 2.4vw, 1.45rem);
+  font-weight: 650;
+  text-transform: capitalize;
+}
+
+.notification-center-stack {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
+.notification-center-group {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-center-group-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 0 8px;
+}
+
+.notification-center-group-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: .95rem;
+  font-weight: 850;
+}
+
+.notification-center-group-head span {
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.notification-center-list {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-center-card {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  border-radius: 18px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  color: var(--text);
+  box-shadow:
+    0 18px 46px color-mix(in srgb, var(--text) 13%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 32%, transparent);
+  text-align: start;
+  font: inherit;
+  cursor: pointer;
+}
+
+.notification-center-card.unread {
+  background: color-mix(in srgb, var(--surface) 70%, var(--gold) 12%);
+  border-color: color-mix(in srgb, var(--gold) 34%, transparent);
+}
+
+.notification-center-card:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--surface) 84%, var(--gold) 10%);
+}
+
+.notification-center-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 62%, var(--gold) 12%);
+  color: var(--gold);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 24%, transparent);
+}
+
+.notification-center-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.notification-center-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: .73rem;
+  font-weight: 750;
+}
+
+.notification-center-meta b,
+.notification-center-meta time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-center-card strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: .98rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-center-card small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--muted);
+  font-size: .84rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.notification-center-unread {
+  min-width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--gold);
+  color: #fff;
+  font-size: .68rem;
+  font-weight: 900;
+}
+
+.notification-center-empty {
+  margin: 0;
+  border: 1px dashed color-mix(in srgb, var(--text) 14%, transparent);
+  border-radius: 18px;
+  padding: 18px;
+  background: color-mix(in srgb, var(--surface) 46%, transparent);
+  color: var(--muted);
+  text-align: center;
+  font-size: .86rem;
+  font-weight: 650;
+}
+
+@keyframes notification-center-drop {
+  from { opacity: .8; transform: translateY(-102%); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+@media (max-width: 680px) {
+  .notification-center {
+    padding: 12px 12px 34px;
+  }
+  .notification-center-row {
+    min-width: calc(100vw - 24px);
+  }
+  .notification-center-clock {
+    margin-block: 20px 22px;
+  }
+  .notification-center-card {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    padding: 12px;
+    border-radius: 16px;
+  }
+  .notification-center-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-center,
+  .notification-center-card,
+  .notification-center-row {
+    animation: none;
+    transition: none;
+    transform: none;
+  }
+}
+
 /* ─── History Panel ─────────────────────────────────────────── */
 .history-panel {
   position: absolute;
