@@ -5790,15 +5790,10 @@ html[data-theme='light'] .dz-banner { border-color: rgba(15,23,42,0.12); }
 .dz-hero-shade {
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(180deg,
-      rgba(6,8,13,0.5) 0%,
-      rgba(6,8,13,0.38) 46%,
-      rgba(6,8,13,0.54) 100%),
-    linear-gradient(to top,
-      rgba(5,8,18,0.92) 0%,
-      rgba(5,8,18,0.58) 30%,
-      rgba(5,8,18,0.18) 58%);
+  background: linear-gradient(to top,
+    rgba(5,8,18,0.88) 0%,
+    rgba(5,8,18,0.45) 26%,
+    transparent 52%);
   pointer-events: none;
 }
 .dz-hero-content {
@@ -8584,7 +8579,8 @@ html[data-theme='light'] {
     radial-gradient(ellipse at 16% 0%, rgba(240, 90, 40, 0.105), transparent 36%),
     linear-gradient(135deg, rgba(255,255,255,0.22), transparent 45%);
   --shadow: 0 24px 60px rgba(78, 50, 33, 0.12);
-  --shadow-card: 0 1px 2px rgba(78, 50, 33, 0.06), 0 12px 34px rgba(78, 50, 33, 0.08);
+  --shadow-card: 0 2px 5px rgba(78, 50, 33, 0.07), 0 18px 44px rgba(78, 50, 33, 0.13);
+  --card-shadow: var(--shadow-card);
 }
 
 html[data-theme='dark'] {
@@ -8650,6 +8646,16 @@ html[data-theme='dark'] .app-main { background: transparent !important; color: v
   background: var(--card-bg) !important;
   border-color: var(--card-border) !important;
   color: var(--text) !important;
+}
+
+html[data-theme='light'] .app-main :where(
+  .card, .stat-card, .branch-card, .activity-panel, .dz-card, .member-card,
+  .members-page-table, .members-table, .profile-card, .dash-chart-card,
+  .compta-kpi-card, .compta-chart-card, .compta-summary-card,
+  .admin-club-card, .connections-summary, .connections-card,
+  .dz-hero-banner, .dz-banner, .gf-cell
+) {
+  box-shadow: var(--shadow-card) !important;
 }
 
 .btn-dark,
