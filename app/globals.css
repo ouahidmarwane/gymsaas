@@ -8924,6 +8924,11 @@ html[data-theme='light'] .rail-shell.collapsed .rail-btn.active {
   inset-block-start: 26px;
   inset-inline-end: 150px;
 }
+.shell-mode-toggle-floating.on-messaging .theme-mode-toggle {
+  width: 64px;
+  height: 25px;
+  flex-basis: 64px;
+}
 .theme-mode-toggle.light .theme-mode-toggle-art {
   animation: theme-toggle-day-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
