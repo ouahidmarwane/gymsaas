@@ -5790,10 +5790,15 @@ html[data-theme='light'] .dz-banner { border-color: rgba(15,23,42,0.12); }
 .dz-hero-shade {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to top,
-    rgba(5,8,18,0.88) 0%,
-    rgba(5,8,18,0.45) 26%,
-    transparent 52%);
+  background:
+    linear-gradient(180deg,
+      rgba(6,8,13,0.5) 0%,
+      rgba(6,8,13,0.38) 46%,
+      rgba(6,8,13,0.54) 100%),
+    linear-gradient(to top,
+      rgba(5,8,18,0.92) 0%,
+      rgba(5,8,18,0.58) 30%,
+      rgba(5,8,18,0.18) 58%);
   pointer-events: none;
 }
 .dz-hero-content {
