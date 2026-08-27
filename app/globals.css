@@ -8921,7 +8921,7 @@ html[data-theme='light'] .rail-shell.collapsed .rail-btn.active {
   inset-inline-end: 126px;
 }
 .shell-mode-toggle-floating.on-messaging {
-  inset-block-start: 26px;
+  inset-block-start: 41px;
   inset-inline-end: 150px;
 }
 .shell-mode-toggle-floating.on-messaging .theme-mode-toggle {
@@ -8968,7 +8968,7 @@ html[data-theme='light'] .dz-cal-card,
 @media (max-width: 720px) {
   .theme-mode-toggle { width: 72px; height: 29px; flex-basis: 72px; }
   .shell-mode-toggle-floating { inset-block-start: 13px; inset-inline-end: 62px; }
-  .shell-mode-toggle-floating.on-messaging { inset-block-start: 13px; inset-inline-end: 62px; }
+  .shell-mode-toggle-floating.on-messaging { inset-block-start: 41px; inset-inline-end: 62px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
