@@ -3,7 +3,7 @@
   "name": "gymflow-platform",
 
   // Entree personnalisee : elle enveloppe le worker genere par OpenNext pour
-  // y adjoindre la classe Durable Object et la tache planifiee (voir worker.ts).
+  // y adjoindre la classe Durable Object (voir worker.ts).
   "main": "worker.ts",
 
   "compatibility_date": "2026-08-01",
@@ -54,13 +54,6 @@
   "r2_buckets": [
     { "binding": "MEDIA", "bucket_name": "gymsaas" }
   ],
-
-  // Rafraichit le cache d'agregats lu par le tableau de bord plateforme.
-  // Toutes les 5 minutes : assez frais pour du support, assez rare pour ne
-  // pas reveiller chaque Durable Object en permanence.
-  "triggers": {
-    "crons": ["*/5 * * * *"]
-  },
 
   "observability": { "enabled": true }
 }
