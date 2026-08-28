@@ -1908,90 +1908,85 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 
 /* ─── Notification Center plein écran ────────────────────────── */
 .notification-access-row {
-  --notification-neon: color-mix(in srgb, var(--text) 22%, transparent);
-  --notification-neon-glow: color-mix(in srgb, var(--text) 9%, transparent);
+  --notification-accent: color-mix(in srgb, var(--text) 40%, transparent);
   position: fixed;
-  top: calc(12px + env(safe-area-inset-top));
+  top: calc(10px + env(safe-area-inset-top));
   left: 50%;
   z-index: 175;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border: 2px solid color-mix(in srgb, var(--notification-neon) 62%, var(--surface) 38%);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
-  background:
-    linear-gradient(145deg,
-      color-mix(in srgb, var(--surface) 94%, transparent),
-      color-mix(in srgb, var(--surface) 78%, var(--notification-neon) 10%));
+  background: transparent;
   color: var(--text);
-  box-shadow:
-    0 12px 28px color-mix(in srgb, var(--text) 14%, transparent),
-    0 0 0 5px color-mix(in srgb, var(--notification-neon) 12%, transparent),
-    0 0 24px var(--notification-neon-glow),
-    inset 0 1px 0 color-mix(in srgb, #fff 42%, transparent);
+  box-shadow: none;
   font: inherit;
   font-weight: 850;
   transform: translateX(-50%);
   cursor: pointer;
   touch-action: pan-y;
-  backdrop-filter: blur(22px) saturate(1.18);
-  -webkit-backdrop-filter: blur(22px) saturate(1.18);
-  transition:
-    background .18s ease,
-    border-color .18s ease,
-    box-shadow .18s ease,
-    transform .24s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: color .15s ease, opacity .15s ease;
+}
+
+.notification-access-row::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 
 .notification-access-row[data-tone='normal'] {
-  --notification-neon: #f59e0b;
-  --notification-neon-glow: rgba(245, 158, 11, .34);
+  --notification-accent: #f59e0b;
 }
 
 .notification-access-row[data-tone='alert'] {
-  --notification-neon: #ff3b30;
-  --notification-neon-glow: rgba(255, 59, 48, .42);
+  --notification-accent: #ff3b30;
 }
 
 .notification-access-row:hover,
-.notification-access-row:focus-visible,
 .notification-access-row.is-open {
-  outline: 0;
-  transform: translateX(-50%) translateY(3px);
-  background: color-mix(in srgb, var(--surface) 91%, transparent);
-  box-shadow:
-    0 14px 32px color-mix(in srgb, var(--text) 15%, transparent),
-    0 0 0 6px color-mix(in srgb, var(--notification-neon) 14%, transparent),
-    0 0 30px var(--notification-neon-glow),
-    inset 0 1px 0 color-mix(in srgb, #fff 38%, transparent);
+  transform: translateX(-50%);
+  background: transparent;
+  box-shadow: none;
+}
+
+.notification-access-row:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text) 45%, transparent);
+  outline-offset: 2px;
 }
 
 .notification-access-chevron {
   color: var(--text);
-  transition: transform .24s cubic-bezier(0.16, 1, 0.3, 1), color .18s ease;
+  transition: color .15s ease;
 }
 
 .notification-access-row.is-open .notification-access-chevron {
-  color: var(--notification-neon);
-  transform: translateY(3px);
+  color: var(--text);
+  transform: none;
+}
+
+.notification-access-row:hover .notification-access-chevron,
+.notification-access-row.is-open .notification-access-chevron {
+  opacity: .72;
 }
 
 .notification-access-row .notif-count-badge {
   position: absolute;
-  top: -7px;
-  right: -9px;
-  min-width: 19px;
-  height: 19px;
-  padding: 0 5px;
-  border: 1px solid color-mix(in srgb, #fff 42%, transparent);
+  top: -5px;
+  right: -7px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 0;
   border-radius: 999px;
-  background: var(--notification-neon);
+  background: var(--notification-accent);
   color: #fff;
-  box-shadow: 0 8px 20px var(--notification-neon-glow);
+  box-shadow: none;
   display: inline-grid;
   place-items: center;
-  font-size: .62rem;
+  font-size: .55rem;
   font-weight: 900;
   line-height: 1;
 }
@@ -2380,8 +2375,8 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 @media (max-width: 680px) {
   .notification-access-row {
     top: calc(8px + env(safe-area-inset-top));
-    width: 34px;
-    height: 34px;
+    width: 28px;
+    height: 28px;
   }
   .notification-center {
     padding: calc(14px + env(safe-area-inset-top)) 12px calc(76px + env(safe-area-inset-bottom));

@@ -345,7 +345,7 @@ export function NotificationAccess({
         aria-expanded={centerOpen && !centerClosing}
         aria-haspopup="dialog"
       >
-        <ChevronDown className="notification-access-chevron" size={18} strokeWidth={2.6} />
+        <ChevronDown className="notification-access-chevron" size={15} strokeWidth={2.4} />
         <span className="notif-count-badge" aria-label={`${unread} notification(s) non lue(s)`}>
           {unread > 99 ? '99+' : unread}
         </span>
