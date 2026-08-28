@@ -1,10 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
-  Bell, ChevronUp, History, MessageCircle, Settings, ShieldAlert, CalendarClock, UserPlus, Trash2,
+  Bell, ChevronDown, ChevronUp, History, MessageCircle, Settings, ShieldAlert, CalendarClock, UserPlus, Trash2,
   Pencil, CreditCard, Award, Check,
 } from 'lucide-react'
 import { api } from '@/lib/client'
@@ -26,7 +26,7 @@ import { useDiscipline } from '@/lib/discipline'
  * les cree n'a aucun sens, et il invite a croire qu'il cache des sports au
  * lieu de filtrer un contenu.
  */
-const NO_FILTER = ['/comptabilite', '/supervision', '/staff', '/admin',
+const NO_FILTER = ['/comptabilite', '/supervision', '/connexions', '/staff', '/admin',
                    '/facturation', '/abonnement', '/setup']
 
 interface Alert {
@@ -81,110 +81,24 @@ interface SupportThreadPreview {
 const REFRESH_MS = 60_000
 const MESSAGING_TARGET_KEY = 'gymflow:messaging-target'
 
-export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
+export default function TopBar({
+  canSeeHistory,
+}: {
+  canSeeHistory: boolean
+}) {
   const pathname = usePathname()
-  const router = useRouter()
   const { active, setActive, disciplines, visible } = useDiscipline()
   const [open, setOpen] = useState<'alerts' | 'history' | null>(null)
-  const [centerOpen, setCenterOpen] = useState(false)
-  const [centerLoading, setCenterLoading] = useState(false)
-  const [alerts, setAlerts] = useState<Alert[]>([])
   const [entries, setEntries] = useState<Entry[]>([])
-  const [conversations, setConversations] = useState<ConversationPreview[]>([])
-  const [announcements, setAnnouncements] = useState<AnnouncementPreview[]>([])
-  const [supportThreads, setSupportThreads] = useState<SupportThreadPreview[]>([])
   const [now, setNow] = useState(() => Date.now())
-
-  // La pastille se charge partout : c'est son interet, alerter depuis
-  // n'importe quel ecran. La liste, elle, n'est tiree qu'a l'ouverture.
-  useEffect(() => {
-    let alive = true
-    const load = () => api.get<{ items: Alert[] }>('/api/notifications')
-      .then(d => { if (alive) { setAlerts(d.items); setNow(Date.now()) } })
-      .catch(() => {})
-    load()
-    const timer = setInterval(load, REFRESH_MS)
-    return () => { alive = false; clearInterval(timer) }
-  }, [pathname])
-
-  const loadMessageSummaries = useCallback(async (withSpinner = false) => {
-    if (withSpinner) setCenterLoading(true)
-    try {
-      const [conversationData, announcementData, supportData] = await Promise.all([
-        api.get<{ conversations: ConversationPreview[] }>('/api/messaging/conversations')
-          .catch(() => ({ conversations: [] })),
-        api.get<{ announcements: AnnouncementPreview[] }>('/api/messaging/announcements')
-          .catch(() => ({ announcements: [] })),
-        api.get<{ threads: SupportThreadPreview[] }>('/api/messaging/support/threads')
-          .catch(() => ({ threads: [] })),
-      ])
-      setConversations(conversationData.conversations)
-      setAnnouncements(announcementData.announcements)
-      setSupportThreads(supportData.threads)
-      setNow(Date.now())
-    } finally {
-      if (withSpinner) setCenterLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void loadMessageSummaries()
-    const timer = setInterval(() => void loadMessageSummaries(), REFRESH_MS)
-    return () => clearInterval(timer)
-  }, [loadMessageSummaries, pathname])
-
-  useEffect(() => {
-    if (!centerOpen) return
-    setOpen(null)
-    void loadMessageSummaries(true)
-    const esc = (event: KeyboardEvent) => { if (event.key === 'Escape') setCenterOpen(false) }
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
-  }, [centerOpen, loadMessageSummaries])
 
   useEffect(() => {
     if (open !== 'history' || !canSeeHistory) return
     api.get<{ entries: Entry[] }>('/api/audit')
-      .then(d => setEntries(d.entries)).catch(() => {})
+      .then(d => { setEntries(d.entries); setNow(Date.now()) }).catch(() => {})
   }, [open, canSeeHistory])
 
   const showFilter = visible && !NO_FILTER.some(p => pathname.startsWith(p))
-  const unreadMessages = useMemo(() => (
-    conversations.reduce((sum, item) => sum + item.unread, 0)
-    + announcements.filter(item => item.status === 'published' && !item.isRead).length
-    + supportThreads.reduce((sum, item) => sum + item.unread, 0)
-  ), [announcements, conversations, supportThreads])
-  const unread = alerts.length + unreadMessages
-  const recentConversations = useMemo(() => (
-    conversations
-      .filter(item => item.last_body)
-      .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))
-      .slice(0, 8)
-  ), [conversations])
-  const recentAnnouncements = useMemo(() => (
-    announcements
-      .filter(item => item.status === 'published')
-      .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))
-      .slice(0, 5)
-  ), [announcements])
-  const recentSupport = useMemo(() => (
-    supportThreads
-      .filter(item => item.lastBody)
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-      .slice(0, 4)
-  ), [supportThreads])
-
-  function openMessagingTarget(target: { kind: 'announcements' } | { kind: 'conversation'; id: string } | { kind: 'support'; orgId?: string }) {
-    try { sessionStorage.setItem(MESSAGING_TARGET_KEY, JSON.stringify(target)) } catch { /* stockage indisponible */ }
-    window.dispatchEvent(new Event('gymflow:messaging-target'))
-    setCenterOpen(false)
-    router.push('/messagerie')
-  }
-
-  function openAlert(href: string | null) {
-    setCenterOpen(false)
-    if (href) router.push(href)
-  }
 
   return (
     <div className="page-actions" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -207,16 +121,6 @@ export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center',
                     gap: 10, justifyContent: 'flex-end' }}>
         <ThemeModeToggle />
-        <button
-          className="icon-btn notification-center-trigger"
-          onClick={() => setCenterOpen(true)}
-          aria-label="Ouvrir le centre de notifications"
-          aria-expanded={centerOpen}
-          aria-haspopup="dialog"
-        >
-          <Bell size={17} strokeWidth={2.1} />
-          {unread > 0 && <span className="notif-count-badge">{unread > 99 ? '99+' : unread}</span>}
-        </button>
 
         {canSeeHistory && (
           <Dropdown
@@ -254,36 +158,235 @@ export default function TopBar({ canSeeHistory }: { canSeeHistory: boolean }) {
         </Link>
       </div>
 
+    </div>
+  )
+}
+
+export function NotificationAccess({
+  canUseClubNotifications,
+  canUseClubMessaging,
+  canUseSupportMessaging,
+}: {
+  canUseClubNotifications: boolean
+  canUseClubMessaging: boolean
+  canUseSupportMessaging: boolean
+}) {
+  const pathname = usePathname()
+  const router = useRouter()
+  const [centerOpen, setCenterOpen] = useState(false)
+  const [centerClosing, setCenterClosing] = useState(false)
+  const [centerLoading, setCenterLoading] = useState(false)
+  const [centerError, setCenterError] = useState<string | null>(null)
+  const [alerts, setAlerts] = useState<Alert[]>([])
+  const [conversations, setConversations] = useState<ConversationPreview[]>([])
+  const [announcements, setAnnouncements] = useState<AnnouncementPreview[]>([])
+  const [supportThreads, setSupportThreads] = useState<SupportThreadPreview[]>([])
+  const [now, setNow] = useState(() => Date.now())
+  const closeTimer = useRef<number | null>(null)
+  const dragStartY = useRef<number | null>(null)
+  const dragOpened = useRef(false)
+
+  const openCenter = useCallback(() => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current)
+      closeTimer.current = null
+    }
+    setCenterClosing(false)
+    setCenterOpen(true)
+  }, [])
+
+  const closeCenter = useCallback(() => {
+    if (!centerOpen || centerClosing) return
+    setCenterClosing(true)
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+    closeTimer.current = window.setTimeout(() => {
+      setCenterOpen(false)
+      setCenterClosing(false)
+      closeTimer.current = null
+    }, 230)
+  }, [centerClosing, centerOpen])
+
+  useEffect(() => () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+  }, [])
+
+  useEffect(() => {
+    if (!canUseClubNotifications) {
+      setAlerts([])
+      return
+    }
+    let alive = true
+    const load = () => api.get<{ items: Alert[] }>('/api/notifications')
+      .then(d => { if (alive) { setAlerts(d.items); setNow(Date.now()) } })
+      .catch(() => {})
+    load()
+    const timer = setInterval(load, REFRESH_MS)
+    return () => { alive = false; clearInterval(timer) }
+  }, [canUseClubNotifications, pathname])
+
+  const loadMessageSummaries = useCallback(async (withSpinner = false) => {
+    if (withSpinner) setCenterLoading(true)
+    const failures: string[] = []
+    const read = async <T,>(label: string, request: Promise<T>, fallback: T): Promise<T> => {
+      try { return await request } catch {
+        failures.push(label)
+        return fallback
+      }
+    }
+    try {
+      const [conversationData, announcementData, supportData] = await Promise.all([
+        canUseClubMessaging
+          ? read('conversations', api.get<{ conversations: ConversationPreview[] }>('/api/messaging/conversations'), { conversations: [] })
+          : Promise.resolve({ conversations: [] }),
+        read('annonces', api.get<{ announcements: AnnouncementPreview[] }>('/api/messaging/announcements'), { announcements: [] }),
+        canUseSupportMessaging
+          ? read('support', api.get<{ threads: SupportThreadPreview[] }>('/api/messaging/support/threads'), { threads: [] })
+          : Promise.resolve({ threads: [] }),
+      ])
+      setConversations(conversationData.conversations)
+      setAnnouncements(announcementData.announcements)
+      setSupportThreads(supportData.threads)
+      setCenterError(failures.length > 0
+        ? `Certaines informations n'ont pas pu etre chargees : ${failures.join(', ')}.`
+        : null)
+      setNow(Date.now())
+    } finally {
+      if (withSpinner) setCenterLoading(false)
+    }
+  }, [canUseClubMessaging, canUseSupportMessaging])
+
+  useEffect(() => {
+    void loadMessageSummaries()
+    const timer = setInterval(() => void loadMessageSummaries(), REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [loadMessageSummaries, pathname])
+
+  useEffect(() => {
+    if (!centerOpen) return
+    void loadMessageSummaries(true)
+    const esc = (event: KeyboardEvent) => { if (event.key === 'Escape') closeCenter() }
+    window.addEventListener('keydown', esc)
+    return () => window.removeEventListener('keydown', esc)
+  }, [centerOpen, closeCenter, loadMessageSummaries])
+
+  const unreadMessages = useMemo(() => (
+    conversations.reduce((sum, item) => sum + item.unread, 0)
+    + announcements.filter(item => item.status === 'published' && !item.isRead).length
+    + supportThreads.reduce((sum, item) => sum + item.unread, 0)
+  ), [announcements, conversations, supportThreads])
+  const unread = alerts.length + unreadMessages
+  const urgent = alerts.some(item => item.severity === 'danger' || item.severity === 'warn')
+  const accessTone = urgent ? 'alert' : unreadMessages > 0 ? 'normal' : 'idle'
+  const recentConversations = useMemo(() => (
+    conversations
+      .filter(item => item.last_body)
+      .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))
+      .slice(0, 8)
+  ), [conversations])
+  const recentAnnouncements = useMemo(() => (
+    announcements
+      .filter(item => item.status === 'published')
+      .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))
+      .slice(0, 5)
+  ), [announcements])
+  const recentSupport = useMemo(() => (
+    supportThreads
+      .filter(item => item.lastBody)
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .slice(0, 4)
+  ), [supportThreads])
+
+  function openMessagingTarget(target: { kind: 'announcements' } | { kind: 'conversation'; id: string } | { kind: 'support'; orgId?: string }) {
+    try { sessionStorage.setItem(MESSAGING_TARGET_KEY, JSON.stringify(target)) } catch { /* stockage indisponible */ }
+    window.dispatchEvent(new Event('gymflow:messaging-target'))
+    closeCenter()
+    router.push('/messagerie')
+  }
+
+  function openAlert(href: string | null) {
+    closeCenter()
+    if (href) router.push(href)
+  }
+
+  function startAccessDrag(event: PointerEvent<HTMLButtonElement>) {
+    dragStartY.current = event.clientY
+    dragOpened.current = false
+  }
+
+  function finishAccessDrag(event: PointerEvent<HTMLButtonElement>) {
+    const start = dragStartY.current
+    dragStartY.current = null
+    if (start !== null && event.clientY - start > 18 && !centerOpen) {
+      dragOpened.current = true
+      openCenter()
+    }
+  }
+
+  return (
+    <>
+      <button
+        className={`notification-access-row${centerOpen && !centerClosing ? ' is-open' : ''}`}
+        type="button"
+        data-tone={accessTone}
+        onPointerDown={startAccessDrag}
+        onPointerUp={finishAccessDrag}
+        onPointerCancel={() => { dragStartY.current = null }}
+        onClick={() => {
+          if (dragOpened.current) {
+            dragOpened.current = false
+            return
+          }
+          centerOpen && !centerClosing ? closeCenter() : openCenter()
+        }}
+        aria-label={centerOpen && !centerClosing ? 'Remonter le panneau de notifications' : 'Descendre le panneau de notifications'}
+        aria-expanded={centerOpen && !centerClosing}
+        aria-haspopup="dialog"
+      >
+        <span className="notification-access-grip" aria-hidden="true" />
+        <Bell size={16} strokeWidth={2.2} />
+        <span className="notification-access-label">Notifications</span>
+        {unread > 0 && <span className="notif-count-badge">{unread > 99 ? '99+' : unread}</span>}
+        <ChevronDown className="notification-access-chevron" size={16} strokeWidth={2.4} />
+      </button>
+
       {centerOpen && (
         <NotificationCenter
+          closing={centerClosing}
+          tone={accessTone}
           alerts={alerts}
           conversations={recentConversations}
           announcements={recentAnnouncements}
           supportThreads={recentSupport}
           loading={centerLoading}
           now={now}
-          onClose={() => setCenterOpen(false)}
+          error={centerError}
+          onClose={closeCenter}
+          onRefresh={() => loadMessageSummaries(true)}
           onOpenAlert={openAlert}
           onOpenConversation={id => openMessagingTarget({ kind: 'conversation', id })}
           onOpenAnnouncements={() => openMessagingTarget({ kind: 'announcements' })}
           onOpenSupport={orgId => openMessagingTarget({ kind: 'support', ...(orgId ? { orgId } : {}) })}
         />
       )}
-    </div>
+    </>
   )
 }
 
 function NotificationCenter({
-  alerts, conversations, announcements, supportThreads, loading, now, onClose,
-  onOpenAlert, onOpenConversation, onOpenAnnouncements, onOpenSupport,
+  closing, tone, alerts, conversations, announcements, supportThreads, loading, now, onClose,
+  error, onRefresh, onOpenAlert, onOpenConversation, onOpenAnnouncements, onOpenSupport,
 }: {
+  closing: boolean
+  tone: 'alert' | 'normal' | 'idle'
   alerts: Alert[]
   conversations: ConversationPreview[]
   announcements: AnnouncementPreview[]
   supportThreads: SupportThreadPreview[]
   loading: boolean
   now: number
+  error: string | null
   onClose: () => void
+  onRefresh: () => Promise<void>
   onOpenAlert: (href: string | null) => void
   onOpenConversation: (id: string) => void
   onOpenAnnouncements: () => void
@@ -292,7 +395,7 @@ function NotificationCenter({
   const totalItems = alerts.length + conversations.length + announcements.length + supportThreads.length
 
   return (
-    <section className="notification-center" role="dialog" aria-modal="true" aria-label="Centre de notifications">
+    <section className={`notification-center${closing ? ' is-closing' : ''}`} data-tone={tone} role="dialog" aria-modal="true" aria-label="Centre de notifications">
       <button className="notification-center-row" type="button" onClick={onClose} aria-label="Fermer le centre de notifications">
         <span className="notification-center-grip" aria-hidden="true" />
         <span>Centre de notifications</span>
@@ -309,7 +412,7 @@ function NotificationCenter({
           {alerts.length === 0 ? (
             <p className="notification-center-empty">Aucune alerte active pour le moment.</p>
           ) : alerts.slice(0, 8).map(alert => (
-            <button key={alert.id} className="notification-center-card" type="button" onClick={() => onOpenAlert(alert.href)}>
+            <button key={alert.id} className="notification-center-card tone-alert" type="button" onClick={() => onOpenAlert(alert.href)}>
               <span className="notification-center-icon" style={{ color: toneOf(alert.severity) }}>
                 {alert.kind === 'subscription' ? <CreditCard size={18} strokeWidth={2.2} />
                   : alert.kind === 'security' ? <ShieldAlert size={18} strokeWidth={2.2} />
@@ -329,8 +432,16 @@ function NotificationCenter({
 
         <NotificationCenterGroup title="Messagerie" note={conversations.length === 0 && announcements.length === 0 && supportThreads.length === 0 ? 'Aucun message recent' : 'Messages et annonces'}>
           {loading && totalItems === 0 ? <p className="notification-center-empty">Chargement des messages...</p> : null}
+          {error && (
+            <div className="notification-center-error" role="status">
+              <span>{error}</span>
+              <button type="button" onClick={() => void onRefresh()} disabled={loading}>
+                {loading ? 'Actualisation...' : 'Reessayer'}
+              </button>
+            </div>
+          )}
           {announcements.map(item => (
-            <button key={`announcement-${item.id}`} className={`notification-center-card${item.isRead ? '' : ' unread'}`} type="button" onClick={onOpenAnnouncements}>
+            <button key={`announcement-${item.id}`} className={`notification-center-card tone-normal${item.isRead ? '' : ' unread'}`} type="button" onClick={onOpenAnnouncements}>
               <span className="notification-center-icon"><Bell size={18} strokeWidth={2.2} /></span>
               <span className="notification-center-copy">
                 <span className="notification-center-meta">
@@ -343,7 +454,7 @@ function NotificationCenter({
             </button>
           ))}
           {supportThreads.map(item => (
-            <button key={`support-${item.id}`} className={`notification-center-card${item.unread > 0 ? ' unread' : ''}`} type="button" onClick={() => onOpenSupport(item.orgId)}>
+            <button key={`support-${item.id}`} className={`notification-center-card tone-normal${item.unread > 0 ? ' unread' : ''}`} type="button" onClick={() => onOpenSupport(item.orgId)}>
               <span className="notification-center-icon"><ShieldAlert size={18} strokeWidth={2.2} /></span>
               <span className="notification-center-copy">
                 <span className="notification-center-meta">
@@ -353,10 +464,11 @@ function NotificationCenter({
                 <strong>{item.orgName}</strong>
                 <small>{item.lastBody}</small>
               </span>
+              {item.unread > 0 && <span className="notification-center-unread">{item.unread > 99 ? '99+' : item.unread}</span>}
             </button>
           ))}
           {conversations.map(item => (
-            <button key={`conversation-${item.id}`} className={`notification-center-card${item.unread > 0 ? ' unread' : ''}`} type="button" onClick={() => onOpenConversation(item.id)}>
+            <button key={`conversation-${item.id}`} className={`notification-center-card tone-normal${item.unread > 0 ? ' unread' : ''}`} type="button" onClick={() => onOpenConversation(item.id)}>
               <span className="notification-center-icon"><MessageCircle size={18} strokeWidth={2.2} /></span>
               <span className="notification-center-copy">
                 <span className="notification-center-meta">

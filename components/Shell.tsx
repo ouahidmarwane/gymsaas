@@ -1,16 +1,16 @@
 'use client'
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   LayoutDashboard, Users, Award, Wallet, UserCog, SlidersHorizontal,
   ShieldAlert, Building2, Settings, LogOut, Menu, X, Receipt,
-  Bell, MessageCircle, ChevronLeft, ChevronRight,
+  MessageCircle, ChevronLeft, ChevronRight, ShieldCheck,
 } from 'lucide-react'
 import { api, ApiError, privileged, type Me, type Capabilities } from '@/lib/client'
 import { DEFAULT_THEME, normalizeAccent } from '@/src/club/branding'
-import TopBar from '@/components/TopBar'
+import TopBar, { NotificationAccess } from '@/components/TopBar'
 import ThemeModeToggle from '@/components/ThemeModeToggle'
 import { DisciplineProvider, useDiscipline } from '@/lib/discipline'
 
@@ -29,55 +29,9 @@ interface NavItem {
    * pendant qu'on regarde la musculation, ou il n'a aucun sens.
    */
   needs?: (c: Capabilities, activeHasGrading: boolean) => boolean
+  /** Roles du club autorises a voir l'ecran dans la navigation. */
+  roles?: Array<'owner' | 'admin' | 'staff' | 'viewer'>
 }
-
-type GlobalAnnouncement = {
-  id: string
-  title: string
-  content: string
-  status: string
-  publishedAt: string | null
-  createdAt: string
-  isRead: number
-}
-
-type GlobalConversation = {
-  id: string
-  type: 'dm' | 'group' | 'team'
-  name: string
-  last_body: string | null
-  last_at: string | null
-  updated_at: string
-  unread: number
-}
-
-type GlobalSupportThread = {
-  id: string
-  orgId: string
-  orgName: string
-  updatedAt: string
-  lastBody: string | null
-  unread: number
-}
-
-type GlobalNotice = {
-  id: string
-  kind: 'announcement' | 'conversation' | 'support'
-  title: string
-  body: string
-  source: string
-  at: string
-  target: { kind: 'announcements' } | { kind: 'conversation'; id: string } | { kind: 'support'; orgId?: string }
-}
-
-type ActiveGlobalNotice = GlobalNotice & { shownAt: number; leaving: boolean }
-
-const GLOBAL_NOTICE_MS = 8_000
-const GLOBAL_NOTICE_POLL_MS = 4_000
-const GLOBAL_NOTICE_LOGIN_DELAY_MS = 5_000
-const GLOBAL_NOTICE_SEEN_KEY = 'gymflow:global-notice-seen'
-const GLOBAL_NOTICE_LOGIN_KEY = 'gymflow:notice-login-at'
-const MESSAGING_TARGET_KEY = 'gymflow:messaging-target'
 
 /** Ecrans d'un club. Ils n'ont de sens que dans un club. */
 const CLUB_NAV: NavItem[] = [
@@ -92,6 +46,8 @@ const CLUB_NAV: NavItem[] = [
     needs: (c, graded) => c.hasGrading && graded },
   { href: '/comptabilite',   label: 'Comptabilite',     icon: Wallet },
   { href: '/staff',          label: 'Equipe & droits',  icon: UserCog },
+  { href: '/connexions',     label: 'Supervision',      icon: ShieldCheck,
+    roles: ['owner', 'admin'] },
   { href: '/messagerie',     label: 'Messagerie',       icon: MessageCircle },
   { href: '/abonnement',     label: 'Mon abonnement',   icon: Receipt },
   { href: '/setup',          label: 'Configuration',    icon: SlidersHorizontal },
@@ -100,9 +56,11 @@ const CLUB_NAV: NavItem[] = [
 /** Un club non configure garde tout : c'est le seul moyen d'aller configurer. */
 function allowed(
   items: NavItem[], capabilities: Capabilities | null, activeHasGrading: boolean,
+  role: string | null,
 ): NavItem[] {
-  if (!capabilities) return items
-  return items.filter(item => !item.needs || item.needs(capabilities, activeHasGrading))
+  return items.filter(item =>
+    (!item.roles || item.roles.includes(role as 'owner' | 'admin' | 'staff' | 'viewer')) &&
+    (!capabilities || !item.needs || item.needs(capabilities, activeHasGrading)))
 }
 
 /** Ecrans de la plateforme. L'exploitant supervise, il ne gere aucun club. */
@@ -140,11 +98,7 @@ function ShellBody({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false)
   const [drawer, setDrawer] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
-  const [notices, setNotices] = useState<ActiveGlobalNotice[]>([])
-  const [noticeTick, setNoticeTick] = useState(() => Date.now())
   const railRef = useRef<HTMLElement | null>(null)
-  const noticeSeenRef = useRef<Set<string>>(new Set())
-  const noticeTimersRef = useRef<Map<string, number[]>>(new Map())
 
   function setDesktopRailOpen(next: boolean) {
     setRailOpen(next)
@@ -224,186 +178,6 @@ function ShellBody({ children }: { children: ReactNode }) {
 
   useEffect(() => { setDrawer(false) }, [pathname])
 
-  useEffect(() => () => {
-    for (const timers of noticeTimersRef.current.values()) {
-      for (const timer of timers) window.clearTimeout(timer)
-    }
-    noticeTimersRef.current.clear()
-  }, [])
-
-  function scheduleNoticeLifecycle(id: string) {
-    const existing = noticeTimersRef.current.get(id)
-    if (existing) for (const timer of existing) window.clearTimeout(timer)
-    const leave = window.setTimeout(() => {
-      setNotices(current => current.map(item => item.id === id ? { ...item, leaving: true } : item))
-    }, GLOBAL_NOTICE_MS)
-    const remove = window.setTimeout(() => {
-      setNotices(current => current.filter(item => item.id !== id))
-      noticeTimersRef.current.delete(id)
-    }, GLOBAL_NOTICE_MS + 560)
-    noticeTimersRef.current.set(id, [leave, remove])
-  }
-
-  function showNotices(items: GlobalNotice[]) {
-    if (items.length === 0) return
-    const shownAt = Date.now()
-    const added: string[] = []
-    setNotices(current => {
-      const known = new Set(current.map(item => item.id))
-      const next = items
-        .filter(item => !known.has(item.id))
-        .map(item => {
-          added.push(item.id)
-          return { ...item, shownAt, leaving: false }
-        })
-      return next.length ? [...next, ...current].slice(0, 5) : current
-    })
-    for (const id of added) scheduleNoticeLifecycle(id)
-  }
-
-  function dismissNotice(id: string) {
-    setNotices(current => current.map(item => item.id === id ? { ...item, leaving: true } : item))
-    const existing = noticeTimersRef.current.get(id)
-    if (existing) for (const timer of existing) window.clearTimeout(timer)
-    const remove = window.setTimeout(() => {
-      setNotices(current => current.filter(item => item.id !== id))
-      noticeTimersRef.current.delete(id)
-    }, 520)
-    noticeTimersRef.current.set(id, [remove])
-  }
-
-  useEffect(() => {
-    for (const item of notices) {
-      if (!item.leaving && !noticeTimersRef.current.has(item.id)) scheduleNoticeLifecycle(item.id)
-    }
-  }, [notices])
-
-  useEffect(() => {
-    const canReceiveClubNotices = me?.scope.mode === 'member' && ['owner', 'admin', 'staff'].includes(me.org?.role ?? '')
-    const canReceivePlatformSupport = Boolean(me?.isPlatformAdmin && me.scope.mode !== 'support')
-    if (!me || (!canReceiveClubNotices && !canReceivePlatformSupport)) {
-      setNotices([])
-      noticeSeenRef.current = new Set()
-      return
-    }
-
-    let alive = true
-    const noticeStorageKey = `${GLOBAL_NOTICE_SEEN_KEY}:${me.user.id}:${me.org?.id ?? 'platform'}`
-    let justLoggedIn = false
-    try {
-      justLoggedIn = Boolean(sessionStorage.getItem(GLOBAL_NOTICE_LOGIN_KEY))
-      if (justLoggedIn) {
-        sessionStorage.removeItem(GLOBAL_NOTICE_LOGIN_KEY)
-        sessionStorage.removeItem(noticeStorageKey)
-        noticeSeenRef.current = new Set()
-      } else {
-        const stored = JSON.parse(sessionStorage.getItem(noticeStorageKey) ?? '[]') as string[]
-        noticeSeenRef.current = new Set(stored.slice(-120))
-      }
-    } catch { noticeSeenRef.current = new Set() }
-
-    const remember = (id: string) => {
-      const seen = noticeSeenRef.current
-      seen.add(id)
-      const compact = [...seen].slice(-120)
-      noticeSeenRef.current = new Set(compact)
-      try { sessionStorage.setItem(noticeStorageKey, JSON.stringify(compact)) } catch { /* stockage indisponible */ }
-    }
-    const enqueueNotices = async () => {
-      try {
-        const [announcementData, conversationData, supportData] = await Promise.all([
-          canReceiveClubNotices
-            ? api.get<{ announcements: GlobalAnnouncement[] }>('/api/messaging/announcements')
-            : Promise.resolve({ announcements: [] }),
-          canReceiveClubNotices
-            ? api.get<{ conversations: GlobalConversation[] }>('/api/messaging/conversations')
-            : Promise.resolve({ conversations: [] }),
-          api.get<{ threads: GlobalSupportThread[] }>('/api/messaging/support/threads'),
-        ])
-        const announcements = announcementData.announcements
-          .filter(item => item.status === 'published' && !item.isRead)
-          .sort((a, b) => Date.parse(b.publishedAt ?? b.createdAt) - Date.parse(a.publishedAt ?? a.createdAt))
-        const conversations = conversationData.conversations
-          .filter(item => item.unread > 0 && item.last_body)
-          .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))
-        const supportThreads = supportData.threads
-          .filter(item => item.unread > 0 && item.lastBody)
-          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-        const candidates: GlobalNotice[] = []
-        for (const announcement of announcements) {
-          candidates.push({
-            id: `announcement:${announcement.id}`,
-            kind: 'announcement',
-            title: 'Nouvelle annonce GymFlow',
-            body: announcement.title,
-            source: 'Annonces GymFlow',
-            at: announcement.publishedAt ?? announcement.createdAt,
-            target: { kind: 'announcements' },
-          })
-        }
-        for (const conversation of conversations) {
-          candidates.push({
-            id: `conversation:${conversation.id}:${conversation.last_at ?? conversation.updated_at}:${conversation.unread}`,
-            kind: 'conversation',
-            title: conversation.type === 'team' ? 'Nouveau message équipe' : 'Nouveau message',
-            body: conversation.last_body ?? 'Un nouveau message vous attend.',
-            source: conversation.name,
-            at: conversation.last_at ?? conversation.updated_at,
-            target: { kind: 'conversation', id: conversation.id },
-          })
-        }
-        for (const thread of supportThreads) {
-          candidates.push({
-            id: `support:${thread.id}:${thread.updatedAt}:${thread.unread}`,
-            kind: 'support',
-            title: canReceivePlatformSupport ? 'Nouveau message support' : 'Nouveau message GymFlow Support',
-            body: thread.lastBody ?? 'Un nouveau message support vous attend.',
-            source: canReceivePlatformSupport ? thread.orgName : 'GymFlow Support',
-            at: thread.updatedAt,
-            target: { kind: 'support', ...(canReceivePlatformSupport ? { orgId: thread.orgId } : {}) },
-          })
-        }
-        const pending = candidates
-          .filter(item => !noticeSeenRef.current.has(item.id))
-          .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
-        if (!alive || pending.length === 0) return
-        for (const item of pending) remember(item.id)
-        showNotices(pending)
-      } catch { /* les notifications ne doivent jamais perturber l'app */ }
-    }
-
-    let pollTimer: number | undefined
-    const startPolling = () => {
-      void enqueueNotices()
-      pollTimer = window.setInterval(() => void enqueueNotices(), GLOBAL_NOTICE_POLL_MS)
-    }
-    const loginDelay = justLoggedIn ? window.setTimeout(startPolling, GLOBAL_NOTICE_LOGIN_DELAY_MS) : undefined
-    if (!justLoggedIn) startPolling()
-    return () => {
-      alive = false
-      if (loginDelay) window.clearTimeout(loginDelay)
-      if (pollTimer) window.clearInterval(pollTimer)
-    }
-  }, [me])
-
-  useEffect(() => {
-    if (notices.length === 0) return
-    setNoticeTick(Date.now())
-    const tick = window.setInterval(() => setNoticeTick(Date.now()), 250)
-    return () => window.clearInterval(tick)
-  }, [notices.length])
-
-  async function openNotice(item: GlobalNotice) {
-    try { sessionStorage.setItem(MESSAGING_TARGET_KEY, JSON.stringify(item.target)) } catch { /* stockage indisponible */ }
-    if (item.kind === 'announcement') {
-      const id = item.id.replace(/^announcement:/, '')
-      await api.post(`/api/messaging/announcements/${encodeURIComponent(id)}/read`).catch(() => undefined)
-    }
-    dismissNotice(item.id)
-    window.dispatchEvent(new Event('gymflow:messaging-target'))
-    router.push('/messagerie')
-  }
-
   // Un exploitant sans club qui atterrit sur un ecran de club n'a rien a y
   // voir : ces pages n'ont aucune base a ouvrir. On le renvoie a la
   // supervision plutot que de lui afficher « aucun club actif ».
@@ -465,7 +239,9 @@ function ShellBody({ children }: { children: ReactNode }) {
   //
   // Hors support, un exploitant sans club ne voit que la plateforme : lui
   // montrer Membres ou Comptabilite n'aurait rien a ouvrir.
-  const clubNav = allowed(CLUB_NAV, me?.capabilities ?? null, activeHasGrading)
+  const clubNav = allowed(
+    CLUB_NAV, me?.capabilities ?? null, activeHasGrading, me?.org?.role ?? null,
+  )
 
   const items = !me
     ? []
@@ -483,9 +259,22 @@ function ShellBody({ children }: { children: ReactNode }) {
   const clubName = isOperatorView ? 'GymFlow' : (me?.branding?.name ?? 'GymFlow')
   const logo = isOperatorView ? null : me?.branding?.logoUrl
 
+  const canUseClubMessaging = me?.scope.mode === 'member' && ['owner', 'admin', 'staff'].includes(me.org?.role ?? '')
+  const canUseSupportMessaging = Boolean((me?.isPlatformAdmin && me.scope.mode !== 'support') ||
+    ['owner', 'admin'].includes(me?.org?.role ?? ''))
+  const canUseClubNotifications = Boolean(me?.org || inSupport)
+
   return (
-    <div className={`app-shell${railOpen ? ' rail-open' : ' rail-closed'}`}>
+    <div className={`app-shell${railOpen ? ' rail-open' : ' rail-closed'}${inSupport ? ' support-mode' : ''}`}>
       {inSupport && me && <SupportBar me={me} onLeft={() => { router.replace('/admin'); router.refresh() }} />}
+
+      {me && (
+        <NotificationAccess
+          canUseClubNotifications={canUseClubNotifications}
+          canUseClubMessaging={Boolean(canUseClubMessaging)}
+          canUseSupportMessaging={canUseSupportMessaging}
+        />
+      )}
 
       {/* Rail flottant, desktop */}
       <aside
@@ -621,21 +410,6 @@ function ShellBody({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {notices.length > 0 && (
-        <div className="global-message-notice-stack" aria-live="polite" aria-label="Notifications">
-          {notices.map((item, index) => (
-            <GlobalNoticeCard
-              key={item.id}
-              notice={item}
-              index={index}
-              now={noticeTick}
-              onOpen={() => void openNotice(item)}
-              onClose={() => dismissNotice(item.id)}
-            />
-          ))}
-        </div>
-      )}
-
       {me && (pathname.startsWith('/messagerie') || (!inSupport && !me.org)) && (
         <div className={`shell-mode-toggle-floating${pathname.startsWith('/messagerie') ? ' on-messaging' : ''}`}>
           <ThemeModeToggle />
@@ -647,7 +421,9 @@ function ShellBody({ children }: { children: ReactNode }) {
             Uniquement dans un club — la plateforme n'a ni discipline ni
             journal de club a montrer. */}
         {me && !pathname.startsWith('/messagerie') && (inSupport || me.org) && (
-          <TopBar canSeeHistory={['owner', 'admin'].includes(me.org?.role ?? '') || inSupport} />
+          <TopBar
+            canSeeHistory={['owner', 'admin'].includes(me.org?.role ?? '') || inSupport}
+          />
         )}
         {children}
       </main>
@@ -712,47 +488,5 @@ function SupportBar({ me, onLeft }: { me: Me; onLeft: () => void }) {
         </button>
       </span>
     </div>
-  )
-}
-
-function GlobalNoticeCard({
-  notice, index, now, onOpen, onClose,
-}: {
-  notice: ActiveGlobalNotice
-  index: number
-  now: number
-  onOpen: () => void
-  onClose: () => void
-}) {
-  const elapsed = Math.min(GLOBAL_NOTICE_MS, Math.max(0, now - notice.shownAt))
-  const remaining = Math.max(0, Math.ceil((GLOBAL_NOTICE_MS - elapsed) / 1000))
-  const progress = Math.max(0, 1 - (elapsed / GLOBAL_NOTICE_MS))
-  const Icon = notice.kind === 'announcement' ? Bell : MessageCircle
-
-  return (
-    <aside
-      className={`announcement-notice global-message-notice${notice.leaving ? ' is-leaving' : ''}`}
-      role="status"
-      aria-label={notice.title}
-      style={{
-        '--notice-progress': `${progress * 360}deg`,
-        '--notice-index': index,
-      } as CSSProperties}
-    >
-      <button className="global-message-notice-main" onClick={onOpen}>
-        <span className="announcement-notice-icon"><Icon size={19} strokeWidth={2.2} /></span>
-        <span className="global-message-notice-copy">
-          <b>{notice.title}</b>
-          <strong>{notice.source}</strong>
-          <small>{notice.body}</small>
-        </span>
-        <span className="global-message-notice-countdown" aria-label={`Disparait dans ${remaining} secondes`}>
-          {remaining}s
-        </span>
-      </button>
-      <button className="announcement-notice-close" onClick={onClose} aria-label="Fermer la notification">
-        <X size={16} />
-      </button>
-    </aside>
   )
 }
