@@ -1916,8 +1916,8 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   z-index: 175;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   border: 2px solid color-mix(in srgb, var(--notification-neon) 62%, var(--surface) 38%);
   border-radius: 50%;
   background:
@@ -1979,11 +1979,11 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 
 .notification-access-row .notif-count-badge {
   position: absolute;
-  top: -9px;
-  right: -10px;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 6px;
+  top: -7px;
+  right: -9px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
   border: 1px solid color-mix(in srgb, #fff 42%, transparent);
   border-radius: 999px;
   background: var(--notification-neon);
@@ -1991,7 +1991,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   box-shadow: 0 8px 20px var(--notification-neon-glow);
   display: inline-grid;
   place-items: center;
-  font-size: .68rem;
+  font-size: .62rem;
   font-weight: 900;
   line-height: 1;
 }
@@ -2379,9 +2379,9 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 
 @media (max-width: 680px) {
   .notification-access-row {
-    top: calc(10px + env(safe-area-inset-top));
-    width: 42px;
-    height: 42px;
+    top: calc(8px + env(safe-area-inset-top));
+    width: 34px;
+    height: 34px;
   }
   .notification-center {
     padding: calc(14px + env(safe-area-inset-top)) 12px calc(76px + env(safe-area-inset-bottom));
@@ -5601,12 +5601,19 @@ input, textarea, select {
 }
 .dz-search:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
 
-.global-disc-filter { display: flex; justify-content: center; min-width: 0; }
+.global-disc-filter {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  transform: translateY(20px);
+}
+.page-actions-with-filter { margin-bottom: 2.75rem; }
 .global-disc-filter :where(.sliding-tabs, [role="tablist"]) { max-width: 100%; }
 @media (max-width: 720px) {
   /* Sur mobile, le filtre passe sous la barre d'icônes, pleine largeur */
   .page-actions { flex-wrap: wrap; }
   .global-disc-filter { order: 3; flex-basis: 100%; }
+  .page-actions-with-filter { margin-bottom: 2rem; }
   .global-disc-filter :where(.sliding-tabs, [role="tablist"]) { overflow-x: auto; }
 }
 .dz-grid { display: grid; grid-template-columns: 1fr; gap: 22px; align-items: start; }

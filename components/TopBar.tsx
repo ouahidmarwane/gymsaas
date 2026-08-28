@@ -101,7 +101,10 @@ export default function TopBar({
   const showFilter = visible && !NO_FILTER.some(p => pathname.startsWith(p))
 
   return (
-    <div className="page-actions" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div
+      className={`page-actions${showFilter ? ' page-actions-with-filter' : ''}`}
+      style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+    >
       {/* Cale gauche : c'est elle qui centre reellement le filtre. */}
       <div className="page-actions-spacer" style={{ flex: 1, minWidth: 0 }} />
 
