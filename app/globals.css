@@ -1911,31 +1911,26 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   --notification-neon: color-mix(in srgb, var(--text) 22%, transparent);
   --notification-neon-glow: color-mix(in srgb, var(--text) 9%, transparent);
   position: fixed;
-  top: calc(10px + env(safe-area-inset-top));
+  top: calc(12px + env(safe-area-inset-top));
   left: 50%;
   z-index: 175;
-  display: inline-grid;
-  grid-template-columns: 16px minmax(0, auto) auto;
-  grid-template-areas:
-    "grip grip grip"
-    "bell label chevron";
-  align-items: center;
-  justify-content: center;
-  column-gap: 8px;
-  row-gap: 4px;
-  min-width: min(320px, calc(100vw - 96px));
-  min-height: 46px;
-  padding: 7px 17px 9px;
-  border: 1px solid var(--notification-neon);
-  border-radius: 0 0 22px 22px;
-  background: color-mix(in srgb, var(--surface) 83%, transparent);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 2px solid color-mix(in srgb, var(--notification-neon) 62%, var(--surface) 38%);
+  border-radius: 50%;
+  background:
+    linear-gradient(145deg,
+      color-mix(in srgb, var(--surface) 94%, transparent),
+      color-mix(in srgb, var(--surface) 78%, var(--notification-neon) 10%));
   color: var(--text);
   box-shadow:
-    0 16px 34px color-mix(in srgb, var(--text) 13%, transparent),
-    0 6px 24px var(--notification-neon-glow),
-    inset 0 1px 0 color-mix(in srgb, #fff 34%, transparent);
+    0 12px 28px color-mix(in srgb, var(--text) 14%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--notification-neon) 12%, transparent),
+    0 0 24px var(--notification-neon-glow),
+    inset 0 1px 0 color-mix(in srgb, #fff 42%, transparent);
   font: inherit;
-  font-size: .76rem;
   font-weight: 850;
   transform: translateX(-50%);
   cursor: pointer;
@@ -1963,49 +1958,42 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 .notification-access-row:focus-visible,
 .notification-access-row.is-open {
   outline: 0;
-  transform: translateX(-50%) translateY(2px);
+  transform: translateX(-50%) translateY(3px);
   background: color-mix(in srgb, var(--surface) 91%, transparent);
   box-shadow:
-    0 18px 38px color-mix(in srgb, var(--text) 14%, transparent),
-    0 8px 34px var(--notification-neon-glow),
+    0 14px 32px color-mix(in srgb, var(--text) 15%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--notification-neon) 14%, transparent),
+    0 0 30px var(--notification-neon-glow),
     inset 0 1px 0 color-mix(in srgb, #fff 38%, transparent);
 }
 
-.notification-access-grip {
-  grid-area: grip;
-  justify-self: center;
-  width: 58px;
-  height: 4px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text) 20%, transparent);
-}
-
-.notification-access-label {
-  grid-area: label;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.notification-access-row > svg:first-of-type { grid-area: bell; color: var(--notification-neon); }
 .notification-access-chevron {
-  grid-area: chevron;
-  color: var(--muted);
+  color: var(--text);
   transition: transform .24s cubic-bezier(0.16, 1, 0.3, 1), color .18s ease;
 }
 
 .notification-access-row.is-open .notification-access-chevron {
   color: var(--notification-neon);
-  transform: rotate(180deg);
+  transform: translateY(3px);
 }
 
 .notification-access-row .notif-count-badge {
   position: absolute;
-  top: 8px;
-  right: 12px;
+  top: -9px;
+  right: -10px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
   border: 1px solid color-mix(in srgb, #fff 42%, transparent);
+  border-radius: 999px;
   background: var(--notification-neon);
+  color: #fff;
   box-shadow: 0 8px 20px var(--notification-neon-glow);
+  display: inline-grid;
+  place-items: center;
+  font-size: .68rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .app-shell.support-mode .notification-access-row {
@@ -2021,7 +2009,7 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   flex-direction: column;
   align-items: center;
   overflow-y: auto;
-  padding: 18px clamp(18px, 4vw, 56px) 54px;
+  padding: calc(22px + env(safe-area-inset-top)) clamp(18px, 4vw, 56px) calc(86px + env(safe-area-inset-bottom));
   background:
     radial-gradient(54rem 34rem at 50% -10%,
       color-mix(in srgb, var(--notification-center-neon, var(--gold)) 20%, transparent), transparent 68%),
@@ -2041,52 +2029,11 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   animation: notification-center-lift .22s cubic-bezier(0.4, 0, 1, 1) both;
 }
 
-.notification-center-row {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  min-width: min(520px, calc(100vw - 36px));
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 82%, transparent);
-  color: var(--text);
-  box-shadow:
-    0 16px 42px color-mix(in srgb, var(--text) 13%, transparent),
-    0 6px 24px color-mix(in srgb, var(--notification-center-neon, var(--gold)) 22%, transparent);
-  font: inherit;
-  font-size: .82rem;
-  font-weight: 800;
-  cursor: pointer;
-  transition:
-    background .18s ease,
-    box-shadow .18s ease,
-    transform .2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.notification-center-row:hover {
-  transform: translateY(1px);
-  background: color-mix(in srgb, var(--surface) 88%, var(--gold) 12%);
-}
-
-.notification-center-grip {
-  position: absolute;
-  top: 7px;
-  width: 54px;
-  height: 4px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text) 22%, transparent);
-}
-
 .notification-center-clock {
   display: grid;
   gap: 4px;
   justify-items: center;
-  margin: clamp(22px, 5vh, 58px) 0 clamp(20px, 4vh, 42px);
+  margin: clamp(28px, 6vh, 76px) 0 clamp(20px, 4vh, 42px);
   color: var(--text);
   text-align: center;
 }
@@ -2314,6 +2261,55 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   opacity: .62;
 }
 
+.notification-center-close-bottom {
+  --notification-close-neon: var(--notification-center-neon, var(--gold));
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 2px solid color-mix(in srgb, var(--notification-close-neon) 62%, var(--surface) 38%);
+  border-radius: 50%;
+  background:
+    linear-gradient(145deg,
+      color-mix(in srgb, var(--surface) 94%, transparent),
+      color-mix(in srgb, var(--surface) 78%, var(--notification-close-neon) 10%));
+  color: var(--text);
+  box-shadow:
+    0 12px 28px color-mix(in srgb, var(--text) 14%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--notification-close-neon) 12%, transparent),
+    0 0 24px color-mix(in srgb, var(--notification-close-neon) 34%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 42%, transparent);
+  font: inherit;
+  transform: translateX(-50%);
+  cursor: pointer;
+  backdrop-filter: blur(22px) saturate(1.18);
+  -webkit-backdrop-filter: blur(22px) saturate(1.18);
+  animation: notification-close-arrow-in .34s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition:
+    background .18s ease,
+    box-shadow .18s ease,
+    transform .24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.notification-center-close-bottom:hover,
+.notification-center-close-bottom:focus-visible {
+  outline: 0;
+  transform: translateX(-50%) translateY(-3px);
+  box-shadow:
+    0 14px 32px color-mix(in srgb, var(--text) 15%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--notification-close-neon) 14%, transparent),
+    0 0 30px color-mix(in srgb, var(--notification-close-neon) 38%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 38%, transparent);
+}
+
+.notification-center.is-closing .notification-center-close-bottom {
+  animation: notification-close-arrow-out .22s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
 @keyframes notification-center-drop {
   from {
     opacity: .76;
@@ -2355,23 +2351,43 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   }
 }
 
+@keyframes notification-close-arrow-in {
+  from {
+    opacity: .35;
+    transform: translateX(-50%) translateY(28px) rotate(180deg);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) rotate(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes notification-close-arrow-out {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) rotate(0);
+    filter: blur(0);
+  }
+  to {
+    opacity: .35;
+    transform: translateX(-50%) translateY(-28px) rotate(-180deg);
+    filter: blur(3px);
+  }
+}
+
 @media (max-width: 680px) {
   .notification-access-row {
-    min-width: min(270px, calc(100vw - 92px));
-    min-height: 43px;
-    padding-inline: 14px;
-  }
-  .notification-access-label {
-    max-width: 112px;
+    top: calc(10px + env(safe-area-inset-top));
+    width: 42px;
+    height: 42px;
   }
   .notification-center {
-    padding: 12px 12px 34px;
-  }
-  .notification-center-row {
-    min-width: calc(100vw - 24px);
+    padding: calc(14px + env(safe-area-inset-top)) 12px calc(76px + env(safe-area-inset-bottom));
   }
   .notification-center-clock {
-    margin-block: 20px 22px;
+    margin-block: 38px 22px;
   }
   .notification-center-clock strong {
     font-size: 3.2rem;
@@ -2396,6 +2412,11 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   .notification-center-error button {
     width: 100%;
   }
+  .notification-center-close-bottom {
+    bottom: calc(14px + env(safe-area-inset-bottom));
+    width: 42px;
+    height: 42px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2403,9 +2424,17 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   .notification-access-chevron,
   .notification-center,
   .notification-center-card,
-  .notification-center-row {
+  .notification-center-close-bottom {
     animation: none;
     transition: none;
+  }
+  .notification-access-row,
+  .notification-center-close-bottom {
+    transform: translateX(-50%);
+  }
+  .notification-center,
+  .notification-center-card,
+  .notification-access-chevron {
     transform: none;
   }
 }

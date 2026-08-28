@@ -342,11 +342,10 @@ export function NotificationAccess({
         aria-expanded={centerOpen && !centerClosing}
         aria-haspopup="dialog"
       >
-        <span className="notification-access-grip" aria-hidden="true" />
-        <Bell size={16} strokeWidth={2.2} />
-        <span className="notification-access-label">Notifications</span>
-        {unread > 0 && <span className="notif-count-badge">{unread > 99 ? '99+' : unread}</span>}
-        <ChevronDown className="notification-access-chevron" size={16} strokeWidth={2.4} />
+        <ChevronDown className="notification-access-chevron" size={18} strokeWidth={2.6} />
+        <span className="notif-count-badge" aria-label={`${unread} notification(s) non lue(s)`}>
+          {unread > 99 ? '99+' : unread}
+        </span>
       </button>
 
       {centerOpen && (
@@ -396,12 +395,6 @@ function NotificationCenter({
 
   return (
     <section className={`notification-center${closing ? ' is-closing' : ''}`} data-tone={tone} role="dialog" aria-modal="true" aria-label="Centre de notifications">
-      <button className="notification-center-row" type="button" onClick={onClose} aria-label="Fermer le centre de notifications">
-        <span className="notification-center-grip" aria-hidden="true" />
-        <span>Centre de notifications</span>
-        <ChevronUp size={18} strokeWidth={2.2} />
-      </button>
-
       <div className="notification-center-clock" aria-hidden="true">
         <strong>{new Date(now).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</strong>
         <span>{new Date(now).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
@@ -486,6 +479,10 @@ function NotificationCenter({
           )}
         </NotificationCenterGroup>
       </div>
+
+      <button className="notification-center-close-bottom" type="button" onClick={onClose} aria-label="Fermer le centre de notifications">
+        <ChevronUp size={18} strokeWidth={2.6} />
+      </button>
     </section>
   )
 }
