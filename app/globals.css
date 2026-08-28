@@ -2257,52 +2257,41 @@ html:not([data-theme='light']) .member-row .text-red-600 {
 }
 
 .notification-center-close-bottom {
-  --notification-close-neon: var(--notification-center-neon, var(--gold));
   position: fixed;
   left: 50%;
-  bottom: calc(18px + env(safe-area-inset-bottom));
-  z-index: 3;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  z-index: 260;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  border: 2px solid color-mix(in srgb, var(--notification-close-neon) 62%, var(--surface) 38%);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
-  background:
-    linear-gradient(145deg,
-      color-mix(in srgb, var(--surface) 94%, transparent),
-      color-mix(in srgb, var(--surface) 78%, var(--notification-close-neon) 10%));
+  background: transparent;
   color: var(--text);
-  box-shadow:
-    0 12px 28px color-mix(in srgb, var(--text) 14%, transparent),
-    0 0 0 5px color-mix(in srgb, var(--notification-close-neon) 12%, transparent),
-    0 0 24px color-mix(in srgb, var(--notification-close-neon) 34%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 42%, transparent);
+  box-shadow: none;
   font: inherit;
   transform: translateX(-50%);
   cursor: pointer;
-  backdrop-filter: blur(22px) saturate(1.18);
-  -webkit-backdrop-filter: blur(22px) saturate(1.18);
-  animation: notification-close-arrow-in .34s cubic-bezier(0.16, 1, 0.3, 1) both;
-  transition:
-    background .18s ease,
-    box-shadow .18s ease,
-    transform .24s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: color .15s ease, opacity .15s ease;
+}
+
+.notification-center-close-bottom::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+
+.notification-center-close-bottom:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text) 45%, transparent);
+  outline-offset: 2px;
 }
 
 .notification-center-close-bottom:hover,
-.notification-center-close-bottom:focus-visible {
-  outline: 0;
-  transform: translateX(-50%) translateY(-3px);
-  box-shadow:
-    0 14px 32px color-mix(in srgb, var(--text) 15%, transparent),
-    0 0 0 6px color-mix(in srgb, var(--notification-close-neon) 14%, transparent),
-    0 0 30px color-mix(in srgb, var(--notification-close-neon) 38%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 38%, transparent);
-}
-
-.notification-center.is-closing .notification-center-close-bottom {
-  animation: notification-close-arrow-out .22s cubic-bezier(0.4, 0, 1, 1) both;
+.notification-center-close-bottom.is-closing {
+  transform: translateX(-50%);
+  opacity: .72;
 }
 
 @keyframes notification-center-drop {
@@ -2346,32 +2335,6 @@ html:not([data-theme='light']) .member-row .text-red-600 {
   }
 }
 
-@keyframes notification-close-arrow-in {
-  from {
-    opacity: .35;
-    transform: translateX(-50%) translateY(28px) rotate(180deg);
-    filter: blur(3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0) rotate(0);
-    filter: blur(0);
-  }
-}
-
-@keyframes notification-close-arrow-out {
-  from {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0) rotate(0);
-    filter: blur(0);
-  }
-  to {
-    opacity: .35;
-    transform: translateX(-50%) translateY(-28px) rotate(-180deg);
-    filter: blur(3px);
-  }
-}
-
 @media (max-width: 680px) {
   .notification-access-row {
     top: calc(8px + env(safe-area-inset-top));
@@ -2408,9 +2371,9 @@ html:not([data-theme='light']) .member-row .text-red-600 {
     width: 100%;
   }
   .notification-center-close-bottom {
-    bottom: calc(14px + env(safe-area-inset-bottom));
-    width: 42px;
-    height: 42px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    width: 28px;
+    height: 28px;
   }
 }
 

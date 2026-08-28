@@ -352,30 +352,39 @@ export function NotificationAccess({
       </button>
 
       {centerOpen && (
-        <NotificationCenter
-          closing={centerClosing}
-          tone={accessTone}
-          alerts={alerts}
-          conversations={recentConversations}
-          announcements={recentAnnouncements}
-          supportThreads={recentSupport}
-          loading={centerLoading}
-          now={now}
-          error={centerError}
-          onClose={closeCenter}
-          onRefresh={() => loadMessageSummaries(true)}
-          onOpenAlert={openAlert}
-          onOpenConversation={id => openMessagingTarget({ kind: 'conversation', id })}
-          onOpenAnnouncements={() => openMessagingTarget({ kind: 'announcements' })}
-          onOpenSupport={orgId => openMessagingTarget({ kind: 'support', ...(orgId ? { orgId } : {}) })}
-        />
+        <>
+          <NotificationCenter
+            closing={centerClosing}
+            tone={accessTone}
+            alerts={alerts}
+            conversations={recentConversations}
+            announcements={recentAnnouncements}
+            supportThreads={recentSupport}
+            loading={centerLoading}
+            now={now}
+            error={centerError}
+            onRefresh={() => loadMessageSummaries(true)}
+            onOpenAlert={openAlert}
+            onOpenConversation={id => openMessagingTarget({ kind: 'conversation', id })}
+            onOpenAnnouncements={() => openMessagingTarget({ kind: 'announcements' })}
+            onOpenSupport={orgId => openMessagingTarget({ kind: 'support', ...(orgId ? { orgId } : {}) })}
+          />
+          <button
+            className={`notification-center-close-bottom${centerClosing ? ' is-closing' : ''}`}
+            type="button"
+            onClick={closeCenter}
+            aria-label="Fermer le centre de notifications"
+          >
+            <ChevronUp size={15} strokeWidth={2.4} />
+          </button>
+        </>
       )}
     </>
   )
 }
 
 function NotificationCenter({
-  closing, tone, alerts, conversations, announcements, supportThreads, loading, now, onClose,
+  closing, tone, alerts, conversations, announcements, supportThreads, loading, now,
   error, onRefresh, onOpenAlert, onOpenConversation, onOpenAnnouncements, onOpenSupport,
 }: {
   closing: boolean
@@ -387,7 +396,6 @@ function NotificationCenter({
   loading: boolean
   now: number
   error: string | null
-  onClose: () => void
   onRefresh: () => Promise<void>
   onOpenAlert: (href: string | null) => void
   onOpenConversation: (id: string) => void
@@ -482,10 +490,6 @@ function NotificationCenter({
           )}
         </NotificationCenterGroup>
       </div>
-
-      <button className="notification-center-close-bottom" type="button" onClick={onClose} aria-label="Fermer le centre de notifications">
-        <ChevronUp size={18} strokeWidth={2.6} />
-      </button>
     </section>
   )
 }
