@@ -1,0 +1,5 @@
+import { test, describe, beforeEach } from 'node:test'
+import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
+import { MIGRATIONS, LATEST_VERSION } from '../src/club/schema.ts'
+import { evaluateEntitlement } from '../src/api.ts'

@@ -14,6 +14,7 @@ import {
   type MemberRow, subStatus, insStatus, daysUntil, photoUrl,
   SUB_LABEL, INS_LABEL, SUB_TONE, INS_TONE, whatsappFor, waLink,
 } from '@/lib/member-status'
+import MemberAccessPanel from '@/components/MemberAccessPanel'
 
 const AVATAR_COLORS = ['#f05a28', '#ff8a5c', '#34d399', '#fbbf24', '#f472b6', '#a78bfa']
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('fr-FR') : '—')
@@ -34,12 +35,14 @@ const DOC_LABEL: Record<string, string> = { cin: 'Carte nationale', passeport: '
  * pour afficher ce qu'on a sous la main ferait clignoter la modale.
  */
 export default function MemberDetail({
-  member, canWrite, canDelete, clubName, showBelt, onClose, onEdit, onChanged,
+  member, canWrite, canDelete, showAccess, clubName, showBelt, onClose, onEdit, onChanged,
 }: {
   member: MemberRow
   canWrite: boolean
   /** Retirer une piece d'identite est reserve aux administrateurs. */
   canDelete: boolean
+  /** Access is staff+, while the rest of the member sheet remains viewer-readable. */
+  showAccess: boolean
   clubName: string
   showBelt: boolean
   onClose: () => void
@@ -178,6 +181,8 @@ export default function MemberDetail({
               : <span className="mdet-void">Non souscrite</span>}
           </Row>
         </div>
+
+        {showAccess && <MemberAccessPanel memberId={member.id} canManage={canDelete} />}
 
         <h3 className="mdet-section">Documents</h3>
         <IdentityDoc member={member} canWrite={canWrite} canDelete={canDelete}

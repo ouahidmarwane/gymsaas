@@ -7,9 +7,11 @@ import {
   LayoutDashboard, Users, Award, Wallet, UserCog, SlidersHorizontal,
   ShieldAlert, Building2, Settings, LogOut, Menu, X, Receipt,
   MessageCircle, ChevronLeft, ChevronRight, ShieldCheck,
+  DoorOpen,
 } from 'lucide-react'
 import { api, ApiError, privileged, type Me, type Capabilities } from '@/lib/client'
 import { DEFAULT_THEME, normalizeAccent } from '@/src/club/branding'
+import { accessNavigationRole } from '@/src/access-ui'
 import TopBar, { NotificationAccess } from '@/components/TopBar'
 import ThemeModeToggle from '@/components/ThemeModeToggle'
 import { DisciplineProvider, useDiscipline } from '@/lib/discipline'
@@ -37,6 +39,8 @@ interface NavItem {
 const CLUB_NAV: NavItem[] = [
   { href: '/dashboard',      label: 'Tableau de bord',  icon: LayoutDashboard },
   { href: '/members',        label: 'Membres',          icon: Users },
+  { href: '/access',         label: "Contrôle d'accès", icon: DoorOpen,
+    roles: ['owner', 'admin', 'staff'] },
   // Un club de boxe sans ceinture n'a pas de passage de grade. Le lien
   // n'apparait que si au moins une discipline du club est gradee — ET si la
   // discipline retenue dans le filtre l'est. Regarder « Musculation » et
@@ -239,8 +243,9 @@ function ShellBody({ children }: { children: ReactNode }) {
   //
   // Hors support, un exploitant sans club ne voit que la plateforme : lui
   // montrer Membres ou Comptabilite n'aurait rien a ouvrir.
+  const effectiveClubRole = accessNavigationRole(me?.scope ?? {}, me?.org?.role)
   const clubNav = allowed(
-    CLUB_NAV, me?.capabilities ?? null, activeHasGrading, me?.org?.role ?? null,
+    CLUB_NAV, me?.capabilities ?? null, activeHasGrading, effectiveClubRole,
   )
 
   const items = !me

@@ -82,6 +82,13 @@
      pas : il descend d'un cran avec la base. */
   --positive: #4ade80;
   --positive-ink: #86efac;
+  --positive-bg: rgba(74, 222, 128, 0.12);
+  --danger: #ef4444;
+  --danger-ink: #fca5a5;
+  --danger-bg: rgba(239, 68, 68, 0.12);
+  --warning: #f59e0b;
+  --warning-ink: #fcd34d;
+  --warning-bg: rgba(245, 158, 11, 0.12);
   --radius-sm: 10px;
   --radius-md: 16px;
   --radius-lg: 20px;
@@ -169,6 +176,13 @@ html[data-theme='light'] {
   --scrim: rgba(15, 23, 42, 0.42);
   --positive: #15803d;
   --positive-ink: #166534;
+  --positive-bg: rgba(21, 128, 61, 0.10);
+  --danger: #b91c1c;
+  --danger-ink: #991b1b;
+  --danger-bg: rgba(185, 28, 28, 0.10);
+  --warning: #b45309;
+  --warning-ink: #92400e;
+  --warning-bg: rgba(180, 83, 9, 0.10);
 }
 
 /* ── Light mode: fix dark text — scoped to specific elements only ── */
@@ -3462,6 +3476,11 @@ table {
   border-collapse: separate;
   border-spacing: 0;
 }
+
+/* Member detail — bounded Access panel, inheriting the existing sheet vocabulary. */
+.mdet-body{--ink:var(--text);--card-border:var(--border)}
+.mdet-access{margin-top:24px}.mdet-access-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.mdet-access-head .mdet-section{margin:0}.mdet-access-last{display:flex;align-items:center;gap:10px;margin-top:12px;padding:11px 12px;border-radius:12px;background:var(--overlay-soft);color:var(--ink)}.mdet-access-last>svg{color:var(--gold)}.mdet-access-last span{display:grid;gap:2px}.mdet-access-last b{font-size:.75rem}.mdet-access-last small{font-size:.66rem;color:var(--muted);font-variant-numeric:tabular-nums}.mdet-access-list{display:grid;margin-top:10px;border:1px solid var(--card-border);border-radius:12px;overflow:hidden}.mdet-access-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;border-bottom:1px solid var(--card-border)}.mdet-access-row:last-child{border-bottom:0}.mdet-access-row>span:first-child{display:grid;gap:2px}.mdet-access-row b{font-size:.72rem}.mdet-access-row small{font-size:.65rem;color:var(--muted)}.mdet-access-actions{display:flex;gap:4px}.mdet-access-actions button{min-height:32px;border:0;border-radius:9px;padding:0 8px;background:var(--overlay-soft);color:var(--muted);font:inherit;font-size:.62rem;font-weight:700;cursor:pointer}.mdet-access-actions button:last-child{color:#b42318}.mdet-access-empty{display:flex;align-items:center;gap:8px;margin-top:10px;padding:14px;border:1px dashed var(--card-border);border-radius:12px;color:var(--muted);font-size:.7rem}.mdet-access-form{display:grid;grid-template-columns:110px 1fr auto;gap:8px;margin-top:10px}.mdet-access-form select,.mdet-access-form input{height:38px;min-width:0;border:1px solid var(--card-border);border-radius:10px;background:var(--overlay-soft);color:var(--ink);padding:0 10px;font:inherit;font-size:.7rem;caret-color:var(--gold)}
+@media(max-width:600px){.mdet-access-row{align-items:flex-start;flex-direction:column}.mdet-access-actions{width:100%;flex-wrap:wrap}.mdet-access-form{grid-template-columns:1fr}}
 
 /* Input refinements */
 input, textarea, select {

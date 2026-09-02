@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useDiscipline } from '@/lib/discipline'
 import { api, ApiError, type Me } from '@/lib/client'
+import { canViewAccessUi } from '@/src/access-ui'
 import EditablePage from '@/components/EditablePage'
 import PageState from '@/components/PageState'
 import SlidingTabs from '@/components/SlidingTabs'
@@ -187,6 +188,7 @@ export default function MembersPage() {
   const canManageDocs = me
     ? (me.scope.mode === 'support' ? me.scope.canWrite : ['owner', 'admin'].includes(me.org?.role ?? ''))
     : false
+  const canViewAccess = Boolean(me && canViewAccessUi(me.scope, me.org?.role))
 
   const clubName = me?.branding?.name ?? 'votre club'
   const all = useMemo(() => members ?? [], [members])
@@ -484,6 +486,7 @@ export default function MembersPage() {
           member={detailMember}
           canWrite={canWrite}
           canDelete={canManageDocs}
+          showAccess={canViewAccess}
           clubName={clubName}
           showBelt={showBelt}
           onClose={() => { setDetailId(null); setDetailMember(null) }}

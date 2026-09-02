@@ -25,7 +25,7 @@ interface Session {
 
 interface SecurityEvent {
   id: number
-  type: 'new_ip' | 'failed_burst' | 'support_write'
+  type: 'support_write'
   detail: string | null
   ip: string | null
   created_at: string
@@ -358,8 +358,8 @@ export default function SupervisionPage() {
 
         {events.length === 0 ? (
           <p className="dz-card-note" style={{ marginTop: 16 }}>
-            Rien a signaler. Une connexion depuis une adresse jamais vue, ou une rafale
-            d&apos;echecs de mot de passe, apparaitrait ici.
+            Rien a signaler. Les notifications privees de connexion restent dans le
+            compte concerne ; seules les alertes partagees de plateforme apparaissent ici.
           </p>
         ) : (
           <div className="gf-table-wrap">
@@ -482,14 +482,12 @@ function FoldButton({ fold, singular, plural }: {
 }
 
 const tone = (t: SecurityEvent['type']) =>
-  t === 'failed_burst' ? '#f87171' : t === 'new_ip' ? '#f59e0b' : '#a78bfa'
+  t === 'support_write' ? '#a78bfa' : 'var(--muted)'
 
 const label = (t: SecurityEvent['type']) =>
-  t === 'failed_burst' ? 'Rafale d’echecs' : t === 'new_ip' ? 'Nouvelle connexion' : 'Ecriture en support'
+  t === 'support_write' ? 'Ecriture en support' : 'Alerte plateforme'
 
 function describe(ev: SecurityEvent): string {
-  if (ev.type === 'new_ip') return 'Connexion depuis un nouvel appareil'
-  if (ev.type === 'failed_burst') return `Mots de passe repetes sur ${ev.detail ?? 'un compte'}`
   return ev.detail ?? 'Modification effectuee en mode support'
 }
 

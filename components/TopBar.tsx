@@ -55,6 +55,8 @@ interface ConversationPreview {
   name: string
   last_body: string | null
   last_at: string | null
+  notification_body: string | null
+  notification_at: string | null
   updated_at: string
   unread: number
 }
@@ -75,6 +77,8 @@ interface SupportThreadPreview {
   orgName: string
   updatedAt: string
   lastBody: string | null
+  notificationBody: string | null
+  notificationAt: string | null
   unread: number
 }
 
@@ -282,8 +286,8 @@ export function NotificationAccess({
   const accessTone = urgent ? 'alert' : unreadMessages > 0 ? 'normal' : 'idle'
   const recentConversations = useMemo(() => (
     conversations
-      .filter(item => item.last_body)
-      .sort((a, b) => Date.parse(b.last_at ?? b.updated_at) - Date.parse(a.last_at ?? a.updated_at))
+      .filter(item => item.notification_body)
+      .sort((a, b) => Date.parse(b.notification_at ?? b.updated_at) - Date.parse(a.notification_at ?? a.updated_at))
       .slice(0, 8)
   ), [conversations])
   const recentAnnouncements = useMemo(() => (
@@ -294,8 +298,8 @@ export function NotificationAccess({
   ), [announcements])
   const recentSupport = useMemo(() => (
     supportThreads
-      .filter(item => item.lastBody)
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .filter(item => item.notificationBody)
+      .sort((a, b) => Date.parse(b.notificationAt ?? b.updatedAt) - Date.parse(a.notificationAt ?? a.updatedAt))
       .slice(0, 4)
   ), [supportThreads])
 
@@ -463,10 +467,10 @@ function NotificationCenter({
               <span className="notification-center-copy">
                 <span className="notification-center-meta">
                   <b>GymFlow Support</b>
-                  <time>{relative(item.updatedAt, now)}</time>
+                  <time>{relative(item.notificationAt ?? item.updatedAt, now)}</time>
                 </span>
                 <strong>{item.orgName}</strong>
-                <small>{item.lastBody}</small>
+                <small>{item.notificationBody}</small>
               </span>
               {item.unread > 0 && <span className="notification-center-unread">{item.unread > 99 ? '99+' : item.unread}</span>}
             </button>
@@ -477,10 +481,10 @@ function NotificationCenter({
               <span className="notification-center-copy">
                 <span className="notification-center-meta">
                   <b>{item.type === 'team' ? 'Canal equipe' : item.type === 'group' ? 'Groupe' : 'Message prive'}</b>
-                  <time>{relative(item.last_at ?? item.updated_at, now)}</time>
+                  <time>{relative(item.notification_at ?? item.updated_at, now)}</time>
                 </span>
                 <strong>{item.name}</strong>
-                <small>{item.last_body}</small>
+                <small>{item.notification_body}</small>
               </span>
               {item.unread > 0 && <span className="notification-center-unread">{item.unread > 99 ? '99+' : item.unread}</span>}
             </button>

@@ -159,3 +159,67 @@ export function newId(): string {
   for (const b of rand) suffix += b.toString(36).padStart(2, '0')
   return `${time}${suffix}`
 }
+
+// ECDSA P-256 key operations for gateway authentication
+export async function generateEcdsaKeyPair(): Promise<{ publicKey: string; privateKey: CryptoKey }> {
+  const keyPair = await crypto.subtle.generateKey(
+    {
+      name: 'ECDSA',
+      namedCurve: 'P-256'
+    },
+    false, // not extractable (we'll extract the public key separately)
+    ['sign', 'verify']
+  )
+
+  // Extract the public key in SPKI format
+  const publicKeyData = await crypto.subtle.exportKey('spki', keyPair.publicKey)
+  const publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyData)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') // Base64URL encoding
+
+  return {
+    publicKey: publicKeyBase64,
+    privateKey: keyPair.privateKey
+  }
+}
+
+export async function exportPrivateKey(privateKey: CryptoKey): Promise<string> {
+  const privateKeyData = await crypto.subtle.exportKey('pkcs8', privateKey)
+  return btoa(String.fromCharCode(...new Uint8Array(privateKeyData)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') // Base64URL encoding
+}
+
+export async function importPrivateKey(privateKeyBase64: string): Promise<CryptoKey> {
+  // Add padding if needed
+  const padded = privateKeyBase64.replace(/-/g, '+').replace(/_/g, '/')
+  const padding = '='.repeat(4 - (padded.length % 4))
+  const privateKeyData = Uint8Array.from(atob(padded + padding), c => c.charCodeAt(0))
+
+  return await crypto.subtle.importKey(
+    'pkcs8',
+    privateKeyData,
+    {
+      name: 'ECDSA',
+      namedCurve: 'P-256'
+    },
+    false,
+    ['sign']
+  )
+}
+
+export async function importPublicKey(publicKeyBase64: string): Promise<CryptoKey> {
+  // Add padding if needed
+  const padded = publicKeyBase64.replace(/-/g, '+').replace(/_/g, '/')
+  const padding = '='.repeat(4 - (padded.length % 4))
+  const publicKeyData = Uint8Array.from(atob(padded + padding), c => c.charCodeAt(0))
+
+  return await crypto.subtle.importKey(
+    'spki',
+    publicKeyData,
+    {
+      name: 'ECDSA',
+      namedCurve: 'P-256'
+    },
+    false,
+    ['verify']
+  )
+}

@@ -49,6 +49,18 @@ CREATE TABLE IF NOT EXISTS organizations (
 CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status);
 CREATE INDEX IF NOT EXISTS idx_organizations_plan   ON organizations(plan);
 
+-- Index de routage des passerelles vers leur Durable Object. Les cles
+-- machine, la branche et l'etat operationnel restent exclusivement dans le
+-- stockage SQLite du club et sont verifies apres cette resolution.
+CREATE TABLE IF NOT EXISTS access_gateway_registry (
+  gateway_id TEXT PRIMARY KEY,
+  org_id     TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_gateway_registry_org
+  ON access_gateway_registry(org_id);
+
 -- Comptes --------------------------------------------------------------------
 -- Un compte est global : l'e-mail est unique sur toute la plateforme. Un meme
 -- entraineur peut donc appartenir a plusieurs clubs (via memberships), ce que
@@ -115,6 +127,27 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_exp  ON sessions(expires_at);
 
+-- Historique non rejouable des connexions. Une session active est supprimee
+-- lors de la deconnexion, mais les responsables du club doivent pouvoir
+-- verifier quand un compte s'est connecte, depuis quelle adresse et pendant
+-- combien de temps. Seul le hash deja non reutilisable relie cette trace a la
+-- session vivante ; aucun cookie ni jeton brut n'est conserve ici.
+CREATE TABLE IF NOT EXISTS connection_history (
+  session_hash    TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  org_id          TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+  connected_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  last_seen_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  disconnected_at TEXT,
+  ip              TEXT,
+  user_agent      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_connection_history_org_time
+  ON connection_history(org_id, connected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_connection_history_user
+  ON connection_history(user_id, connected_at DESC);
+
 -- Autorisation privilegiee courte, liee a UNE session Superadmin. Ce n'est
 -- ni un role ni de la MFA : le mot de passe courant vient d'etre reverifie,
 -- puis seul le hash du jeton de session porte le grant ephemere.
@@ -170,8 +203,9 @@ CREATE TABLE IF NOT EXISTS known_ips (
 );
 
 -- Evenements de securite ---------------------------------------------------
--- Alimente automatiquement a la connexion. Lu uniquement par la plateforme :
--- c'est la page de supervision.
+-- Alimente automatiquement a la connexion. Les evenements prives sont lus
+-- uniquement par leur compte proprietaire ; les evenements partages restent
+-- disponibles pour les vues de supervision.
 CREATE TABLE IF NOT EXISTS security_events (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id    TEXT REFERENCES users(id) ON DELETE CASCADE,
@@ -187,6 +221,8 @@ CREATE TABLE IF NOT EXISTS security_events (
 
 CREATE INDEX IF NOT EXISTS idx_security_events_time ON security_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_security_events_open ON security_events(handled_at) WHERE handled_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_security_events_user_open
+  ON security_events(user_id, handled_at, created_at DESC) WHERE user_id IS NOT NULL;
 
 -- Agregats par club ----------------------------------------------------------
 -- On ne peut pas faire de JOIN entre Durable Objects : le tableau de bord

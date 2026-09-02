@@ -31,6 +31,8 @@ export interface Principal {
   role: 'owner' | 'admin' | 'staff' | 'viewer' | null
   branchId: string | null
   disciplineId: string | null
+  /** Fuseau du club effectivement vise, issu du plan de controle. */
+  timezone: string
 
   /**
    * Club dans lequel un exploitant de plateforme est entre pour du support.
@@ -88,6 +90,7 @@ export async function createSession(
   )
     .bind(tokenHash, userId, orgId, expires, meta.ip ?? null, meta.userAgent ?? null)
     .run()
+  await recordConnectionHistory(env, tokenHash, userId, orgId, meta)
 
   return token
 }
@@ -109,11 +112,12 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
             sw.expires_at AS support_write_expires_at,
             u.name, u.email, u.is_platform_admin, u.status AS user_status,
             m.role, m.branch_id, m.discipline_id, m.status AS membership_status,
-            o.status AS org_status
+            o.status AS org_status, COALESCE(so.timezone, o.timezone, 'Africa/Casablanca') AS timezone
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        LEFT JOIN memberships m ON m.user_id = s.user_id AND m.org_id = s.org_id
        LEFT JOIN organizations o ON o.id = s.org_id
+       LEFT JOIN organizations so ON so.id = s.support_org_id
        LEFT JOIN support_write_grants sw ON sw.token_hash = s.token_hash
       WHERE s.token_hash = ?`,
   )
@@ -136,6 +140,7 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
       discipline_id: string | null
       membership_status: string | null
       org_status: string | null
+      timezone: string
     }>()
 
   if (!row) return null
@@ -173,6 +178,7 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
   )
     .bind(tokenHash)
     .run()
+  await touchConnectionHistory(env, tokenHash)
 
   // Mode support : valable uniquement pour un exploitant de plateforme, et
   // uniquement avant expiration. Perdre le statut plateforme ou depasser le
@@ -192,6 +198,7 @@ export async function resolveSession(env: Env, token: string | null): Promise<Pr
     role: hasMembership ? (row.role as Principal['role']) : null,
     branchId: row.branch_id,
     disciplineId: row.discipline_id,
+    timezone: row.timezone,
     supportOrgId: supportLive ? row.support_org_id : null,
     supportContextOrgId: isPlatformAdmin ? row.support_org_id : null,
     supportWrite: supportLive && row.support_write === 1 &&
@@ -293,13 +300,62 @@ export async function endSupport(env: Env, token: string): Promise<void> {
 }
 
 export async function destroySession(env: Env, token: string): Promise<void> {
+  const tokenHash = await hashToken(token)
+  await markConnectionDisconnected(env, tokenHash)
   await env.CONTROL.prepare('DELETE FROM sessions WHERE token_hash = ?')
-    .bind(await hashToken(token))
+    .bind(tokenHash)
     .run()
 }
 
 export async function destroyAllSessionsForUser(env: Env, userId: string): Promise<void> {
+  await markUserConnectionsDisconnected(env, userId)
   await env.CONTROL.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run()
+}
+
+async function ignoreConnectionHistoryFailure(work: () => Promise<unknown>): Promise<void> {
+  try {
+    await work()
+  } catch {
+    // Connection history is audit telemetry for the supervision panel. A
+    // pending or partially applied migration must never invalidate sessions.
+  }
+}
+
+async function recordConnectionHistory(
+  env: Env,
+  tokenHash: string,
+  userId: string,
+  orgId: string | null,
+  meta: { ip?: string | null; userAgent?: string | null },
+): Promise<void> {
+  await ignoreConnectionHistoryFailure(() => env.CONTROL.prepare(
+    `INSERT INTO connection_history
+       (session_hash, user_id, org_id, ip, user_agent)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).bind(tokenHash, userId, orgId, meta.ip ?? null, meta.userAgent ?? null).run())
+}
+
+async function touchConnectionHistory(env: Env, tokenHash: string): Promise<void> {
+  await ignoreConnectionHistoryFailure(() => env.CONTROL.prepare(
+    "UPDATE connection_history SET last_seen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE session_hash = ?",
+  ).bind(tokenHash).run())
+}
+
+async function markConnectionDisconnected(env: Env, tokenHash: string): Promise<void> {
+  await ignoreConnectionHistoryFailure(() => env.CONTROL.prepare(
+    `UPDATE connection_history
+        SET last_seen_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+            disconnected_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+      WHERE session_hash = ?`,
+  ).bind(tokenHash).run())
+}
+
+async function markUserConnectionsDisconnected(env: Env, userId: string): Promise<void> {
+  await ignoreConnectionHistoryFailure(() => env.CONTROL.prepare(
+    `UPDATE connection_history
+        SET disconnected_at = COALESCE(disconnected_at, strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      WHERE user_id = ? AND session_hash IN (SELECT token_hash FROM sessions WHERE user_id = ?)`,
+  ).bind(userId, userId).run())
 }
 
 /** Nom sans préfixe, utilisé en développement sur http. */

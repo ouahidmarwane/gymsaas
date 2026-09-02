@@ -4,7 +4,7 @@ import { client, control, createOperator, uniq, waitReady } from './helpers.mjs'
 
 const operatorPassword = 'motdepasse-solide-batch13'
 let operator, clubA, clubB, orgA, orgB, operatorEmail
-let eventA, eventB, eventGlobal, userA, userB, multiUser, targetOperator
+let eventA, eventB, eventGlobal, eventPrivate, userA, userB, multiUser, targetOperator
 
 before(async () => {
   await waitReady()
@@ -18,8 +18,12 @@ before(async () => {
   const multi = await clubA.call('POST', '/api/staff', { name: 'Multi Org', email: `batch13-multi-${suffix}@example.ma`, password: 'motdepasse-solide-multi', role: 'staff' })
   multiUser = multi.data.userId
   control(`INSERT INTO memberships (id, user_id, org_id, role) VALUES ('batch13-multi-membership-${suffix}', '${multiUser}', '${orgB}', 'staff')`)
-  eventA = 1300000000 + Math.floor(Math.random() * 1000000); eventB = eventA + 1; eventGlobal = eventA + 2
-  control(`INSERT INTO security_events (id, org_id, type, detail) VALUES (${eventA}, '${orgA}', 'failed_burst', 'batch13-a'), (${eventB}, '${orgB}', 'failed_burst', 'batch13-b'), (${eventGlobal}, NULL, 'failed_burst', 'batch13-global')`)
+  eventA = 1300000000 + Math.floor(Math.random() * 1000000); eventB = eventA + 1; eventGlobal = eventA + 2; eventPrivate = eventA + 3
+  control(`INSERT INTO security_events (id, user_id, org_id, type, detail) VALUES
+    (${eventA}, NULL, '${orgA}', 'support_write', 'batch13-a'),
+    (${eventB}, NULL, '${orgB}', 'support_write', 'batch13-b'),
+    (${eventGlobal}, NULL, NULL, 'support_write', 'batch13-global'),
+    (${eventPrivate}, '${userA}', '${orgA}', 'new_ip', 'batch13-private')`)
   operatorEmail = `batch13-ops-${suffix}@example.ma`
   createOperator(operatorEmail, 'Batch 13 Operator', operatorPassword)
   control(`INSERT INTO memberships (id, user_id, org_id, role)
@@ -53,11 +57,42 @@ test('security-event handling is organization-bound and global events fail close
   assert.equal((await operator.call('POST', `/api/admin/clubs/${orgA}/support`)).status, 200)
   assert.equal((await operator.call('POST', `/api/admin/events/${eventA}/handled`)).status, 403)
   assert.equal((await operator.call('POST', `/api/admin/events/${eventB}/handled`)).status, 403)
+  assert.equal((await operator.call('POST', `/api/admin/events/${eventPrivate}/handled`)).status, 403)
   assert.equal((await operator.call('POST', '/api/admin/events/1999999999/handled')).status, 403)
   assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
   assert.equal((await operator.call('POST', `/api/admin/events/${eventA}/handled`)).status, 200)
   assert.equal((await operator.call('POST', `/api/admin/events/${eventB}/handled`)).status, 403)
   assert.equal((await operator.call('POST', `/api/admin/events/${eventGlobal}/handled`)).status, 403)
+  assert.equal((await operator.call('POST', `/api/admin/events/${eventPrivate}/handled`)).status, 403)
+})
+
+test('platform club mutations cannot bypass an active support scope', async () => {
+  const branchSentinel = `Batch 13 forbidden branch ${uniq()}`
+  const disciplineSentinel = `Batch 13 forbidden discipline ${uniq()}`
+  const brandingSentinel = `Batch 13 forbidden branding ${uniq()}`
+
+  assert.equal((await operator.call('POST', '/api/admin/support/read-only')).status, 200)
+  assert.equal((await operator.call('POST', `/api/admin/clubs/${orgA}/branches`, {
+    name: branchSentinel,
+  })).status, 403, 'read-only support must not use the unrestricted Durable Object route')
+  assert.equal((await operator.call('POST', `/api/admin/clubs/${orgB}/disciplines`, {
+    name: disciplineSentinel,
+  })).status, 403, 'support scoped to club A must not mutate club B')
+  assert.equal((await operator.call('PUT', `/api/admin/clubs/${orgB}/branding`, {
+    name: brandingSentinel,
+  })).status, 403, 'support must not use the unrestricted D1 branding route')
+
+  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
+  assert.equal((await operator.call('POST', `/api/admin/clubs/${orgB}/branches`, {
+    name: branchSentinel,
+  })).status, 403, 'write elevation must remain confined to the active support club routes')
+
+  const branchesA = await clubA.call('GET', '/api/branches')
+  assert.ok(!branchesA.data.branches.some(branch => branch.name === branchSentinel))
+  const disciplinesB = await clubB.call('GET', '/api/disciplines')
+  assert.ok(!disciplinesB.data.disciplines.some(discipline => discipline.name === disciplineSentinel))
+  const brandingB = await clubB.call('GET', '/api/branding')
+  assert.notEqual(brandingB.data.name, brandingSentinel)
 })
 
 test('support messages and inbox reads are bound to live support authority', async () => {
@@ -76,6 +111,7 @@ test('expired support message authority fails closed', async () => {
   control(`UPDATE support_write_grants SET expires_at = '2000-01-01T00:00:00Z' WHERE token_hash IN (SELECT token_hash FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = '${operatorEmail}'))`)
   await waitReady()
   assert.equal((await operator.call('POST', '/api/messaging/support', { orgId: orgA, body: 'Grant expire' })).status, 403)
+  assert.equal((await operator.call('DELETE', '/api/admin/support')).status, 200)
   assert.equal((await operator.call('POST', `/api/admin/clubs/${orgA}/support`)).status, 200)
   assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
   control(`UPDATE sessions SET support_expires_at = '2000-01-01T00:00:00Z' WHERE user_id = (SELECT id FROM users WHERE email = '${operatorEmail}') AND support_org_id = '${orgA}'`)
@@ -84,6 +120,14 @@ test('expired support message authority fails closed', async () => {
   assert.equal((await operator.call('PUT', '/api/branding', {
     theme: { accent: '#123456', skin: 'sombre' },
   })).status, 403)
+  assert.equal((await operator.call('POST', `/api/admin/events/${eventA}/handled`)).status, 403)
+  assert.equal((await operator.call('POST', `/api/admin/clubs/${orgA}/branches`, {
+    name: `Expired same-club ${uniq()}`,
+  })).status, 403)
+  assert.equal((await operator.call('PUT', `/api/admin/clubs/${orgB}/branding`, {
+    name: `Expired cross-club ${uniq()}`,
+  })).status, 403)
+  assert.equal((await operator.call('DELETE', '/api/admin/support')).status, 200)
 })
 
 test('support-scoped global session revocation allows only an exclusive matching membership', async () => {
@@ -100,6 +144,7 @@ test('support-scoped global session revocation allows only an exclusive matching
 test('explicit exit restores normal global Superadmin security administration', async () => {
   assert.equal((await operator.call('DELETE', '/api/admin/support')).status, 200)
   assert.equal((await operator.call('POST', `/api/admin/events/${eventGlobal}/handled`)).status, 200)
+  assert.equal((await operator.call('POST', `/api/admin/events/${eventPrivate}/handled`)).status, 403)
   assert.equal((await operator.call('DELETE', `/api/admin/users/${userB}/sessions`)).status, 200)
   assert.equal((await clubB.call('GET', '/api/me')).status, 401)
 })

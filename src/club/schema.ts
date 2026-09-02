@@ -15,6 +15,7 @@ export interface Migration {
   version: number
   name: string
   statements: string[]
+  foreignKeysOff?: boolean
 }
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
@@ -523,6 +524,200 @@ MIGRATIONS.push({
         GROUP BY message_id, user_id`,
     `DROP TABLE message_reactions`,
     `ALTER TABLE message_reactions_next RENAME TO message_reactions`,
+  ],
+})
+
+MIGRATIONS.push({
+  version: 13,
+  name: 'access-secure-core',
+  statements: [
+    `CREATE TABLE access_gateways (
+       id TEXT PRIMARY KEY,
+       branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+       name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','online','offline','disabled')),
+       version TEXT CHECK(version IS NULL OR length(version) BETWEEN 1 AND 64),
+       last_seen_at TEXT, last_sync_at TEXT,
+       created_at TEXT NOT NULL DEFAULT (${NOW}), updated_at TEXT NOT NULL DEFAULT (${NOW}),
+       UNIQUE(id, branch_id)
+     )`,
+    `CREATE INDEX idx_access_gateways_branch_created ON access_gateways(branch_id, created_at DESC, id DESC)`,
+    `CREATE TABLE access_devices (
+       id TEXT PRIMARY KEY,
+       gateway_id TEXT NOT NULL, branch_id TEXT NOT NULL,
+       name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+       adapter_type TEXT NOT NULL CHECK(length(adapter_type) BETWEEN 1 AND 64),
+       device_type TEXT NOT NULL CHECK(length(device_type) BETWEEN 1 AND 64),
+       status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','online','offline','disabled')),
+       external_device_id TEXT CHECK(external_device_id IS NULL OR length(external_device_id) BETWEEN 1 AND 120),
+       metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(length(metadata_json) <= 2048 AND json_valid(metadata_json) AND json_type(metadata_json) = 'object'),
+       last_seen_at TEXT, created_at TEXT NOT NULL DEFAULT (${NOW}), updated_at TEXT NOT NULL DEFAULT (${NOW}),
+       UNIQUE(id, branch_id),
+       FOREIGN KEY(gateway_id, branch_id) REFERENCES access_gateways(id, branch_id) ON DELETE RESTRICT
+     )`,
+    `CREATE INDEX idx_access_devices_gateway_created ON access_devices(gateway_id, created_at DESC, id DESC)`,
+    `CREATE UNIQUE INDEX idx_access_devices_external ON access_devices(gateway_id, external_device_id) WHERE external_device_id IS NOT NULL`,
+    `CREATE TABLE access_points (
+       id TEXT PRIMARY KEY, device_id TEXT NOT NULL, branch_id TEXT NOT NULL,
+       name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+       direction TEXT NOT NULL CHECK(direction IN ('entry','exit','bidirectional')),
+       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+       created_at TEXT NOT NULL DEFAULT (${NOW}), updated_at TEXT NOT NULL DEFAULT (${NOW}),
+       UNIQUE(id, branch_id),
+       FOREIGN KEY(device_id, branch_id) REFERENCES access_devices(id, branch_id) ON DELETE RESTRICT
+     )`,
+    `CREATE INDEX idx_access_points_device_created ON access_points(device_id, created_at DESC, id DESC)`,
+    `CREATE INDEX idx_access_points_branch_created ON access_points(branch_id, created_at DESC, id DESC)`,
+    `CREATE TABLE access_credentials (
+       id TEXT PRIMARY KEY, member_id TEXT NOT NULL REFERENCES members(id) ON DELETE RESTRICT,
+       type TEXT NOT NULL CHECK(type IN ('rfid','nfc','qr','fingerprint','face','external')),
+       lookup_hash TEXT NOT NULL CHECK(length(lookup_hash) = 64 AND lookup_hash NOT GLOB '*[^0-9a-f]*'),
+       identifier_mask TEXT NOT NULL CHECK(length(identifier_mask) BETWEEN 4 AND 24),
+       provider TEXT CHECK(provider IS NULL OR length(provider) BETWEEN 1 AND 80),
+       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','revoked','lost','disabled')),
+       revoked_at TEXT, created_at TEXT NOT NULL DEFAULT (${NOW}), updated_at TEXT NOT NULL DEFAULT (${NOW}),
+       CHECK((status = 'revoked' AND revoked_at IS NOT NULL) OR (status != 'revoked' AND revoked_at IS NULL))
+     )`,
+    `CREATE UNIQUE INDEX idx_access_credentials_lookup ON access_credentials(lookup_hash)`,
+    `CREATE INDEX idx_access_credentials_member_status ON access_credentials(member_id, status, created_at DESC, id DESC)`,
+    `CREATE TABLE access_rules (
+       id TEXT PRIMARY KEY, branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+       access_point_id TEXT, member_id TEXT REFERENCES members(id) ON DELETE RESTRICT,
+       discipline_id TEXT REFERENCES disciplines(id) ON DELETE RESTRICT,
+       name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+       effect TEXT NOT NULL CHECK(effect IN ('allow','deny')),
+       priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN 0 AND 1000),
+       days_mask INTEGER NOT NULL DEFAULT 127 CHECK(days_mask BETWEEN 1 AND 127),
+       start_time TEXT, end_time TEXT, valid_from TEXT, valid_until TEXT,
+       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','disabled')),
+       created_at TEXT NOT NULL DEFAULT (${NOW}), updated_at TEXT NOT NULL DEFAULT (${NOW}),
+       CHECK((start_time IS NULL AND end_time IS NULL) OR (start_time GLOB '[0-2][0-9]:[0-5][0-9]' AND end_time GLOB '[0-2][0-9]:[0-5][0-9]' AND start_time < end_time)),
+       CHECK((valid_from IS NULL AND valid_until IS NULL) OR (valid_from IS NOT NULL AND valid_until IS NOT NULL AND valid_from < valid_until)),
+       FOREIGN KEY(access_point_id, branch_id) REFERENCES access_points(id, branch_id) ON DELETE RESTRICT
+     )`,
+    `CREATE INDEX idx_access_rules_eval ON access_rules(branch_id, status, access_point_id, priority DESC, id)`,
+    `CREATE INDEX idx_access_rules_member ON access_rules(member_id, created_at DESC, id DESC)`,
+    `CREATE TABLE access_events (
+       id TEXT PRIMARY KEY, occurred_at TEXT NOT NULL, received_at TEXT NOT NULL DEFAULT (${NOW}),
+       member_id TEXT REFERENCES members(id) ON DELETE RESTRICT,
+       credential_id TEXT REFERENCES access_credentials(id) ON DELETE RESTRICT,
+       gateway_id TEXT REFERENCES access_gateways(id) ON DELETE RESTRICT,
+       device_id TEXT REFERENCES access_devices(id) ON DELETE RESTRICT,
+       access_point_id TEXT REFERENCES access_points(id) ON DELETE RESTRICT,
+       branch_id TEXT REFERENCES branches(id) ON DELETE RESTRICT,
+       discipline_id TEXT REFERENCES disciplines(id) ON DELETE RESTRICT,
+       requested_access_point_id TEXT NOT NULL,
+       direction TEXT NOT NULL CHECK(direction IN ('entry','exit','bidirectional')),
+       decision TEXT NOT NULL CHECK(decision IN ('allow','deny')),
+       reason_code TEXT NOT NULL CHECK(reason_code IN ('ACCESS_GRANTED','ACCESS_POINT_UNKNOWN','CREDENTIAL_UNKNOWN','CREDENTIAL_REVOKED','CREDENTIAL_LOST','CREDENTIAL_DISABLED','MEMBER_INACTIVE','SUBSCRIPTION_EXPIRED','WRONG_BRANCH','WRONG_DISCIPLINE','GATEWAY_DISABLED','DEVICE_DISABLED','ACCESS_POINT_DISABLED','OUTSIDE_ALLOWED_HOURS','ACCESS_RULE_DENIED','SYSTEM_ERROR')),
+       source TEXT NOT NULL CHECK(source IN ('cloud','gateway','manual','simulator')),
+       external_event_id TEXT CHECK(external_event_id IS NULL OR length(external_event_id) BETWEEN 1 AND 128),
+       request_hash TEXT CHECK(request_hash IS NULL OR (length(request_hash) = 64 AND request_hash NOT GLOB '*[^0-9a-f]*')),
+       metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(length(metadata_json) <= 512 AND json_valid(metadata_json) AND json_type(metadata_json) = 'object'),
+       created_at TEXT NOT NULL DEFAULT (${NOW})
+     )`,
+    `CREATE INDEX idx_access_events_time ON access_events(occurred_at DESC, id DESC)`,
+    `CREATE INDEX idx_access_events_branch_discipline_time ON access_events(branch_id, discipline_id, occurred_at DESC, id DESC)`,
+    `CREATE INDEX idx_access_events_discipline_time ON access_events(discipline_id, occurred_at DESC, id DESC)`,
+    `CREATE INDEX idx_access_events_member_time ON access_events(member_id, occurred_at DESC, id DESC)`,
+    `CREATE INDEX idx_access_events_point_time ON access_events(access_point_id, occurred_at DESC, id DESC)`,
+    `CREATE INDEX idx_access_events_decision_time ON access_events(decision, occurred_at DESC, id DESC)`,
+    `CREATE UNIQUE INDEX idx_access_events_gateway_external ON access_events(gateway_id, external_event_id) WHERE gateway_id IS NOT NULL AND external_event_id IS NOT NULL`,
+    `CREATE TRIGGER access_events_no_update BEFORE UPDATE ON access_events BEGIN SELECT RAISE(ABORT, 'ACCESS_EVENT_IMMUTABLE'); END`,
+    `CREATE TRIGGER access_events_no_delete BEFORE DELETE ON access_events BEGIN SELECT RAISE(ABORT, 'ACCESS_EVENT_IMMUTABLE'); END`,
+    `CREATE TABLE access_rate_limits (
+       actor_id TEXT NOT NULL, bucket TEXT NOT NULL, window_started_at TEXT NOT NULL,
+       request_count INTEGER NOT NULL CHECK(request_count >= 0), updated_at TEXT NOT NULL DEFAULT (${NOW}),
+       PRIMARY KEY(actor_id, bucket)
+     )`,
+    `CREATE INDEX idx_access_rate_limits_updated ON access_rate_limits(updated_at)`,
+    `CREATE TABLE access_policy_state (id INTEGER PRIMARY KEY CHECK(id = 1), revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT (${NOW}))`,
+    `INSERT INTO access_policy_state(id) VALUES (1)`,
+    ...['access_gateways','access_devices','access_points','access_credentials','access_rules'].flatMap(table => [
+      `CREATE TRIGGER ${table}_policy_insert AFTER INSERT ON ${table} BEGIN UPDATE access_policy_state SET revision = revision + 1, updated_at = ${NOW} WHERE id = 1; END`,
+      `CREATE TRIGGER ${table}_policy_update AFTER UPDATE ON ${table} BEGIN UPDATE access_policy_state SET revision = revision + 1, updated_at = ${NOW} WHERE id = 1; END`,
+    ]),
+    `CREATE TRIGGER members_access_policy_update AFTER UPDATE OF status, sub_expiry, branch_id, discipline_id ON members BEGIN UPDATE access_policy_state SET revision = revision + 1, updated_at = ${NOW} WHERE id = 1; END`,
+  ],
+})
+
+MIGRATIONS.push({
+  version: 14,
+  name: 'access-policy-lifecycle-and-branch-history',
+  statements: [
+    `CREATE INDEX idx_access_events_branch_time ON access_events(branch_id, occurred_at DESC, id DESC)`,
+    `CREATE TRIGGER branches_access_policy_update AFTER UPDATE OF is_active ON branches
+       WHEN OLD.is_active IS NOT NEW.is_active
+       BEGIN UPDATE access_policy_state SET revision = revision + 1, updated_at = ${NOW} WHERE id = 1; END`,
+    `CREATE TRIGGER disciplines_access_policy_update AFTER UPDATE OF is_active ON disciplines
+       WHEN OLD.is_active IS NOT NEW.is_active
+       BEGIN UPDATE access_policy_state SET revision = revision + 1, updated_at = ${NOW} WHERE id = 1; END`,
+  ],
+})
+
+
+MIGRATIONS.push({
+  version: 15,
+  name: 'access-gateway-credentials-and-nonce',
+  foreignKeysOff: true,
+  statements: [
+    // Extend access_gateways table with machine credential fields and update status constraint to include both old and new values
+    `CREATE TABLE access_gateways_new (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+        name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','provisioned','online','offline','revoked','disabled')),
+        version TEXT CHECK(version IS NULL OR length(version) BETWEEN 1 AND 64),
+        last_seen_at TEXT, last_sync_at TEXT,
+        machine_public_key TEXT,
+        enrollment_token_hash TEXT,
+        enrollment_expires_at TEXT,
+        provisioned_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (${NOW}),
+        updated_at TEXT NOT NULL DEFAULT (${NOW}),
+        UNIQUE(id, branch_id)
+    )`,
+    `INSERT INTO access_gateways_new SELECT id, branch_id, name, status, version, last_seen_at, last_sync_at, NULL, NULL, NULL, NULL, created_at, updated_at FROM access_gateways`,
+    `DROP TABLE access_gateways`,
+    `ALTER TABLE access_gateways_new RENAME TO access_gateways`,
+    `CREATE TABLE IF NOT EXISTS gateway_nonces (
+       gateway_id TEXT NOT NULL,
+       nonce TEXT NOT NULL,
+       expires_at TEXT NOT NULL,
+       PRIMARY KEY (gateway_id, nonce)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_gateway_nonces_expires ON gateway_nonces(expires_at)`,
+    `CREATE TRIGGER gateways_access_policy_update AFTER UPDATE OF status ON access_gateways
+       WHEN OLD.status IS NOT NEW.status
+       BEGIN UPDATE access_policy_state SET revision = revision + 1, updated_at = ${NOW} WHERE id = 1; END`,
+  ],
+})
+
+MIGRATIONS.push({
+  version: 16,
+  name: 'access-gateway-snapshot-signing-keys',
+  statements: [
+    `ALTER TABLE access_policy_state ADD COLUMN snapshot_public_key TEXT`,
+    `ALTER TABLE access_policy_state ADD COLUMN snapshot_private_key TEXT`,
+    `ALTER TABLE access_events ADD COLUMN snapshot_revision INTEGER CHECK(snapshot_revision IS NULL OR snapshot_revision >= 0)`,
+  ],
+})
+
+MIGRATIONS.push({
+  version: 17,
+  name: 'access-snapshot-contract-v2',
+  statements: [
+    `ALTER TABLE access_policy_state ADD COLUMN snapshot_timezone TEXT`,
+    `CREATE TRIGGER access_gateways_policy_delete AFTER DELETE ON access_gateways
+       BEGIN UPDATE access_policy_state SET revision=revision+1,updated_at=${NOW} WHERE id=1; END`,
+    `CREATE TRIGGER access_devices_policy_delete AFTER DELETE ON access_devices
+       BEGIN UPDATE access_policy_state SET revision=revision+1,updated_at=${NOW} WHERE id=1; END`,
+    `CREATE TRIGGER access_points_policy_delete AFTER DELETE ON access_points
+       BEGIN UPDATE access_policy_state SET revision=revision+1,updated_at=${NOW} WHERE id=1; END`,
+    `CREATE TRIGGER access_credentials_policy_delete AFTER DELETE ON access_credentials
+       BEGIN UPDATE access_policy_state SET revision=revision+1,updated_at=${NOW} WHERE id=1; END`,
+    `CREATE TRIGGER access_rules_policy_delete AFTER DELETE ON access_rules
+       BEGIN UPDATE access_policy_state SET revision=revision+1,updated_at=${NOW} WHERE id=1; END`,
   ],
 })
 

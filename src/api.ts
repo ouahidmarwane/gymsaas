@@ -18,6 +18,7 @@ import {
 import {
   parseTheme, readTheme, logoKey, logoExtension, isOwnLogoKey, BrandingError,
 } from './club/branding'
+import { ACCESS_UUID, accessRequestDigest, credentialDigest, maskCredential, normalizeCredential, isValidDateStr } from './club/access'
 
 
 // Reponses -------------------------------------------------------------------
@@ -35,6 +36,13 @@ const json = (data: unknown, init: ResponseInit = {}) =>
   })
 
 const fail = (status: number, error: string) => json({ error }, { status })
+
+const PRIVATE_SECURITY_EVENT_TYPES = "('new_ip','failed_burst')"
+
+function missingTable(error: unknown, table: string): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.toLowerCase().includes('no such table') && message.includes(table)
+}
 
 class HttpError extends Error {
   status: number
@@ -81,7 +89,7 @@ function isPlatformContext(principal: Principal): boolean {
 async function clubAsPlatformAdmin(
   env: Env, principal: Principal, orgId: string, action: string, ip: string | null,
 ): Promise<DurableObjectStub<ClubDatabase>> {
-  if (!principal.isPlatformAdmin) throw new HttpError(403, 'Reserve a la plateforme')
+  if (!isPlatformContext(principal)) throw new HttpError(403, 'Reserve au contexte plateforme')
 
   // On verifie que le club existe avant d'ouvrir son objet : idFromName sur
   // un identifiant quelconque en creerait un vide, migrations comprises.
@@ -126,6 +134,9 @@ const RANK = { viewer: 0, staff: 1, admin: 2, owner: 3 } as const
  * modifie pas le club d'un client par inadvertance.
  */
 function atLeast(principal: Principal, min: keyof typeof RANK, write = false): void {
+  if (principal.supportContextOrgId !== null && principal.supportOrgId === null) {
+    throw new HttpError(403, 'Session de support expiree')
+  }
   const { mode } = activeScope(principal)
 
   if (mode === 'support') {
@@ -159,6 +170,12 @@ type MessagingPerson = { id: string; name: string; role: string }
 const MESSAGE_REACTIONS = ['👍', '❤️', '😂', '👏', '🔥', '💪', '😍', '😮', '😢', '🙏', '✅', '🎉'] as const
 
 function messagingAllowed(principal: Principal): void {
+  // Le support peut lire les donnees metier necessaires au depannage, mais ne
+  // doit jamais devenir membre implicite des conversations privees du club.
+  // Une portee expiree reste egalement fermee jusqu'a la sortie explicite.
+  if (principal.supportContextOrgId !== null) {
+    throw new HttpError(403, 'Messagerie privee inaccessible en mode support')
+  }
   atLeast(principal, 'staff')
   if (!['owner', 'admin', 'staff'].includes(principal.role ?? '')) {
     throw new HttpError(403, 'Messagerie reservee a l equipe du club')
@@ -201,7 +218,15 @@ function conversationFailure(error: unknown): never {
 }
 
 function supportOrg(principal: Principal, url: URL): string | null {
-  if (principal.isPlatformAdmin) return url.searchParams.get('orgId')
+  if (principal.supportContextOrgId !== null) {
+    if (!principal.supportOrgId) throw new HttpError(403, 'Session de support expiree')
+    const requestedOrgId = url.searchParams.get('orgId')
+    if (requestedOrgId && requestedOrgId !== principal.supportOrgId) {
+      throw new HttpError(403, 'Club hors portee support')
+    }
+    return principal.supportOrgId
+  }
+  if (isPlatformContext(principal)) return url.searchParams.get('orgId')
   if (!['owner', 'admin'].includes(principal.role ?? '')) throw new HttpError(403, 'Reserve aux responsables')
   return scopedOrgId(principal)
 }
@@ -982,6 +1007,444 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   }
 }
 
+async function readAccessJson(request: Request, maxBytes: number): Promise<Record<string, unknown>> {
+  const declared = request.headers.get('Content-Length')
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) {
+    throw new HttpError(413, 'Corps de requete trop volumineux', 'PAYLOAD_TOO_LARGE')
+  }
+  const reader = request.body?.getReader()
+  if (!reader) throw new HttpError(400, 'Corps de requete invalide', 'INVALID_JSON')
+  const chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      length += value.byteLength
+      if (length > maxBytes) {
+        await reader.cancel()
+        throw new HttpError(413, 'Corps de requete trop volumineux', 'PAYLOAD_TOO_LARGE')
+      }
+      chunks.push(value)
+    }
+    const bytes = new Uint8Array(length)
+    let offset = 0
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+    const parsed: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.getPrototypeOf(parsed) !== Object.prototype) {
+      throw new Error('plain object required')
+    }
+    return parsed as Record<string, unknown>
+  } catch (error) {
+    if (error instanceof HttpError) throw error
+    throw new HttpError(400, 'Corps de requete invalide', 'INVALID_JSON')
+  }
+}
+
+function onlyFields(body: Record<string, unknown>, allowed: readonly string[]): void {
+  const allow = new Set(allowed)
+  const unknown = Object.keys(body).find(key => !allow.has(key))
+  if (unknown) throw new HttpError(400, `Champ inconnu : ${unknown}`, 'UNKNOWN_FIELD')
+}
+
+function accessId(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !ACCESS_UUID.test(value)) throw new HttpError(400, `${field} invalide`, 'INVALID_ID')
+  return value.toLowerCase()
+}
+
+function accessEnum(value: unknown, field: string, values: readonly string[]): string {
+  if (typeof value !== 'string' || !values.includes(value)) throw new HttpError(400, `${field} invalide`, 'INVALID_ENUM')
+  return value
+}
+
+function accessOptional(value: unknown, field: string, max: number): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string') throw new HttpError(400, `${field} invalide`, 'INVALID_FIELD')
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (trimmed.length > max) throw new HttpError(400, `${field} invalide`, 'INVALID_FIELD')
+  return trimmed
+}
+
+function accessUtcInstant(value: unknown, field: string): string | null {
+  // Read enough to classify offset/non-canonical ISO values as rule errors;
+  // only the exact 20-character UTC-seconds representation is accepted.
+  const instant = accessOptional(value, field, 40)
+  if (instant === null) return null
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(instant)) {
+    throw new HttpError(400, `${field} doit etre un instant UTC canonique`, 'INVALID_RULE')
+  }
+  const parsed = new Date(instant)
+  if (!Number.isFinite(parsed.getTime()) || isoSeconds(parsed) !== instant) {
+    throw new HttpError(400, `${field} invalide`, 'INVALID_RULE')
+  }
+  return instant
+}
+
+function accessCredentialReference(body: Record<string, unknown>, type: string): { provider: string | null; normalized: string } {
+  const external = ['fingerprint','face','external'].includes(type)
+  const provider = accessOptional(body.provider, 'provider', 80)
+  if (external) {
+    if (Object.prototype.hasOwnProperty.call(body, 'identifier')) throw new HttpError(400, 'identifier interdit pour une reference externe', 'INVALID_CREDENTIAL')
+    if (!provider || typeof body.externalCredentialId !== 'string') throw new HttpError(400, 'provider et externalCredentialId requis', 'INVALID_CREDENTIAL')
+    return { provider, normalized: normalizeCredential(type, body.externalCredentialId) }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'externalCredentialId')) throw new HttpError(400, 'externalCredentialId reserve aux references externes', 'INVALID_CREDENTIAL')
+  if (typeof body.identifier !== 'string') throw new HttpError(400, 'identifier requis', 'INVALID_CREDENTIAL')
+  return { provider, normalized: normalizeCredential(type, body.identifier) }
+}
+
+function accessOrigin(request: Request): void {
+  const origin = request.headers.get('Origin')
+  let expected: string
+  try { expected = new URL(request.url).origin } catch { throw new HttpError(403, 'Origine invalide', 'CSRF_ORIGIN_INVALID') }
+  if (!origin || origin === 'null' || origin !== expected) throw new HttpError(403, 'Origine invalide', 'CSRF_ORIGIN_INVALID')
+}
+
+function accessPage(url: URL, filter: string): { limit: number; cursor: { val: string; id: string } | null } {
+  const raw = url.searchParams.get('limit')
+  if (raw !== null && !/^[1-9]\d*$/.test(raw)) throw new HttpError(400, 'Limite invalide', 'INVALID_PAGE')
+  const limit = raw === null ? 50 : Number(raw)
+  if (limit > 100) throw new HttpError(400, 'Limite invalide', 'INVALID_PAGE')
+  const encoded = url.searchParams.get('cursor')
+  if (!encoded) return { limit, cursor: null }
+  if (encoded.length > 512 || !/^[A-Za-z0-9_-]+$/.test(encoded)) throw new HttpError(400, 'Curseur invalide', 'INVALID_CURSOR')
+  try {
+    let b64 = encoded.replace(/-/g, '+').replace(/_/g, '/')
+    while (b64.length % 4) b64 += '='
+    const value: unknown = JSON.parse(atob(b64))
+    if (!value || typeof value !== 'object' || (value as { v?: unknown }).v !== 1 || (value as { filter?: unknown }).filter !== filter || typeof (value as { val?: unknown }).val !== 'string' || !ACCESS_UUID.test(String((value as { id?: unknown }).id))) throw new Error()
+    return { limit, cursor: { val: String((value as { val: unknown }).val), id: String((value as { id: unknown }).id) } }
+  } catch { throw new HttpError(400, 'Curseur invalide', 'INVALID_CURSOR') }
+}
+
+function encodeAccessCursor(cursor: { val: string; id: string } | null, filter: string): string | null {
+  if (!cursor) return null
+  return btoa(JSON.stringify({ v: 1, filter, ...cursor })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function accessBase64Url(bytes: ArrayBuffer | Uint8Array): string {
+  const value = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
+  return btoa(String.fromCharCode(...value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function gatewayRegistryRoute(env: Env, gatewayId: string): Promise<{ orgId: string; timezone: string } | null> {
+  const row = await env.CONTROL.prepare(
+    `SELECT r.org_id,o.timezone FROM access_gateway_registry r
+       JOIN organizations o ON o.id=r.org_id
+      WHERE r.gateway_id=? AND o.status NOT IN ('deleting','deleted')`,
+  ).bind(gatewayId).first<{ org_id: string; timezone: string }>()
+  if (!row) return null
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: row.timezone }).format(new Date())
+  } catch {
+    throw new HttpError(503, 'Configuration Gateway indisponible', 'GATEWAY_CONFIGURATION_INVALID')
+  }
+  return { orgId: row.org_id, timezone: row.timezone }
+}
+
+async function assertGatewayEntitled(env: Env, orgId: string, path: string, method: string): Promise<void> {
+  const entitlement = await evaluateEntitlement(env, orgId)
+  if (!entitlement.readOnly) return
+  if (env.ENTITLEMENT_MODE === 'observe') {
+    console.warn('[ENTITLEMENT_OBSERVE] Gateway operation allowed in observe mode for readOnly club', {
+      orgId, state: entitlement.state, path, method,
+    })
+    return
+  }
+  throw new HttpError(403, 'Gateway non autorise', 'ENTITLEMENT_READ_ONLY')
+}
+
+async function handleGatewayM2M(request: Request, env: Env, url: URL): Promise<Response> {
+  const knownPaths = ['/api/access/gateway/heartbeat', '/api/access/gateway/snapshot', '/api/access/gateway/events']
+  const expectedMethod = url.pathname === '/api/access/gateway/snapshot' ? 'GET' : 'POST'
+  if (!knownPaths.includes(url.pathname)) return fail(404, 'Route Gateway inconnue')
+  if (request.method !== expectedMethod) return fail(405, 'Methode non autorisee')
+  const header = request.headers.get('Gateway-Id')?.toLowerCase()
+  if (!header || !ACCESS_UUID.test(header)) return json({ error: 'Gateway non autorise', code: 'GATEWAY_UNAUTHORIZED' }, { status: 401 })
+  const routing = await gatewayRegistryRoute(env, header)
+  if (!routing) return json({ error: 'Gateway non autorise', code: 'GATEWAY_UNAUTHORIZED' }, { status: 401 })
+  const { orgId } = routing
+  await assertGatewayEntitled(env, orgId, url.pathname, request.method)
+  const club = env.CLUB.get(env.CLUB.idFromName(orgId))
+  return club.handleGatewayM2M(request, { timezone: routing.timezone })
+}
+
+async function handleGatewayEnrollment(request: Request, env: Env): Promise<Response> {
+  const body = await readAccessJson(request, 4096)
+  onlyFields(body, ['gatewayId', 'token'])
+  if (typeof body.gatewayId !== 'string' || !ACCESS_UUID.test(body.gatewayId) || typeof body.token !== 'string' || !/^[A-Za-z0-9_-]{43,128}$/.test(body.token)) {
+    return json({ error: 'Enrolement refuse', code: 'GATEWAY_ENROLLMENT_DENIED' }, { status: 401 })
+  }
+  const gatewayId = body.gatewayId.toLowerCase()
+  const routing = await gatewayRegistryRoute(env, gatewayId)
+  if (!routing) return json({ error: 'Enrolement refuse', code: 'GATEWAY_ENROLLMENT_DENIED' }, { status: 401 })
+  const { orgId } = routing
+  await assertGatewayEntitled(env, orgId, '/api/access/gateways/enroll', 'POST')
+  try {
+    const result = await env.CLUB.get(env.CLUB.idFromName(orgId)).enrollGateway({ gatewayId, token: body.token })
+    return json(result, { headers: { 'Cache-Control': 'no-store' } })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (['NOT_FOUND','GATEWAY_NOT_PENDING','NO_ENROLLMENT_TOKEN','INVALID_ENROLLMENT_TOKEN','ENROLLMENT_TOKEN_EXPIRED','GATEWAY_ENROLLMENT_DENIED'].includes(message)) {
+      return json({ error: 'Enrolement refuse', code: 'GATEWAY_ENROLLMENT_DENIED' }, { status: 401 })
+    }
+    throw error
+  }
+}
+
+async function handleAccess(request: Request, env: Env, principal: Principal, url: URL, ip: string | null): Promise<Response | null> {
+  if (!url.pathname.startsWith('/api/access/')) return null
+  const method = request.method
+  const path = url.pathname
+  const collection = path.match(/^\/api\/access\/(gateways|devices|points|credentials|rules|events)$/)
+  const resource = path.match(/^\/api\/access\/(gateways|devices|points|credentials|rules)\/([^/]+)$/)
+  const provision = path.match(/^\/api\/access\/gateways\/([^/]+)\/provision$/)
+  const evaluate = path === '/api/access/evaluate'
+  const options = path === '/api/access/options'
+  const summary = path === '/api/access/summary'
+  const memberSummary = path.match(/^\/api\/access\/members\/([^/]+)\/summary$/)
+  if (!collection && !resource && !provision && !evaluate && !options && !summary && !memberSummary) return fail(404, 'Route Access inconnue')
+
+  const write = method !== 'GET' && method !== 'HEAD'
+  atLeast(principal, evaluate ? 'staff' : write ? 'admin' : 'staff', write)
+  const orgId = scopedOrgId(principal)
+  const club = clubOf(env, principal)
+  const scope = scopeOf(principal)
+  const bucket = evaluate ? 'access-evaluate' : collection?.[1] === 'events' ? 'access-events-read'
+    : collection?.[1] === 'credentials' || resource?.[1] === 'credentials' ? (write ? 'access-credential-write' : 'access-read')
+    : write ? 'access-admin-write' : 'access-read'
+  const ceiling = bucket === 'access-evaluate' ? 300 : bucket === 'access-credential-write' ? 20 : bucket === 'access-events-read' ? 60 : bucket === 'access-admin-write' ? 60 : 120
+  const rate = await club.accessRateLimit(principal.userId, bucket, ceiling, 60)
+  if (!rate.allowed) return json({ error: 'Trop de requetes', code: 'RATE_LIMITED' }, { status: 429, headers: { 'Retry-After': String(rate.retryAfter) } })
+
+  if (write) {
+    accessOrigin(request)
+    await assertEntitledWrite(env, principal, orgId, path, method)
+  }
+  const actor = { id: principal.userId, name: principal.name }
+
+  try {
+    if (memberSummary && method === 'GET') {
+      const targetMemberId = accessId(memberSummary[1], 'memberId')
+      try {
+        const result = await club.accessMemberSummary(targetMemberId, scope)
+        return json(result)
+      } catch (error) {
+        if (error instanceof Error && error.message === 'NOT_FOUND') {
+          return fail(404, 'Membre introuvable')
+        }
+        throw error
+      }
+    }
+
+    if (summary && method === 'GET') {
+      const rawDate = url.searchParams.get('date')
+      const date = accessOptional(rawDate, 'date', 20)
+      if (date !== null && !isValidDateStr(date)) {
+        throw new HttpError(400, 'Date invalide', 'INVALID_DATE')
+      }
+      const tz = principal.timezone
+      const result = await club.accessSummary(scope, date ?? undefined, tz)
+      return json(result)
+    }
+
+    if (options && method === 'GET') {
+      const kind=accessEnum(url.searchParams.get('kind'),'kind',['branches','disciplines','members','gateways','devices','points']) as 'branches'|'disciplines'|'members'|'gateways'|'devices'|'points'
+      const search=accessOptional(url.searchParams.get('q'),'q',80)
+      const cursorFilter=JSON.stringify({kind,search})
+      const page=accessPage(url,cursorFilter)
+      const result=await club.accessOptions(kind,{...page,search,scope})
+      return json({items:result.items,nextCursor:encodeAccessCursor(result.nextCursor,cursorFilter),hasMore:Boolean(result.nextCursor),limit:page.limit})
+    }
+
+    if (collection && method === 'GET') {
+      const kind = collection[1] as 'gateways'|'devices'|'points'|'credentials'|'rules'|'events'
+      const search = accessOptional(url.searchParams.get('q'), 'q', 80)
+      const gatewayId = url.searchParams.has('gatewayId') ? accessId(url.searchParams.get('gatewayId'), 'gatewayId') : null
+      const deviceId = url.searchParams.has('deviceId') ? accessId(url.searchParams.get('deviceId'), 'deviceId') : null
+      const memberId = url.searchParams.has('memberId') ? accessId(url.searchParams.get('memberId'), 'memberId') : null
+      const pointId = url.searchParams.has('accessPointId') ? accessId(url.searchParams.get('accessPointId'), 'accessPointId') : null
+      const decision = url.searchParams.has('decision') ? accessEnum(url.searchParams.get('decision'), 'decision', ['allow','deny']) : null
+      const direction = url.searchParams.has('direction') ? accessEnum(url.searchParams.get('direction'), 'direction', ['entry','exit','bidirectional']) : null
+      const cursorFilter=JSON.stringify({kind,search,gatewayId,deviceId,memberId,pointId,decision,direction})
+      const page = accessPage(url,cursorFilter)
+      const result = await club.listAccess(kind, { ...page, scope, search, gatewayId, deviceId, memberId, pointId, decision, direction })
+      return json({ items: result.items, nextCursor: encodeAccessCursor(result.nextCursor,cursorFilter), hasMore: Boolean(result.nextCursor), limit: page.limit })
+    }
+
+    if (collection && method === 'POST' && collection[1] !== 'events') {
+      const kind = collection[1]
+      const body = await readAccessJson(request, kind === 'credentials' ? 4096 : 8192)
+      let result: unknown
+      if (kind === 'gateways') {
+        onlyFields(body, ['branchId','name','status','version'])
+        const gatewayId = crypto.randomUUID()
+        await env.CONTROL.prepare('INSERT INTO access_gateway_registry(gateway_id,org_id) VALUES(?,?)').bind(gatewayId, orgId).run()
+        try {
+          result = await club.createAccessGateway({ id: gatewayId, branchId: accessId(body.branchId,'branchId'), name: str(body.name,'name',120), status: accessEnum(body.status??'pending','status',['pending','online','offline','disabled']), version: accessOptional(body.version,'version',64), scope }, actor)
+        } catch (error) {
+          await env.CONTROL.prepare('DELETE FROM access_gateway_registry WHERE gateway_id=? AND org_id=?').bind(gatewayId, orgId).run()
+          throw error
+        }
+      } else if (kind === 'devices') {
+        onlyFields(body, ['gatewayId','name','adapterType','deviceType','status','externalDeviceId','metadata'])
+        const metadata = body.metadata ?? {}
+        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new HttpError(400,'metadata invalide','INVALID_METADATA')
+        const safe: Record<string,string> = {}
+        for (const [key,value] of Object.entries(metadata as Record<string,unknown>)) {
+          if (!['manufacturer','model','firmware','locationNote'].includes(key) || typeof value !== 'string' || value.length > 100) throw new HttpError(400,'metadata invalide','INVALID_METADATA')
+          safe[key] = value
+        }
+        result = await club.createAccessDevice({ gatewayId:accessId(body.gatewayId,'gatewayId'),name:str(body.name,'name',120),adapterType:str(body.adapterType,'adapterType',64),deviceType:str(body.deviceType,'deviceType',64),status:accessEnum(body.status??'pending','status',['pending','online','offline','disabled']),externalDeviceId:accessOptional(body.externalDeviceId,'externalDeviceId',120),metadata:safe,scope },actor)
+      } else if (kind === 'points') {
+        onlyFields(body,['deviceId','name','direction','status'])
+        result=await club.createAccessPoint({deviceId:accessId(body.deviceId,'deviceId'),name:str(body.name,'name',120),direction:accessEnum(body.direction,'direction',['entry','exit','bidirectional']),status:accessEnum(body.status??'active','status',['active','disabled']),scope},actor)
+      } else if (kind === 'credentials') {
+        onlyFields(body,['memberId','type','identifier','externalCredentialId','provider'])
+        const type=accessEnum(body.type,'type',['rfid','nfc','qr','fingerprint','face','external'])
+        const { provider, normalized }=accessCredentialReference(body,type)
+        result=await club.createAccessCredential({memberId:accessId(body.memberId,'memberId'),type,lookupHash:await credentialDigest(type,provider,normalized),identifierMask:maskCredential(normalized),provider,scope},actor)
+      } else {
+        onlyFields(body,['branchId','accessPointId','memberId','disciplineId','name','effect','priority','daysMask','startTime','endTime','validFrom','validUntil','status'])
+        const priority=body.priority??0, daysMask=body.daysMask??127
+        if(!Number.isInteger(priority)||Number(priority)<0||Number(priority)>1000||!Number.isInteger(daysMask)||Number(daysMask)<1||Number(daysMask)>127) throw new HttpError(400,'Regle invalide','INVALID_RULE')
+        const startTime=accessOptional(body.startTime,'startTime',5),endTime=accessOptional(body.endTime,'endTime',5)
+        if(Boolean(startTime)!==Boolean(endTime)||startTime&&(!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime!)||startTime>=endTime!)) throw new HttpError(400,'Plage horaire invalide','INVALID_RULE')
+        const validFrom=accessUtcInstant(body.validFrom,'validFrom'), validUntil=accessUtcInstant(body.validUntil,'validUntil')
+        if(Boolean(validFrom)!==Boolean(validUntil)||(validFrom&&validFrom>=validUntil!)) throw new HttpError(400,'Periode invalide','INVALID_RULE')
+        result=await club.createAccessRule({branchId:accessId(body.branchId,'branchId'),accessPointId:body.accessPointId?accessId(body.accessPointId,'accessPointId'):null,memberId:body.memberId?accessId(body.memberId,'memberId'):null,disciplineId:body.disciplineId?accessId(body.disciplineId,'disciplineId'):null,name:str(body.name,'name',120),effect:accessEnum(body.effect,'effect',['allow','deny']),priority:Number(priority),daysMask:Number(daysMask),startTime,endTime,validFrom,validUntil,status:accessEnum(body.status??'active','status',['active','disabled']),scope},actor)
+      }
+      if(activeScope(principal).mode==='support') await auditSupport(env,principal,`support_${method.toLowerCase()}_${kind}`,result,ip)
+      return json(result,{status:201})
+    }
+
+    if (provision && method === 'POST') {
+      const gatewayId = accessId(provision[1], 'gatewayId')
+      const body = await readAccessJson(request, 256)
+      onlyFields(body, [])
+      const registered = await env.CONTROL.prepare('SELECT org_id FROM access_gateway_registry WHERE gateway_id=?').bind(gatewayId).first<{ org_id: string }>()
+      if (registered && registered.org_id !== orgId) throw new HttpError(404, 'Ressource Access introuvable', 'ACCESS_NOT_FOUND')
+      const registryCreated = !registered
+      if (registryCreated) await env.CONTROL.prepare('INSERT INTO access_gateway_registry(gateway_id,org_id) VALUES(?,?)').bind(gatewayId, orgId).run()
+      const token = accessBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+      const tokenHash = accessBase64Url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))
+      const expiresAt = isoSeconds(new Date(Date.now() + 15 * 60 * 1000))
+      try {
+        await club.issueGatewayEnrollment(gatewayId, tokenHash, expiresAt, actor)
+      } catch (error) {
+        if (registryCreated) await env.CONTROL.prepare('DELETE FROM access_gateway_registry WHERE gateway_id=? AND org_id=?').bind(gatewayId, orgId).run()
+        throw error
+      }
+      return json({ gatewayId, enrollmentToken: token, expiresAt }, { headers: { 'Cache-Control': 'no-store' } })
+    }
+
+    if (resource && (method === 'PATCH' || method === 'DELETE')) {
+      const kind=resource[1] as 'gateways'|'devices'|'points'|'credentials'|'rules'
+      const id=accessId(resource[2],'id')
+      if(method==='DELETE') {
+        if(request.headers.get('Content-Length') && request.headers.get('Content-Length')!=='0') throw new HttpError(400,'DELETE sans corps attendu','INVALID_BODY')
+        await club.disableAccess(kind,id,scope,actor)
+        if (kind === 'gateways') {
+          await env.CONTROL.prepare('DELETE FROM access_gateway_registry WHERE gateway_id=? AND org_id=?').bind(id, orgId).run()
+        }
+      } else {
+        const body=await readAccessJson(request,kind==='credentials'?4096:8192)
+        const allowed:Record<typeof kind,string[]>={gateways:['name','status','version'],devices:['name','status','adapterType','deviceType','externalDeviceId','metadata'],points:['name','status','direction'],credentials:['status'],rules:['name','effect','priority','daysMask','startTime','endTime','validFrom','validUntil','status']}
+        onlyFields(body,allowed[kind])
+        const clean: Record<string, unknown> = {}
+        if (body.name !== undefined) clean.name = str(body.name, 'name', 120)
+        if (kind === 'gateways') {
+          if (body.status !== undefined) clean.status = accessEnum(body.status,'status',['pending','online','offline','disabled'])
+          if (body.version !== undefined) clean.version = accessOptional(body.version,'version',64)
+        } else if (kind === 'devices') {
+          if (body.status !== undefined) clean.status = accessEnum(body.status,'status',['pending','online','offline','disabled'])
+          if (body.adapterType !== undefined) clean.adapterType = str(body.adapterType,'adapterType',64)
+          if (body.deviceType !== undefined) clean.deviceType = str(body.deviceType,'deviceType',64)
+          if (body.externalDeviceId !== undefined) clean.externalDeviceId = accessOptional(body.externalDeviceId,'externalDeviceId',120)
+          if (body.metadata !== undefined) {
+            if (!body.metadata || typeof body.metadata !== 'object' || Array.isArray(body.metadata)) throw new HttpError(400,'metadata invalide','INVALID_METADATA')
+            const metadata: Record<string,string> = {}
+            for (const [key,value] of Object.entries(body.metadata as Record<string,unknown>)) {
+              if (!['manufacturer','model','firmware','locationNote'].includes(key) || typeof value !== 'string' || value.length > 100) throw new HttpError(400,'metadata invalide','INVALID_METADATA')
+              metadata[key]=value
+            }
+            clean.metadata=metadata
+          }
+        } else if (kind === 'points') {
+          if (body.status !== undefined) clean.status=accessEnum(body.status,'status',['active','disabled'])
+          if (body.direction !== undefined) clean.direction=accessEnum(body.direction,'direction',['entry','exit','bidirectional'])
+        } else if (kind === 'credentials') {
+          if (body.status !== undefined) clean.status=accessEnum(body.status,'status',['active','revoked','lost','disabled'])
+        } else {
+          if (body.effect !== undefined) clean.effect=accessEnum(body.effect,'effect',['allow','deny'])
+          if (body.status !== undefined) clean.status=accessEnum(body.status,'status',['active','disabled'])
+          if (body.priority !== undefined) { if(!Number.isInteger(body.priority)||Number(body.priority)<0||Number(body.priority)>1000) throw new HttpError(400,'Priorite invalide','INVALID_RULE');clean.priority=body.priority }
+          if (body.daysMask !== undefined) { if(!Number.isInteger(body.daysMask)||Number(body.daysMask)<1||Number(body.daysMask)>127) throw new HttpError(400,'Jours invalides','INVALID_RULE');clean.daysMask=body.daysMask }
+          for (const field of ['startTime','endTime'] as const) if (body[field] !== undefined) clean[field]=accessOptional(body[field],field,5)
+          for (const field of ['validFrom','validUntil'] as const) if (body[field] !== undefined) clean[field]=accessUtcInstant(body[field],field)
+          if ('startTime' in body || 'endTime' in body) {
+            if (!('startTime' in body) || !('endTime' in body)) throw new HttpError(400,'Plage horaire complete requise','INVALID_RULE')
+            const start=clean.startTime as string|null, end=clean.endTime as string|null
+            if (Boolean(start)!==Boolean(end) || (start && (!/^([01]\d|2[0-3]):[0-5]\d$/.test(start) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(end!) || start>=end!))) throw new HttpError(400,'Plage horaire invalide','INVALID_RULE')
+          }
+          if ('validFrom' in body || 'validUntil' in body) {
+            if (!('validFrom' in body) || !('validUntil' in body)) throw new HttpError(400,'Periode complete requise','INVALID_RULE')
+            const from=clean.validFrom as string|null, until=clean.validUntil as string|null
+            if (Boolean(from)!==Boolean(until) || (from && from>=until!)) throw new HttpError(400,'Periode invalide','INVALID_RULE')
+          }
+        }
+        if (!Object.keys(clean).length) throw new HttpError(400,'Aucune modification valide','EMPTY_PATCH')
+        await club.patchAccess(kind,id,clean,scope,actor)
+      }
+      if(activeScope(principal).mode==='support') await auditSupport(env,principal,`support_${method.toLowerCase()}_access_${kind}`,{id},ip)
+      return json({ok:true})
+    }
+
+    if (evaluate && method === 'POST') {
+      const body=await readAccessJson(request,4096)
+      onlyFields(body,['credentialType','identifier','externalCredentialId','provider','accessPointId','externalEventId'])
+      const type=accessEnum(body.credentialType,'credentialType',['rfid','nfc','qr','fingerprint','face','external'])
+      const { provider, normalized }=accessCredentialReference(body,type)
+      const pointId=accessId(body.accessPointId,'accessPointId')
+      const externalEventId=accessOptional(body.externalEventId,'externalEventId',128)
+      const occurredAt=isoSeconds(new Date())
+      let parts: Intl.DateTimeFormatPart[]
+      try { parts=new Intl.DateTimeFormat('en-CA',{timeZone:principal.timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23',weekday:'short'}).formatToParts(new Date(occurredAt)) } catch { throw new HttpError(503,'Decision indisponible','SYSTEM_ERROR') }
+      const part=(kind:string)=>parts.find(p=>p.type===kind)?.value??''
+      const weekdays:Record<string,number>={Mon:0,Tue:1,Wed:2,Thu:3,Fri:4,Sat:5,Sun:6}
+      const localWeekday=weekdays[part('weekday')]
+      if(localWeekday===undefined) throw new HttpError(503,'Decision indisponible','SYSTEM_ERROR')
+      const canonical=JSON.stringify({type,provider,credential:normalized,pointId,externalEventId,branchId:scope.branchId??null,disciplineId:scope.disciplineId??null})
+      try {
+        const result=await club.evaluateAccess({lookupHash:await credentialDigest(type,provider,normalized),accessPointId:pointId,externalEventId,requestHash:externalEventId?await accessRequestDigest(canonical):null,scope,occurredAt,localDate:`${part('year')}-${part('month')}-${part('day')}`,localTime:`${part('hour')}:${part('minute')}`,localWeekday})
+        const audited=result as unknown as Record<string,unknown>
+        if(activeScope(principal).mode==='support') await auditSupport(env,principal,'support_access_evaluated',{eventId:audited.eventId,decision:audited.decision,reason:audited.reason,accessPointId:audited.accessPointId,replayed:Boolean(audited.replayed)},ip)
+        return json(result)
+      } catch (error) {
+        if (error instanceof Error && error.message === 'IDEMPOTENCY_CONFLICT') throw error
+        console.error('access evaluation unavailable', { orgId, actorId: principal.userId })
+        return json({ decision:'deny', reason:'SYSTEM_ERROR', accessPointId:pointId, occurredAt, replayed:false }, { status:503 })
+      }
+    }
+
+    return fail(405,'Methode non autorisee')
+  } catch(error) {
+    const message=error instanceof Error?error.message:''
+    if(error instanceof HttpError) throw error
+    if(message==='NOT_FOUND') throw new HttpError(404,'Ressource Access introuvable','ACCESS_NOT_FOUND')
+    if(message==='RULE_LIMIT') throw new HttpError(409,'Limite de regles atteinte','ACCESS_RULE_LIMIT')
+    if(message==='TERMINAL_CREDENTIAL') throw new HttpError(409,'Un identifiant revoque ne peut pas etre reactive','CREDENTIAL_REVOKED')
+    if(message==='GATEWAY_NOT_PENDING') throw new HttpError(409,'Gateway non disponible pour enrolement','GATEWAY_NOT_PENDING')
+    if(message==='INVALID_CREDENTIAL') throw new HttpError(400,'Identifiant invalide','INVALID_CREDENTIAL')
+    if(message==='INVALID_FIELD') throw new HttpError(400,'Champ Access invalide','INVALID_FIELD')
+    if(message==='INVALID_RULE') throw new HttpError(400,'Regle invalide','INVALID_RULE')
+    if(message==='IDEMPOTENCY_CONFLICT') throw new HttpError(409,'Cle idempotente reutilisee avec une autre requete','IDEMPOTENCY_CONFLICT')
+    if(message.includes('UNIQUE constraint failed: access_credentials.lookup_hash')) throw new HttpError(409,'Identifiant deja enregistre','CREDENTIAL_EXISTS')
+    throw error
+  }
+}
+
 // Routeur --------------------------------------------------------------------
 //
 // Expose une fonction pure (request, env) -> Response, montee par Next sous
@@ -1024,10 +1487,16 @@ export const api = {
       if (path === '/api/auth/signup' && method === 'POST') return await signup(request, env, ip)
       if (path === '/api/auth/login' && method === 'POST') return await login(request, env, ip)
 
+      if (path.startsWith('/api/access/gateway/')) return await handleGatewayM2M(request, env, url)
+      if (path === '/api/access/gateways/enroll' && method === 'POST') return await handleGatewayEnrollment(request, env)
+
       // Tout ce qui suit exige une session valide.
       const token = readSessionCookie(request)
       const principal = await resolveSession(env, token)
       if (!principal) return fail(401, 'Non authentifie')
+
+      const accessResponse = await handleAccess(request, env, principal, url, ip)
+      if (accessResponse) return accessResponse
 
       if (path === '/api/auth/logout' && method === 'POST') {
         if (token) await destroySession(env, token)
@@ -1043,21 +1512,21 @@ export const api = {
         // Seulement si l'appelant a reellement acces a ce club : un compte
         // dont l'appartenance a ete revoquee garde son org_id en session,
         // et lirait encore les chiffres du club sans y avoir droit.
-        const entitled = scope.mode === 'support' || principal.role !== null
+        const entitled = scope.mode === 'support' || principal!.role !== null
         const capabilities = scope.orgId && entitled
-          ? await clubOf(env, principal).capabilities()
+          ? await clubOf(env, principal!).capabilities()
           : null
         // Le mode support doit etre visible dans l'interface : une banniere
         // permanente vaut mieux qu'un exploitant qui oublie ou il se trouve.
         const entitlement = scope.orgId ? await evaluateEntitlement(env, scope.orgId) : null
         return json({
-          user: { id: principal.userId, name: principal.name, email: principal.email },
-          isPlatformAdmin: principal.isPlatformAdmin,
-          org: principal.orgId ? { id: principal.orgId, role: principal.role } : null,
+          user: { id: principal!.userId, name: principal!.name, email: principal!.email },
+          isPlatformAdmin: principal!.isPlatformAdmin,
+          org: principal!.orgId ? { id: principal!.orgId, role: principal!.role } : null,
           scope: {
             mode: scope.mode,
             orgId: scope.orgId,
-            canWrite: scope.mode === 'support' ? principal.supportWrite : true,
+            canWrite: scope.mode === 'support' ? principal!.supportWrite : true,
           },
           branding: scope.orgId ? await brandingOf(env, scope.orgId) : null,
           capabilities,
@@ -1320,32 +1789,59 @@ export const api = {
       }
 
       if (path === '/api/messaging/support/threads' && method === 'GET') {
+        if (principal.supportContextOrgId !== null && !principal.supportOrgId) {
+          return fail(403, 'Session de support expiree')
+        }
         if (!principal.isPlatformAdmin && !['owner', 'admin', 'staff'].includes(principal.role ?? '')) {
           return fail(403, 'Reserve aux responsables')
         }
-        if (principal.isPlatformAdmin) {
+        if (isPlatformContext(principal)) {
           const { results } = await env.CONTROL.prepare(
             `SELECT t.org_id AS orgId, o.name AS orgName, t.updated_at AS updatedAt,
-                    (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastBody,
+                    last.body AS lastBody,
+                    notification.body AS notificationBody,
+                    notification.created_at AS notificationAt,
                     0 AS unread,
                     t.id
                FROM support_threads t
                JOIN organizations o ON o.id = t.org_id
+               LEFT JOIN support_messages last ON last.id = (
+                 SELECT m.id FROM support_messages m
+                  WHERE m.thread_id = t.id
+                  ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+               )
+               LEFT JOIN support_messages notification ON notification.id = (
+                 SELECT m.id FROM support_messages m
+                  WHERE m.thread_id = t.id AND (m.author_id IS NULL OR m.author_id != ?)
+                  ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+               )
               ORDER BY t.updated_at DESC
               LIMIT 100`,
-          ).all()
+          ).bind(principal.userId).all()
           return json({ threads: results })
         }
         const orgId = scopedOrgId(principal)
         const { results } = await env.CONTROL.prepare(
           `SELECT t.org_id AS orgId, o.name AS orgName, t.updated_at AS updatedAt,
-                  (SELECT body FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS lastBody,
+                  last.body AS lastBody,
+                  notification.body AS notificationBody,
+                  notification.created_at AS notificationAt,
                   0 AS unread,
                   t.id
              FROM support_threads t
              JOIN organizations o ON o.id = t.org_id
+             LEFT JOIN support_messages last ON last.id = (
+               SELECT m.id FROM support_messages m
+                WHERE m.thread_id = t.id
+                ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+             )
+             LEFT JOIN support_messages notification ON notification.id = (
+               SELECT m.id FROM support_messages m
+                WHERE m.thread_id = t.id AND (m.author_id IS NULL OR m.author_id != ?)
+                ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+             )
             WHERE t.org_id = ?`,
-        ).bind(orgId).all()
+        ).bind(principal.userId, orgId).all()
         return json({ threads: results })
       }
 
@@ -1370,9 +1866,22 @@ export const api = {
 
       if (path === '/api/messaging/support' && method === 'POST') {
         const body = await readJson(request)
-        const orgId = principal.isPlatformAdmin
-          ? str(body.orgId, 'orgId', 80)
-          : scopedOrgId(principal)
+        let orgId: string
+        if (principal.supportContextOrgId !== null) {
+          if (!principal.supportOrgId) return fail(403, 'Session de support expiree')
+          if (!principal.supportWrite) {
+            return fail(403, 'Mode support en lecture seule : activez l ecriture d abord')
+          }
+          const requestedOrgId = typeof body.orgId === 'string' ? body.orgId : null
+          if (requestedOrgId && requestedOrgId !== principal.supportOrgId) {
+            return fail(403, 'Club hors portee support')
+          }
+          orgId = principal.supportOrgId
+        } else {
+          orgId = isPlatformContext(principal)
+            ? str(body.orgId, 'orgId', 80)
+            : scopedOrgId(principal)
+        }
         if (!principal.isPlatformAdmin && !['owner', 'admin', 'staff'].includes(principal.role ?? '')) {
           return fail(403, 'Reserve aux responsables')
         }
@@ -1760,19 +2269,22 @@ export const api = {
        */
       if (path === '/api/notifications' && method === 'GET') {
         atLeast(principal, 'viewer')
+        const scope = activeScope(principal)
         const orgId = scopedOrgId(principal)
 
         const [memberAlerts, subscription, events] = await Promise.all([
           clubOf(env, principal).alerts(),
           subscriptionOf(env, orgId),
-          env.CONTROL.prepare(
-            `SELECT e.id, e.type, e.detail, e.ip, e.created_at, u.name AS user_name
+          scope.mode === 'member'
+            ? env.CONTROL.prepare(
+            `SELECT e.id, e.type, e.detail, e.ip, e.created_at
                FROM security_events e
-               LEFT JOIN users u ON u.id = e.user_id
-              WHERE e.org_id = ? AND e.handled_at IS NULL
+              WHERE e.user_id = ? AND e.handled_at IS NULL
+                AND e.type IN ${PRIVATE_SECURITY_EVENT_TYPES}
                 AND e.created_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 days')
               ORDER BY e.created_at DESC LIMIT 20`,
-          ).bind(orgId).all(),
+            ).bind(principal.userId).all()
+            : Promise.resolve({ results: [] }),
         ])
 
         const items: Array<{
@@ -1804,7 +2316,7 @@ export const api = {
             severity: e.type === 'failed_burst' ? 'danger' : 'warn',
             title: e.type === 'failed_burst'
               ? 'Rafale d echecs de mot de passe'
-              : `Connexion depuis un nouvel appareil${e.user_name ? ` — ${e.user_name}` : ''}`,
+              : 'Connexion depuis un nouvel appareil',
             detail: (e.ip as string | null) ?? null,
             href: '/account', at: e.created_at as string,
           })
@@ -2788,6 +3300,68 @@ export const api = {
         return json({ staff: results })
       }
 
+      // Supervision des connexions du club -------------------------------
+      //
+      // L'organisation vient exclusivement de la session. Le client ne peut
+      // ni demander un autre club, ni utiliser le mode support pour lire cet
+      // historique reserve aux responsables reels du club.
+      if (path === '/api/club/connections' && method === 'GET') {
+        if (activeScope(principal).mode !== 'member' ||
+            !['owner', 'admin'].includes(principal.role ?? '')) {
+          return fail(403, 'Reserve aux proprietaires et administrateurs du club')
+        }
+        const orgId = scopedOrgId(principal)
+        const currentHash = token ? await hashToken(token) : ''
+        try {
+          const { results } = await env.CONTROL.prepare(
+            `WITH all_connections AS (
+               SELECT h.session_hash, h.user_id, h.connected_at, h.last_seen_at,
+                      h.disconnected_at, h.ip, h.user_agent,
+                      CASE WHEN s.token_hash IS NULL THEN 0 ELSE 1 END AS session_active
+                 FROM connection_history h
+                 LEFT JOIN sessions s ON s.token_hash = h.session_hash
+                WHERE h.org_id = ?
+               UNION ALL
+               SELECT s.token_hash, s.user_id, s.created_at, s.last_seen_at,
+                      NULL, s.ip, s.user_agent, 1
+                 FROM sessions s
+                WHERE s.org_id = ?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM connection_history h WHERE h.session_hash = s.token_hash
+                  )
+             )
+             SELECT c.session_hash, c.connected_at, c.last_seen_at,
+                    c.disconnected_at, c.ip, c.user_agent, c.session_active,
+                    CASE WHEN c.session_hash = ? THEN 1 ELSE 0 END AS is_current,
+                    u.id AS user_id, u.name, u.email,
+                    COALESCE(m.role, 'revoked') AS role
+               FROM all_connections c
+               JOIN users u ON u.id = c.user_id
+               LEFT JOIN memberships m ON m.user_id = c.user_id AND m.org_id = ?
+              ORDER BY c.connected_at DESC
+              LIMIT 100`,
+          ).bind(orgId, orgId, currentHash, orgId).all()
+          return json({ connections: results })
+        } catch (error) {
+          if (!missingTable(error, 'connection_history')) throw error
+          const { results } = await env.CONTROL.prepare(
+            `SELECT s.token_hash AS session_hash, s.created_at AS connected_at,
+                    s.last_seen_at, NULL AS disconnected_at, s.ip, s.user_agent,
+                    1 AS session_active,
+                    CASE WHEN s.token_hash = ? THEN 1 ELSE 0 END AS is_current,
+                    u.id AS user_id, u.name, u.email,
+                    COALESCE(m.role, 'revoked') AS role
+               FROM sessions s
+               JOIN users u ON u.id = s.user_id
+               LEFT JOIN memberships m ON m.user_id = s.user_id AND m.org_id = ?
+              WHERE s.org_id = ?
+              ORDER BY s.created_at DESC
+              LIMIT 100`,
+          ).bind(currentHash, orgId, orgId).all()
+          return json({ connections: results })
+        }
+      }
+
       if (path === '/api/staff' && method === 'POST') {
         atLeast(principal, 'admin', true)
         const orgId = scopedOrgId(principal)
@@ -2961,7 +3535,7 @@ export const api = {
       // production, sans deploiement. Le Durable Object du club existant
       // n'est ni lu ni ecrit : c'est une base distincte.
       if (path === '/api/admin/clubs' && method === 'POST') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         return await createClub(await readJson(request), env, principal.userId, ip)
       }
 
@@ -3015,7 +3589,7 @@ export const api = {
 
         const cutoff = isoSeconds(new Date(Date.now() - 7 * 86_400_000))
 
-        const [sessions, events, attempts, offenders, blocklist, clubs] = await Promise.all([
+        const [sessions, events, offenders, blocklist, clubs] = await Promise.all([
           env.CONTROL.prepare(
             `SELECT s.user_id, s.org_id, s.created_at, s.last_seen_at, s.expires_at,
                     s.ip, s.user_agent, s.support_org_id,
@@ -3039,20 +3613,10 @@ export const api = {
                FROM security_events e
                LEFT JOIN users u ON u.id = e.user_id
                LEFT JOIN organizations o ON o.id = e.org_id
-              WHERE e.created_at > ?
+              WHERE e.created_at > ? AND e.type NOT IN ${PRIVATE_SECURITY_EVENT_TYPES}
               ORDER BY e.handled_at IS NOT NULL, e.created_at DESC
               LIMIT 100`,
           ).bind(cutoff).all(),
-
-          env.CONTROL.prepare(
-            `SELECT identifier, ip, COUNT(*) AS failures, MAX(attempted_at) AS last_attempt
-               FROM login_attempts
-              WHERE succeeded = 0 AND attempted_at > ?
-              GROUP BY identifier, ip
-             HAVING failures >= 3
-              ORDER BY last_attempt DESC
-              LIMIT 50`,
-          ).bind(isoSeconds(new Date(Date.now() - 86_400_000))).all(),
 
           // Vue par ADRESSE, et non par compte : une attaque par dictionnaire
           // essaie cinquante e-mails differents depuis une seule adresse.
@@ -3100,6 +3664,7 @@ export const api = {
                     ) AS online,
                     (SELECT COUNT(*) FROM security_events e
                       WHERE e.org_id = o.id AND e.handled_at IS NULL AND e.created_at > ?
+                        AND e.type NOT IN ${PRIVATE_SECURITY_EVENT_TYPES}
                     ) AS open_alerts,
                     (SELECT COUNT(*) FROM sessions s
                       WHERE s.support_org_id = o.id
@@ -3115,7 +3680,6 @@ export const api = {
         return json({
           sessions: sessions.results,
           events: events.results,
-          failedAttempts: attempts.results,
           offenders: offenders.results,
           blocklist: blocklist.results,
           clubs: clubs.results.map(row => {
@@ -3129,7 +3693,7 @@ export const api = {
       // Emplacement d'un club, pose a la main par l'exploitant.
       const locationRoute = path.match(/^\/api\/admin\/clubs\/([^/]+)\/location$/)
       if (locationRoute && (method === 'PUT' || method === 'DELETE')) {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const orgId = locationRoute[1]!
 
         if (method === 'DELETE') {
@@ -3186,7 +3750,7 @@ export const api = {
        */
       const deleteClubRoute = path.match(/^\/api\/admin\/clubs\/([^/]+)$/)
       if (deleteClubRoute && method === 'DELETE') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const orgId = deleteClubRoute[1]!
 
         const org = await env.CONTROL.prepare(
@@ -3451,7 +4015,7 @@ export const api = {
 
       const billingRoute = path.match(/^\/api\/admin\/billing\/([^/]+)$/)
       if (billingRoute && method === 'PUT') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const orgId = billingRoute[1]!
         const known = await env.CONTROL.prepare('SELECT 1 FROM organizations WHERE id = ?')
           .bind(orgId).first()
@@ -3485,7 +4049,7 @@ export const api = {
 
       const invoiceCreate = path.match(/^\/api\/admin\/billing\/([^/]+)\/invoices$/)
       if (invoiceCreate && method === 'POST') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const orgId = invoiceCreate[1]!
         const billing = await env.CONTROL.prepare(
           'SELECT price_cents, cycle_months, expires_at FROM org_billing WHERE org_id = ?',
@@ -3539,7 +4103,7 @@ export const api = {
        */
       const proofReview = path.match(/^\/api\/admin\/proofs\/([^/]+)\/(accept|reject)$/)
       if (proofReview && method === 'POST') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const invoiceId = proofReview[1]!
         const accept = proofReview[2] === 'accept'
 
@@ -3606,7 +4170,7 @@ export const api = {
        */
       const reminderRoute = path.match(/^\/api\/admin\/invoices\/([^/]+)\/reminder$/)
       if (reminderRoute && method === 'POST') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const invoiceId = reminderRoute[1]!
         const known = await env.CONTROL.prepare('SELECT 1 FROM org_invoices WHERE id = ?')
           .bind(invoiceId).first()
@@ -3631,7 +4195,7 @@ export const api = {
 
       // Coordonnees bancaires montrees aux clubs sur leur page d'abonnement.
       if (path === '/api/admin/bank-details' && method === 'PUT') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const body = await readJson(request)
         const value = optional(body.value, 2000) ?? ''
         await env.CONTROL.prepare(
@@ -3644,7 +4208,7 @@ export const api = {
 
       const billingRenew = path.match(/^\/api\/admin\/billing\/([^/]+)\/renew$/)
       if (billingRenew && method === 'POST') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const orgId = billingRenew[1]!
         const billing = await env.CONTROL.prepare(
           'SELECT price_cents, cycle_months, expires_at FROM org_billing WHERE org_id = ?',
@@ -3686,7 +4250,7 @@ export const api = {
 
       const invoicePaid = path.match(/^\/api\/admin\/invoices\/([^/]+)\/paid$/)
       if (invoicePaid && (method === 'POST' || method === 'DELETE')) {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const id = invoicePaid[1]!
         const invoice = await env.CONTROL.prepare(
           'SELECT org_id, period_end FROM org_invoices WHERE id = ?',
@@ -3713,7 +4277,7 @@ export const api = {
 
       const invoiceDelete = path.match(/^\/api\/admin\/invoices\/([^/]+)$/)
       if (invoiceDelete && method === 'DELETE') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const id = invoiceDelete[1]!
         const invoice = await env.CONTROL.prepare('SELECT org_id FROM org_invoices WHERE id = ?')
           .bind(id).first<{ org_id: string }>()
@@ -3725,7 +4289,7 @@ export const api = {
 
       // Liste noire d'adresses.
       if (path === '/api/admin/blocklist' && method === 'POST') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const body = await readJson(request)
         const target = str(body.ip, 'ip', 45)
 
@@ -3749,7 +4313,7 @@ export const api = {
 
       const unblockRoute = path.match(/^\/api\/admin\/blocklist\/(.+)$/)
       if (unblockRoute && method === 'DELETE') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const target = decodeURIComponent(unblockRoute[1]!)
         await env.CONTROL.prepare('DELETE FROM ip_blocklist WHERE ip = ?').bind(target).run()
         await env.CONTROL.prepare(
@@ -3766,6 +4330,23 @@ export const api = {
         const userId = revokeRoute[1]!
         if (userId === principal.userId) return fail(400, 'Deconnectez-vous depuis votre propre compte')
 
+        if (principal.supportContextOrgId !== null) {
+          if (!principal.supportOrgId || !principal.supportWrite) {
+            return fail(403, 'Mode support en lecture seule ou expire')
+          }
+          const target = await env.CONTROL.prepare(
+            `SELECT u.id
+               FROM users u
+              WHERE u.id = ?
+                AND u.is_platform_admin = 0
+                AND (SELECT COUNT(*) FROM memberships m
+                      WHERE m.user_id = u.id AND m.status = 'active') = 1
+                AND EXISTS (SELECT 1 FROM memberships m
+                            WHERE m.user_id = u.id AND m.org_id = ? AND m.status = 'active')`,
+          ).bind(userId, principal.supportOrgId).first()
+          if (!target) return fail(403, 'Compte hors portee support')
+        }
+
         await env.CONTROL.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run()
         await env.CONTROL.prepare(
           "INSERT INTO platform_audit (actor_id, action, detail, ip) VALUES (?, 'revoke_sessions', ?, ?)",
@@ -3776,6 +4357,19 @@ export const api = {
       const handleRoute = path.match(/^\/api\/admin\/events\/(\d+)\/handled$/)
       if (handleRoute && method === 'POST') {
         if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        const event = await env.CONTROL.prepare(
+          `SELECT org_id FROM security_events
+            WHERE id = ? AND type NOT IN ${PRIVATE_SECURITY_EVENT_TYPES}`,
+        ).bind(Number(handleRoute[1])).first<{ org_id: string | null }>()
+        if (!event) return fail(403, 'Alerte inaccessible')
+        if (principal.supportContextOrgId !== null) {
+          if (!principal.supportOrgId || !principal.supportWrite) {
+            return fail(403, 'Mode support en lecture seule ou expire')
+          }
+          if (!event.org_id || event.org_id !== principal.supportOrgId) {
+            return fail(403, 'Alerte hors portee support')
+          }
+        }
         await env.CONTROL.prepare(
           "UPDATE security_events SET handled_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
         ).bind(Number(handleRoute[1])).run()
@@ -3787,7 +4381,7 @@ export const api = {
       // lecture seule, limitee dans le temps, et le club en voit la trace.
       const enterRoute = path.match(/^\/api\/admin\/clubs\/([^/]+)\/support$/)
       if (enterRoute && method === 'POST') {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         if (!token) return fail(401, 'Session absente')
         const orgId = enterRoute[1]!
 
@@ -3808,6 +4402,9 @@ export const api = {
       if (path === '/api/admin/support/write' && method === 'POST') {
         if (!principal.supportOrgId) return fail(400, 'Aucune session de support active')
         if (!token) return fail(401, 'Session absente')
+        if (!await hasStepUp(env, token, principal.userId)) {
+          return fail(403, 'Reauthentification requise')
+        }
         const expiresAt = await allowSupportWrite(env, token)
         await auditSupport(env, principal, 'support_write_enabled', { expiresAt }, ip)
         return json({ mode: 'support', canWrite: true, expiresAt })
@@ -3862,7 +4459,7 @@ export const api = {
       // Marque d'un club, modifiee depuis le tableau de bord plateforme.
       const adminBranding = path.match(/^\/api\/admin\/clubs\/([^/]+)\/branding$/)
       if (adminBranding && (method === 'GET' || method === 'PUT')) {
-        if (!principal.isPlatformAdmin) return fail(403, 'Reserve a la plateforme')
+        if (!isPlatformContext(principal)) return fail(403, 'Reserve au contexte plateforme')
         const orgId = adminBranding[1]!
         if (method === 'GET') return json(await brandingOf(env, orgId))
         const result = await saveBranding(env, orgId, await readJson(request))

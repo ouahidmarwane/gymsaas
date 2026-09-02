@@ -1,7 +1,16 @@
 import { DurableObject } from 'cloudflare:workers'
 import { MIGRATIONS, LATEST_VERSION } from './schema'
+import { ACCESS_REASONS, ACCESS_UUID, AccessStore, type AccessActor, type AccessReason, type AccessScope } from './access'
 import { CYCLE_MONTHS, anchorMonthOf, nextGradeDate } from './grade-cycle'
 import type { Env } from '../env'
+import {
+  ACCESS_SNAPSHOT_SCHEMA_VERSION,
+  type AccessAuthorizationSnapshot,
+  type SnapshotAccessPoint,
+  type SnapshotCredential,
+  type SnapshotMember,
+  type SnapshotRule,
+} from '../access-snapshot'
 
 // Base de donnees d'un club : un Durable Object SQLite par club.
 //
@@ -20,6 +29,24 @@ import type { Env } from '../env'
 const NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
 
 export type DataScope = { branchId?: string | null; disciplineId?: string | null }
+
+export type GatewayAuthContext = Readonly<{
+  gatewayId: string
+  branchId: string
+  timezone: string
+}>
+
+export type GatewayRoutingContext = Readonly<{ timezone: string }>
+
+type GatewayEventInput = {
+  id: string
+  occurredAt: string
+  credentialLookupHash: string
+  accessPointId: string
+  decision: 'allow' | 'deny'
+  reasonCode: AccessReason
+  snapshotRevision: number
+}
 
 export interface CursorPayload {
   val: string
@@ -54,10 +81,12 @@ export function decodeCursor(cursor: string | null | undefined): CursorPayload |
 
 export class ClubDatabase extends DurableObject<Env> {
   private sql: SqlStorage
+  private accessStore: AccessStore
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     this.sql = ctx.storage.sql
+    this.accessStore = new AccessStore(this.sql, ctx.storage)
 
     // blockConcurrencyWhile garantit qu'aucune requete n'est servie avant la
     // fin des migrations : un appel pendant l'initialisation attend au lieu
@@ -66,7 +95,7 @@ export class ClubDatabase extends DurableObject<Env> {
   }
 
   /** Applique les migrations manquantes. Idempotent. */
-  private migrate(): void {
+  private async migrate(): Promise<void> {
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS _schema_version (
          version    INTEGER PRIMARY KEY,
@@ -79,12 +108,33 @@ export class ClubDatabase extends DurableObject<Env> {
 
     for (const migration of MIGRATIONS) {
       if (migration.version <= current) continue
-      this.ctx.storage.transactionSync(() => {
-        for (const statement of migration.statements) {
-          this.sql.exec(statement)
+      if (migration.foreignKeysOff) {
+        // SQLite ignores foreign_keys changes while a transaction is open.
+        // SqlStorage keeps an implicit transaction between writes, so flush it
+        // before toggling the pragma for a table-rebuild migration.
+        await this.ctx.storage.sync()
+        this.sql.exec('PRAGMA foreign_keys=OFF')
+        if (this.sql.exec<{ foreign_keys: number }>('PRAGMA foreign_keys').one().foreign_keys !== 0) {
+          throw new Error(`FOREIGN_KEYS_DISABLE_FAILED_V${migration.version}`)
         }
-        this.sql.exec('INSERT INTO _schema_version (version) VALUES (?)', migration.version)
-      })
+      }
+      try {
+        this.ctx.storage.transactionSync(() => {
+          for (const statement of migration.statements) this.sql.exec(statement)
+          if (migration.foreignKeysOff && this.sql.exec('PRAGMA foreign_key_check').toArray().length > 0) {
+            throw new Error(`FOREIGN_KEY_CHECK_FAILED_V${migration.version}`)
+          }
+          this.sql.exec('INSERT INTO _schema_version (version) VALUES (?)', migration.version)
+        })
+      } finally {
+        if (migration.foreignKeysOff) {
+          await this.ctx.storage.sync()
+          this.sql.exec('PRAGMA foreign_keys=ON')
+          if (this.sql.exec<{ foreign_keys: number }>('PRAGMA foreign_keys').one().foreign_keys !== 1) {
+            throw new Error(`FOREIGN_KEYS_ENABLE_FAILED_V${migration.version}`)
+          }
+        }
+      }
     }
   }
 
@@ -2193,7 +2243,9 @@ export class ClubDatabase extends DurableObject<Env> {
     this.ensureTeamConversation(members)
     return this.sql.exec<{
       id: string; type: 'dm' | 'group' | 'team'; name: string | null; description: string | null
-      last_body: string | null; last_at: string | null; updated_at: string; unread: number
+      last_body: string | null; last_at: string | null
+      notification_body: string | null; notification_at: string | null
+      updated_at: string; unread: number
     }>(
       `SELECT c.id, c.type,
               CASE
@@ -2207,6 +2259,8 @@ export class ClubDatabase extends DurableObject<Env> {
               c.description,
               last.body AS last_body,
               last.created_at AS last_at,
+              notification.body AS notification_body,
+              notification.created_at AS notification_at,
               c.updated_at,
               COALESCE((
                 SELECT COUNT(*) FROM messages mu
@@ -2222,11 +2276,16 @@ export class ClubDatabase extends DurableObject<Env> {
          LEFT JOIN messages last ON last.id = (
            SELECT m.id FROM messages m
             WHERE m.conversation_id = c.id
-            ORDER BY m.created_at DESC, m.id DESC LIMIT 1
+            ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1
+         )
+         LEFT JOIN messages notification ON notification.id = (
+           SELECT m.id FROM messages m
+            WHERE m.conversation_id = c.id AND m.author_id != ?
+            ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1
          )
         WHERE c.is_archived = 0
         ORDER BY COALESCE(last.created_at, c.updated_at) DESC, c.id DESC`,
-      userId, userId, userId, userId,
+      userId, userId, userId, userId, userId,
     ).toArray()
   }
 
@@ -2561,6 +2620,60 @@ export class ClubDatabase extends DurableObject<Env> {
     ).toArray()
   }
 
+  // GymFlow Access ---------------------------------------------------------
+
+  accessRateLimit(actorId: string, bucket: string, limit: number, windowSeconds = 60) {
+    return this.accessStore.rateLimit(actorId, bucket, limit, windowSeconds)
+  }
+
+  listAccess(kind: 'gateways'|'devices'|'points'|'credentials'|'rules'|'events', opts: Parameters<AccessStore['list']>[1]) {
+    return this.accessStore.list(kind, opts)
+  }
+
+  accessOptions(kind: Parameters<AccessStore['options']>[0], opts: Parameters<AccessStore['options']>[1]) {
+    return this.accessStore.options(kind, opts)
+  }
+
+  accessSummary(scope: Parameters<AccessStore['summary']>[0], dateIso?: string, timezone?: string) {
+    return this.accessStore.summary(scope, dateIso, timezone)
+  }
+
+  accessMemberSummary(memberId: string, scope: Parameters<AccessStore['memberSummary']>[1], nowIso?: string) {
+    return this.accessStore.memberSummary(memberId, scope, nowIso)
+  }
+
+  createAccessGateway(input: Parameters<AccessStore['createGateway']>[0], actor: AccessActor) {
+    return this.accessStore.createGateway(input, actor)
+  }
+
+  createAccessDevice(input: Parameters<AccessStore['createDevice']>[0], actor: AccessActor) {
+    return this.accessStore.createDevice(input, actor)
+  }
+
+  createAccessPoint(input: Parameters<AccessStore['createPoint']>[0], actor: AccessActor) {
+    return this.accessStore.createPoint(input, actor)
+  }
+
+  createAccessCredential(input: Parameters<AccessStore['createCredential']>[0], actor: AccessActor) {
+    return this.accessStore.createCredential(input, actor)
+  }
+
+  createAccessRule(input: Parameters<AccessStore['createRule']>[0], actor: AccessActor) {
+    return this.accessStore.createRule(input, actor)
+  }
+
+  patchAccess(kind: 'gateways'|'devices'|'points'|'credentials'|'rules', id: string, input: Record<string, unknown>, scope: AccessScope, actor: AccessActor) {
+    return this.accessStore.patch(kind, id, input, scope, actor)
+  }
+
+  disableAccess(kind: 'gateways'|'devices'|'points'|'credentials'|'rules', id: string, scope: AccessScope, actor: AccessActor) {
+    return this.accessStore.disable(kind, id, scope, actor)
+  }
+
+  evaluateAccess(input: Parameters<AccessStore['evaluate']>[0]) {
+    return this.accessStore.evaluate(input)
+  }
+
   // Agregats -------------------------------------------------------------
 
   /**
@@ -2711,6 +2824,591 @@ export class ClubDatabase extends DurableObject<Env> {
           WHERE b.is_active = 1
           GROUP BY b.id ORDER BY count DESC`,
       ).toArray(),
+    }
+  }
+
+  // GymFlow Access Gateway Methods -----------------------------------------
+
+  async issueGatewayEnrollment(gatewayId: string, tokenHash: string, expiresAt: string, actor: AccessActor) {
+    return this.accessStore.setGatewayEnrollmentToken({ gatewayId, tokenHash, expiresAt }, actor)
+  }
+
+  async enrollGateway(input: { gatewayId: string; token: string }): Promise<{
+    gatewayId: string
+    machinePrivateKey: string
+    snapshotVerificationKey: string
+  }> {
+    if (!ACCESS_UUID.test(input.gatewayId) || !/^[A-Za-z0-9_-]{43,128}$/.test(input.token)) throw new Error('GATEWAY_ENROLLMENT_DENIED')
+    const rate = this.accessStore.rateLimit(input.gatewayId, 'gateway-enrollment', 5, 900)
+    if (!rate.allowed) throw new Error('GATEWAY_ENROLLMENT_DENIED')
+    const tokenHash = this._base64Url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input.token)))
+    this.accessStore.validateGatewayEnrollmentToken({ gatewayId: input.gatewayId, tokenHash })
+    const machineKeys = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+    const [publicKey, privateKey, snapshotKeys] = await Promise.all([
+      crypto.subtle.exportKey('spki', machineKeys.publicKey),
+      crypto.subtle.exportKey('pkcs8', machineKeys.privateKey),
+      this._snapshotKeyMaterial(),
+    ])
+    this.accessStore.consumeGatewayEnrollmentToken({
+      gatewayId: input.gatewayId,
+      tokenHash,
+      publicKey: this._base64Url(publicKey),
+    }, { id: `gateway:${input.gatewayId}`, name: 'Gateway enrollment' })
+    return {
+      gatewayId: input.gatewayId,
+      machinePrivateKey: this._base64Url(privateKey),
+      snapshotVerificationKey: snapshotKeys.publicKey,
+    }
+  }
+
+  private _getGatewayForAuth(gatewayId: string): { machine_public_key: string | null; status: string; branch_id: string } | null {
+    const result = this.sql.exec<{ machine_public_key: string; status: string; branch_id: string }>(
+      'SELECT machine_public_key, status, branch_id FROM access_gateways WHERE id=?',
+      gatewayId
+    ).toArray()[0]
+    return result ?? null
+  }
+
+  private async _authenticateGateway(request: Request, routing: GatewayRoutingContext): Promise<GatewayAuthContext> {
+    const gatewayIdHeader = request.headers.get('Gateway-Id')
+    const signatureHeader = request.headers.get('Gateway-Signature')
+    const timestampHeader = request.headers.get('Gateway-Timestamp')
+    const nonceHeader = request.headers.get('Gateway-Nonce')
+
+    if (!gatewayIdHeader || !signatureHeader || !timestampHeader || !nonceHeader) throw new Error('GATEWAY_UNAUTHORIZED')
+
+    const gatewayId = gatewayIdHeader.toLowerCase()
+    if (!ACCESS_UUID.test(gatewayId) || !/^[1-9]\d{9,10}$/.test(timestampHeader) || !/^[A-Za-z0-9_-]{22,128}$/.test(nonceHeader) || !/^[A-Za-z0-9_-]{80,128}$/.test(signatureHeader)) throw new Error('GATEWAY_UNAUTHORIZED')
+
+    // Validate timestamp window (±90 seconds)
+    const timestamp = Number(timestampHeader)
+    const now = Date.now()
+    const timestampMs = timestamp * 1000
+    const skewWindowMs = 90 * 1000 // ±90 seconds
+    if (!Number.isSafeInteger(timestamp) || Math.abs(now - timestampMs) > skewWindowMs) throw new Error('GATEWAY_UNAUTHORIZED')
+
+    // Get gateway record
+    const gateway = this._getGatewayForAuth(gatewayId)
+    if (!gateway || !['online', 'provisioned'].includes(gateway.status) || !gateway.machine_public_key) throw new Error('GATEWAY_UNAUTHORIZED')
+
+    // Verify signature
+    try {
+      const publicKey = await crypto.subtle.importKey(
+        'spki',
+        this._base64UrlBytes(gateway.machine_public_key),
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        false,
+        ['verify']
+      )
+
+      const isValidSignature = await crypto.subtle.verify(
+        { name: 'ECDSA', hash: { name: 'SHA-256' } },
+        publicKey,
+        this._base64UrlBytes(signatureHeader),
+        await this._getCanonicalRequestBytes(request)
+      )
+
+      if (!isValidSignature) {
+        throw new Error('GATEWAY_UNAUTHORIZED')
+      }
+    } catch {
+      throw new Error('GATEWAY_UNAUTHORIZED')
+    }
+
+    const authRate = this.accessStore.rateLimit(gatewayId, 'gateway-auth', 300, 60)
+    if (!authRate.allowed) throw new Error('GATEWAY_RATE_LIMITED')
+
+    const expiresAt = new Date(timestampMs + skewWindowMs).toISOString().replace('.000Z', 'Z')
+    const nonce = this.accessStore.registerGatewayNonce({ gatewayId, nonce: nonceHeader, expiresAt })
+    if (!nonce.consumed) throw new Error('GATEWAY_REPLAY')
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: routing.timezone }).format(new Date())
+    } catch {
+      throw new Error('GATEWAY_CONFIGURATION_INVALID')
+    }
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(
+        `UPDATE access_policy_state
+            SET snapshot_timezone=?,revision=revision+1,updated_at=${NOW}
+          WHERE id=1 AND snapshot_timezone IS NOT ?`,
+        routing.timezone,
+        routing.timezone,
+      )
+    })
+    return Object.freeze({ gatewayId, branchId: gateway.branch_id, timezone: routing.timezone })
+  }
+
+  /** Get canonical request bytes for signing */
+  private async _getCanonicalRequestBytes(request: Request): Promise<ArrayBuffer> {
+    const method = request.method
+    const url = new URL(request.url)
+    const path = url.pathname // No query string
+    const timestamp = request.headers.get('Gateway-Timestamp') || ''
+    const nonce = request.headers.get('Gateway-Nonce') || ''
+    const body = await request.clone().arrayBuffer()
+    const bodyHash = await crypto.subtle.digest('SHA-256', body)
+    const bodyHashHex = Array.from(new Uint8Array(bodyHash))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('')
+
+    const canonicalRequest = `${method}\n${path}\n${timestamp}\n${nonce}\n${bodyHashHex}`
+    return new TextEncoder().encode(canonicalRequest).buffer
+  }
+
+  private _base64Url(value: ArrayBuffer): string {
+    return btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  }
+
+  private _base64UrlBytes(value: string): Uint8Array<ArrayBuffer> {
+    if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('INVALID_BASE64URL')
+    let encoded = value.replace(/-/g, '+').replace(/_/g, '/')
+    while (encoded.length % 4) encoded += '='
+    return Uint8Array.from(atob(encoded), character => character.charCodeAt(0))
+  }
+
+  private async _getGatewaySnapshot(auth: GatewayAuthContext, ifRevision: number | null) {
+    const branchId = auth.branchId
+
+    // Check if revision matches
+    const policy = this.sql.exec<{ revision: number; branchActive: number; timezone: string | null }>(
+      `SELECT revision,
+              COALESCE((SELECT is_active FROM branches WHERE id=?),0) AS branchActive,
+              snapshot_timezone AS timezone
+         FROM access_policy_state WHERE id=1`,
+      branchId,
+    ).one()
+    const currentRevision = policy.revision ?? 0
+    if (!policy.timezone || policy.timezone !== auth.timezone) throw new Error('GATEWAY_CONFIGURATION_INVALID')
+
+    if (ifRevision !== null && ifRevision === currentRevision) {
+      this._auditGateway('access.gateway.snapshot.not_modified', auth)
+      return new Response(null, { status: 304, headers: { 'Cache-Control': 'no-store' } })
+    }
+
+    // Generate snapshot data
+    const revision = currentRevision
+    const generatedAt = new Date().toISOString()
+    const validUntil = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString() // 4 hours validity
+
+    // Include every point and its parent operational states so an offline
+    // evaluator can preserve the cloud engine's distinct fail-closed reasons.
+    const accessPoints = this.sql.exec<SnapshotAccessPoint>(
+      `SELECT p.id,p.direction,p.status,
+              d.status AS deviceStatus,g.status AS gatewayStatus
+         FROM access_points p
+         JOIN access_devices d ON d.id=p.device_id AND d.branch_id=p.branch_id
+         JOIN access_gateways g ON g.id=d.gateway_id AND g.branch_id=d.branch_id
+        WHERE p.branch_id=?
+        ORDER BY p.id`,
+      branchId
+    ).toArray()
+
+    // Opaque ownership is authorization-relevant; masks and raw identifiers
+    // are not and therefore do not belong in the offline snapshot.
+    const credentials = this.sql.exec<SnapshotCredential>(
+      `SELECT c.lookup_hash AS lookupHash,c.member_id AS memberId,c.status
+       FROM access_credentials c
+       JOIN members m ON c.member_id = m.id
+       WHERE m.branch_id=?
+       ORDER BY c.lookup_hash`,
+      branchId
+    ).toArray()
+
+    // Only members reachable from an offline credential are included. Raw
+    // status and expiry preserve MEMBER_INACTIVE vs SUBSCRIPTION_EXPIRED.
+    const memberRows = this.sql.exec<Omit<SnapshotMember, 'disciplineActive'> & { disciplineActive: number | null }>(
+      `SELECT m.id,m.status,m.sub_expiry AS subscriptionExpiresAt,
+              m.discipline_id AS disciplineId,
+              CASE WHEN m.discipline_id IS NULL THEN NULL ELSE COALESCE(di.is_active,0) END AS disciplineActive
+       FROM members m
+       LEFT JOIN disciplines di ON di.id=m.discipline_id
+       WHERE m.branch_id=?
+         AND EXISTS (SELECT 1 FROM access_credentials c WHERE c.member_id=m.id)
+       ORDER BY m.id`,
+      branchId
+    ).toArray()
+    const members: SnapshotMember[] = memberRows.map(member => ({
+      ...member,
+      disciplineActive: member.disciplineActive === null ? null : member.disciplineActive === 1,
+    }))
+
+    const rules = this.sql.exec<SnapshotRule>(
+      `SELECT id,access_point_id AS accessPointId,member_id AS memberId,
+              discipline_id AS disciplineId,effect,priority,days_mask AS daysMask,
+              start_time AS startTime,end_time AS endTime,valid_from AS validFrom,valid_until AS validUntil
+       FROM access_rules
+       WHERE branch_id=? AND status='active'
+       ORDER BY priority DESC,id`,
+      branchId
+    ).toArray()
+
+    const snapshot: AccessAuthorizationSnapshot = {
+      snapshotSchemaVersion: ACCESS_SNAPSHOT_SCHEMA_VERSION,
+      revision,
+      generatedAt,
+      validUntil,
+      branchId,
+      branchActive: policy.branchActive === 1,
+      timezone: policy.timezone,
+      accessPoints,
+      credentials,
+      members,
+      rules
+    }
+
+    // Sign snapshot with club-level key
+    const clubKey = await this._snapshotPrivateKey()
+    const signatureBytes = await crypto.subtle.sign(
+      { name: 'ECDSA', hash: { name: 'SHA-256' } },
+      clubKey,
+      new TextEncoder().encode(JSON.stringify(snapshot))
+    )
+    const signature = btoa(String.fromCharCode(...new Uint8Array(signatureBytes)))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+
+    this._auditGateway('access.gateway.snapshot.generated', auth)
+    return { snapshot, signature }
+  }
+
+  private async _snapshotKeyMaterial(): Promise<{ publicKey: string; privateKey: string }> {
+    const existing = this.sql.exec<{ snapshot_public_key: string | null; snapshot_private_key: string | null }>(
+      'SELECT snapshot_public_key,snapshot_private_key FROM access_policy_state WHERE id=1',
+    ).one()
+    if (existing.snapshot_public_key && existing.snapshot_private_key) {
+      return { publicKey: existing.snapshot_public_key, privateKey: existing.snapshot_private_key }
+    }
+    if (existing.snapshot_public_key || existing.snapshot_private_key) throw new Error('SNAPSHOT_KEY_STATE_INVALID')
+
+    const generated = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
+    const candidate = {
+      publicKey: this._base64Url(await crypto.subtle.exportKey('spki', generated.publicKey)),
+      privateKey: this._base64Url(await crypto.subtle.exportKey('pkcs8', generated.privateKey)),
+    }
+    return this.ctx.storage.transactionSync(() => {
+      const current = this.sql.exec<{ snapshot_public_key: string | null; snapshot_private_key: string | null }>(
+        'SELECT snapshot_public_key,snapshot_private_key FROM access_policy_state WHERE id=1',
+      ).one()
+      if (current.snapshot_public_key && current.snapshot_private_key) {
+        return { publicKey: current.snapshot_public_key, privateKey: current.snapshot_private_key }
+      }
+      if (current.snapshot_public_key || current.snapshot_private_key) throw new Error('SNAPSHOT_KEY_STATE_INVALID')
+      this.sql.exec('UPDATE access_policy_state SET snapshot_public_key=?,snapshot_private_key=? WHERE id=1', candidate.publicKey, candidate.privateKey)
+      return candidate
+    })
+  }
+
+  private async _snapshotPrivateKey(): Promise<CryptoKey> {
+    const keys = await this._snapshotKeyMaterial()
+    return crypto.subtle.importKey('pkcs8', this._base64UrlBytes(keys.privateKey), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign'])
+  }
+
+  private _recordGatewayHeartbeat(auth: GatewayAuthContext, input: { version: string; queueDepth: number; snapshotRevision: number; health: { ok: boolean; details?: string } }) {
+    const actor = this._gatewayActor(auth)
+    this.accessStore.audit('access.gateway.heartbeat', 'access_gateways', auth.gatewayId, null, actor, () => {
+      const now = new Date().toISOString()
+      this.sql.exec(
+        `UPDATE access_gateways SET version=?,last_seen_at=?,status='online',
+          last_sync_at=CASE WHEN ? >= (SELECT revision FROM access_policy_state WHERE id=1) THEN ? ELSE last_sync_at END,
+          updated_at=${NOW} WHERE id=?`,
+        input.version,
+        now,
+        input.snapshotRevision,
+        now,
+        auth.gatewayId
+      )
+    })
+
+    return {
+      serverTime: new Date().toISOString(),
+      desiredSnapshotRevision: this.sql.exec<{ revision: number }>(
+        'SELECT revision FROM access_policy_state WHERE id = 1'
+      ).one().revision ?? 0,
+      gatewayStatus: this._getGatewayStatusFromLastSeen(auth.gatewayId),
+      syncRequired: input.snapshotRevision < (this.sql.exec<{ revision: number }>(
+        'SELECT revision FROM access_policy_state WHERE id = 1'
+      ).one().revision ?? 0),
+      rotationHint: false
+    }
+  }
+
+  /** Get gateway status based on last seen time */
+  private _getGatewayStatusFromLastSeen(gatewayId: string): 'pending'|'provisioned'|'online'|'offline'|'revoked' {
+    const gateway = this.sql.exec<{ last_seen_at: string | null; status: string }>(
+      'SELECT last_seen_at, status FROM access_gateways WHERE id = ?', gatewayId
+    ).toArray()[0]
+    if (!gateway) return 'revoked' // Treat missing as revoked
+    if (gateway.status === 'revoked') return 'revoked'
+    if (gateway.status === 'pending') return 'pending'
+    if (gateway.status === 'provisioned') return 'provisioned'
+    if (!gateway.last_seen_at) return 'offline'
+
+    const lastSeen = new Date(gateway.last_seen_at)
+    const now = new Date()
+    const minutesSinceLastSeen = (now.getTime() - lastSeen.getTime()) / (1000 * 60)
+
+    if (minutesSinceLastSeen <= 5) return 'online'
+    if (minutesSinceLastSeen <= 60) return 'offline'
+    return 'offline' // Treat as offline if > 1 hour
+  }
+
+  private _uploadGatewayEvents(auth: GatewayAuthContext, events: GatewayEventInput[]) {
+    const gatewayId = auth.gatewayId
+
+    // Validate events batch
+    if (events.length === 0) {
+      throw new Error('EMPTY_EVENT_BATCH')
+    }
+    if (events.length > 100) {
+      throw new Error('EVENT_BATCH_TOO_LARGE')
+    }
+
+    // Validate each event
+    for (const event of events) {
+      // Validate ID format (ULID or UUID)
+      if (!/^[0-9a-zA-Z]{26}$/.test(event.id) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(event.id)) {
+        throw new Error('INVALID_EVENT_ID')
+      }
+
+      // Validate timestamp (not too far past/future)
+      const occurredAt = new Date(event.occurredAt)
+      const now = new Date()
+      const maxPast = new Date(now.getTime() - 24 * 60 * 60 * 1000) // 24 hours ago
+      const maxFuture = new Date(now.getTime() + 5 * 60 * 1000) // 5 minutes in future
+      const canonicalOccurredAt = Number.isFinite(occurredAt.getTime()) ? occurredAt.toISOString() : ''
+      if (!canonicalOccurredAt ||
+          (canonicalOccurredAt !== event.occurredAt && canonicalOccurredAt.replace('.000Z', 'Z') !== event.occurredAt) ||
+          occurredAt < maxPast || occurredAt > maxFuture) {
+        throw new Error('INVALID_EVENT_TIMESTAMP')
+      }
+
+      // Validate credential hash format
+      if (!/^[0-9a-f]{64}$/.test(event.credentialLookupHash)) {
+        throw new Error('INVALID_CREDENTIAL_HASH')
+      }
+
+      // Validate access point exists in gateway's branch
+      const accessPoint = this.sql.exec<{ id: string; branch_id: string }>(
+        `SELECT id,branch_id FROM access_points WHERE id=? AND branch_id=?`,
+        event.accessPointId, auth.branchId,
+      ).toArray()[0]
+      if (!accessPoint) {
+        throw new Error('UNKNOWN_ACCESS_POINT')
+      }
+
+      // Validate decision and reason code
+      if (!['allow', 'deny'].includes(event.decision)) {
+        throw new Error('INVALID_DECISION')
+      }
+      if (!ACCESS_REASONS.includes(event.reasonCode)) {
+        throw new Error('INVALID_REASON_CODE')
+      }
+
+      // Validate snapshot revision
+      const currentRevision = this.sql.exec<{ revision: number }>(
+        'SELECT revision FROM access_policy_state WHERE id = 1'
+      ).one().revision ?? 0
+      if (event.snapshotRevision > currentRevision) {
+        throw new Error('SNAPSHOT_REVISION_TOO_NEW')
+      }
+    }
+
+    // Process events
+    const accepted: string[] = []
+    const duplicates: string[] = []
+
+    this.accessStore.audit('access.gateway.events.uploaded', 'access_gateways', gatewayId, null, this._gatewayActor(auth), () => {
+      for (const event of events) {
+        // Check for duplicate (gateway_id, event_id) unique constraint
+        const existing = this.sql.exec<{ id: string }>(
+          'SELECT id FROM access_events WHERE gateway_id = ? AND external_event_id = ?',
+          gatewayId, event.id
+        ).toArray()[0]
+
+        if (existing) {
+          duplicates.push(event.id)
+          continue
+        }
+
+        // Look up credential by hash in gateway's branch
+        const credential = this.sql.exec<{ id: string; status: string; member_id: string }>(
+          `SELECT c.id, c.status, c.member_id
+           FROM access_credentials c
+           JOIN members m ON c.member_id = m.id
+           WHERE c.lookup_hash = ? AND m.branch_id = (
+             SELECT branch_id FROM access_gateways WHERE id = ?
+           )`,
+          event.credentialLookupHash, gatewayId
+        ).toArray()[0]
+
+        let decision = event.decision
+        let reasonCode = event.reasonCode
+        let memberId = null
+
+        if (!credential) {
+          decision = 'deny'
+          reasonCode = 'CREDENTIAL_UNKNOWN'
+        } else if (credential.status !== 'active') {
+          decision = 'deny'
+          reasonCode = credential.status === 'revoked' ? 'CREDENTIAL_REVOKED' :
+                     credential.status === 'lost' ? 'CREDENTIAL_LOST' :
+                     'CREDENTIAL_DISABLED'
+        } else {
+          // Credential found and active, check member status
+          const memberRow = this.sql.exec<{ status: string; sub_expiry: string }>(
+            'SELECT status, sub_expiry FROM members WHERE id = ?', credential.member_id
+          ).one();
+
+          if (!memberRow) {
+            // Member not found (should not happen due to join in credential lookup, but handle gracefully)
+            decision = 'deny'
+            reasonCode = 'MEMBER_INACTIVE'
+          } else {
+            const { status, sub_expiry } = memberRow;
+            if (status !== 'active') {
+              decision = 'deny'
+              reasonCode = 'MEMBER_INACTIVE'
+            } else if (sub_expiry && new Date(sub_expiry) < new Date()) {
+              decision = 'deny'
+              reasonCode = 'SUBSCRIPTION_EXPIRED'
+            } else {
+              // Member is active and subscription valid, use decision from event
+              memberId = credential.member_id
+            }
+          }
+        }
+
+        const point = this.sql.exec<{ direction: string }>('SELECT direction FROM access_points WHERE id=? AND branch_id=?', event.accessPointId, auth.branchId).one()
+        this.sql.exec(
+          `INSERT INTO access_events(
+            id,occurred_at,member_id,credential_id,gateway_id,device_id,
+            access_point_id,branch_id,discipline_id,requested_access_point_id,
+            direction,decision,reason_code,source,external_event_id,request_hash,snapshot_revision
+          ) VALUES(?,?,?,?,?,NULL,?,?,NULL,?,?,?,?,'gateway',?,NULL,?)`,
+          crypto.randomUUID(), event.occurredAt, memberId, credential?.id ?? null, gatewayId,
+          event.accessPointId, auth.branchId, event.accessPointId, point.direction,
+          decision, reasonCode, event.id, event.snapshotRevision,
+        )
+        accepted.push(event.id)
+      }
+    })
+
+    return {
+      accepted: accepted.length,
+      duplicates,
+      errors: []
+    }
+  }
+
+  async handleGatewayM2M(request: Request, routing: GatewayRoutingContext): Promise<Response> {
+    const url = new URL(request.url)
+    const route = `${request.method} ${url.pathname}`
+    const limits: Record<string, { bucket: string; limit: number; window: number }> = {
+      'POST /api/access/gateway/heartbeat': { bucket: 'gateway-heartbeat', limit: 60, window: 60 },
+      'GET /api/access/gateway/snapshot': { bucket: 'gateway-snapshot', limit: 6, window: 3600 },
+      'POST /api/access/gateway/events': { bucket: 'gateway-events', limit: 10, window: 60 },
+    }
+    const limit = limits[route]
+    if (!limit) {
+      const knownPath = ['/api/access/gateway/heartbeat', '/api/access/gateway/snapshot', '/api/access/gateway/events'].includes(url.pathname)
+      return this._gatewayJson({ error: knownPath ? 'Methode non autorisee' : 'Route Gateway inconnue' }, knownPath ? 405 : 404)
+    }
+
+    try {
+      const auth = await this._authenticateGateway(request, routing)
+      const rate = this.accessStore.rateLimit(auth.gatewayId, limit.bucket, limit.limit, limit.window)
+      if (!rate.allowed) return this._gatewayJson({ error: 'Trop de requetes', code: 'RATE_LIMITED' }, 429, { 'Retry-After': String(rate.retryAfter) })
+
+      if (route === 'POST /api/access/gateway/heartbeat') {
+        const body = await this._readGatewayJson(request, 1024)
+        this._onlyGatewayFields(body, ['version', 'queueDepth', 'snapshotRevision', 'health'])
+        if (typeof body.version !== 'string' || !body.version.trim() || body.version.trim().length > 20) throw new Error('INVALID_GATEWAY_PAYLOAD')
+        if (!Number.isInteger(body.queueDepth) || Number(body.queueDepth) < 0 || Number(body.queueDepth) > 1_000_000) throw new Error('INVALID_GATEWAY_PAYLOAD')
+        if (!Number.isInteger(body.snapshotRevision) || Number(body.snapshotRevision) < 0) throw new Error('INVALID_GATEWAY_PAYLOAD')
+        let health: { ok: boolean; details?: string } = { ok: true }
+        if (body.health !== undefined) {
+          if (!body.health || typeof body.health !== 'object' || Array.isArray(body.health)) throw new Error('INVALID_GATEWAY_PAYLOAD')
+          const rawHealth = body.health as Record<string, unknown>
+          this._onlyGatewayFields(rawHealth, ['ok', 'details'])
+          if (typeof rawHealth.ok !== 'boolean' || (rawHealth.details !== undefined && (typeof rawHealth.details !== 'string' || rawHealth.details.length > 200))) throw new Error('INVALID_GATEWAY_PAYLOAD')
+          health = { ok: rawHealth.ok, ...(typeof rawHealth.details === 'string' ? { details: rawHealth.details } : {}) }
+        }
+        return this._gatewayJson(this._recordGatewayHeartbeat(auth, {
+          version: body.version.trim(), queueDepth: Number(body.queueDepth), snapshotRevision: Number(body.snapshotRevision), health,
+        }))
+      }
+
+      if (route === 'GET /api/access/gateway/snapshot') {
+        const rawRevision = url.searchParams.get('if_revision')
+        if ([...url.searchParams.keys()].some(key => key !== 'if_revision') || (rawRevision !== null && !/^\d+$/.test(rawRevision))) throw new Error('INVALID_GATEWAY_PAYLOAD')
+        const ifRevision = rawRevision === null ? null : Number(rawRevision)
+        if (ifRevision !== null && (!Number.isSafeInteger(ifRevision) || ifRevision < 0)) throw new Error('INVALID_GATEWAY_PAYLOAD')
+        const result = await this._getGatewaySnapshot(auth, ifRevision)
+        if (result instanceof Response) return result
+        return this._gatewayJson(result, 200, { 'Cache-Control': 'no-store' })
+      }
+
+      const body = await this._readGatewayJson(request, 500 * 1024)
+      this._onlyGatewayFields(body, ['events'])
+      if (!Array.isArray(body.events) || body.events.length < 1 || body.events.length > 100) throw new Error('INVALID_GATEWAY_PAYLOAD')
+      const events: GatewayEventInput[] = body.events.map(value => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_GATEWAY_PAYLOAD')
+        const event = value as Record<string, unknown>
+        this._onlyGatewayFields(event, ['id', 'occurredAt', 'credentialLookupHash', 'accessPointId', 'decision', 'reasonCode', 'snapshotRevision'])
+        if (typeof event.id !== 'string' || typeof event.occurredAt !== 'string' || typeof event.credentialLookupHash !== 'string' ||
+            typeof event.accessPointId !== 'string' || (event.decision !== 'allow' && event.decision !== 'deny') ||
+            typeof event.reasonCode !== 'string' || !ACCESS_REASONS.includes(event.reasonCode as AccessReason) ||
+            !Number.isInteger(event.snapshotRevision)) throw new Error('INVALID_GATEWAY_PAYLOAD')
+        return {
+          id: event.id, occurredAt: event.occurredAt, credentialLookupHash: event.credentialLookupHash,
+          accessPointId: event.accessPointId, decision: event.decision, reasonCode: event.reasonCode as AccessReason,
+          snapshotRevision: Number(event.snapshotRevision),
+        }
+      })
+      return this._gatewayJson(this._uploadGatewayEvents(auth, events))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      if (message === 'GATEWAY_RATE_LIMITED') return this._gatewayJson({ error: 'Trop de requetes', code: 'RATE_LIMITED' }, 429)
+      if (message === 'GATEWAY_UNAUTHORIZED' || message === 'GATEWAY_REPLAY') {
+        return this._gatewayJson({ error: 'Gateway non autorise', code: message === 'GATEWAY_REPLAY' ? 'GATEWAY_REPLAY' : 'GATEWAY_UNAUTHORIZED' }, 401)
+      }
+      if (message === 'GATEWAY_CONFIGURATION_INVALID') {
+        return this._gatewayJson({ error: 'Configuration Gateway invalide', code: message }, 503)
+      }
+      if (message.startsWith('INVALID_') || message === 'EMPTY_EVENT_BATCH' || message === 'EVENT_BATCH_TOO_LARGE' || message === 'UNKNOWN_ACCESS_POINT' || message === 'SNAPSHOT_REVISION_TOO_NEW') {
+        return this._gatewayJson({ error: 'Requete Gateway invalide', code: message }, 400)
+      }
+      throw error
+    }
+  }
+
+  private _gatewayActor(auth: GatewayAuthContext): AccessActor {
+    return { id: `gateway:${auth.gatewayId}`, name: 'Gateway machine' }
+  }
+
+  private _auditGateway(action: string, auth: GatewayAuthContext): void {
+    this.accessStore.audit(action, 'access_gateway', auth.gatewayId, null, this._gatewayActor(auth), () => undefined)
+  }
+
+  private _gatewayJson(data: unknown, status = 200, headers?: HeadersInit): Response {
+    return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...headers } })
+  }
+
+  private _onlyGatewayFields(body: Record<string, unknown>, allowed: readonly string[]): void {
+    const permitted = new Set(allowed)
+    if (Object.keys(body).some(key => !permitted.has(key))) throw new Error('INVALID_GATEWAY_PAYLOAD')
+  }
+
+  private async _readGatewayJson(request: Request, maxBytes: number): Promise<Record<string, unknown>> {
+    const declared = request.headers.get('Content-Length')
+    if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) throw new Error('INVALID_GATEWAY_PAYLOAD')
+    const bytes = new Uint8Array(await request.arrayBuffer())
+    if (bytes.byteLength > maxBytes) throw new Error('INVALID_GATEWAY_PAYLOAD')
+    try {
+      const parsed: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('INVALID_GATEWAY_PAYLOAD')
+      return parsed as Record<string, unknown>
+    } catch {
+      throw new Error('INVALID_GATEWAY_PAYLOAD')
     }
   }
 

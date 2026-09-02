@@ -8,7 +8,7 @@
 //   node --test test/supervision.test.mjs
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
-import { client, createOperator, uniq, waitReady } from './helpers.mjs'
+import { client, control, createOperator, uniq, waitReady } from './helpers.mjs'
 
 let operator, clubOwner, clubEmail, clubId, ownerName
 
@@ -74,24 +74,31 @@ test('la branche placée par le club apparaît sur la carte Superadmin', async (
   assert.equal(branch.label, 'Casablanca')
 })
 
-test('une rafale d echecs leve une alerte nommant le compte vise', async () => {
+test('une rafale d echecs reste hors des evenements Superadmin nominatifs', async () => {
   const attacker = client()
+  const attackerIp = `203.0.113.${20 + Math.floor(Math.random() * 180)}`
   for (let i = 0; i < 6; i++) {
-    await attacker.call('POST', '/api/auth/login', { email: clubEmail, password: 'mauvais-mot-de-passe' })
+    await attacker.call('POST', '/api/auth/login', {
+      email: clubEmail, password: 'mauvais-mot-de-passe',
+    }, { 'CF-Connecting-IP': attackerIp })
   }
 
   const res = await operator.call('GET', '/api/admin/supervision')
-  const burst = res.data.events.find(e => e.type === 'failed_burst' && e.detail === clubEmail)
-  assert.ok(burst, `aucune alerte de rafale pour ${clubEmail}`)
+  assert.equal(res.data.events.some(e => e.type === 'failed_burst' && e.detail === clubEmail), false)
+  assert.equal('failedAttempts' in res.data, false)
+  assert.equal(res.data.offenders.some(a => JSON.stringify(a).includes(clubEmail)), false)
 
-  const grouped = res.data.failedAttempts.find(a => a.identifier === clubEmail)
-  assert.ok(grouped, 'les echecs groupes doivent apparaitre')
+  const grouped = res.data.offenders.find(a => a.ip === attackerIp)
+  assert.ok(grouped, 'les echecs groupes par adresse doivent apparaitre')
   assert.ok(grouped.failures >= 5, `attendu >= 5 echecs, recu ${grouped.failures}`)
 })
 
 test('une alerte peut etre marquee comme traitee', async () => {
+  const eventId = 1600000000 + Math.floor(Math.random() * 1000000)
+  control(`INSERT INTO security_events (id, org_id, type, detail) VALUES (${eventId}, '${clubId}', 'support_write', 'supervision-shared-${eventId}')`)
+
   const before = await operator.call('GET', '/api/admin/supervision')
-  const open = before.data.events.find(e => !e.handled_at)
+  const open = before.data.events.find(e => e.id === eventId)
   assert.ok(open, 'au moins une alerte ouverte attendue')
 
   assert.equal((await operator.call('POST', `/api/admin/events/${open.id}/handled`)).status, 200)

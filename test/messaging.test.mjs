@@ -82,6 +82,72 @@ test('same-club DM is private and sender identity is server-derived', async () =
   assert.equal((await thirdA.call('GET', `/api/messaging/conversations/${dmId}/messages`)).status, 404)
 })
 
+test('conversation notifications exclude the sender and remain club-local', async () => {
+  const sentinel = `Notification DM ${uniq()}`
+  const sent = await ownerA.call('POST', `/api/messaging/conversations/${dmId}/messages`, {
+    body: sentinel, mentionIds: [],
+  })
+  assert.equal(sent.status, 201, JSON.stringify(sent.data))
+
+  const senderView = await ownerA.call('GET', '/api/messaging/conversations')
+  assert.equal(senderView.status, 200, JSON.stringify(senderView.data))
+  const senderDm = senderView.data.conversations.find(item => item.id === dmId)
+  assert.equal(senderDm.last_body, sentinel, 'the general messaging preview must retain the sender message')
+  assert.ok(!senderView.data.conversations.some(item => item.notification_body === sentinel))
+
+  const recipientView = await staffA.call('GET', '/api/messaging/conversations')
+  assert.equal(recipientView.status, 200, JSON.stringify(recipientView.data))
+  const recipientDm = recipientView.data.conversations.find(item => item.id === dmId)
+  assert.equal(recipientDm.notification_body, sentinel)
+  assert.ok(recipientDm.notification_at)
+
+  const otherClubView = await ownerB.call('GET', '/api/messaging/conversations')
+  assert.equal(otherClubView.status, 200, JSON.stringify(otherClubView.data))
+  assert.ok(!otherClubView.data.conversations.some(item => item.id === dmId || item.notification_body === sentinel))
+  assert.equal((await ownerB.call('GET', `/api/messaging/conversations/${dmId}/messages`)).status, 404)
+})
+
+test('conversation notification ordering follows insertion order within one second', async () => {
+  let newest = null
+
+  // UUID v4 values are deliberately not insertion ordered. Find a rapid pair
+  // where the later UUID sorts below another message written in the same
+  // second, so the former `id DESC` tie-breaker would fail deterministically.
+  for (let attempt = 0; attempt < 12 && !newest; attempt++) {
+    const firstBody = `Rapid notification first ${uniq()}`
+    const secondBody = `Rapid notification second ${uniq()}`
+    const first = await ownerA.call('POST', `/api/messaging/conversations/${dmId}/messages`, {
+      body: firstBody, mentionIds: [],
+    })
+    const second = await ownerA.call('POST', `/api/messaging/conversations/${dmId}/messages`, {
+      body: secondBody, mentionIds: [],
+    })
+    assert.equal(first.status, 201, JSON.stringify(first.data))
+    assert.equal(second.status, 201, JSON.stringify(second.data))
+
+    const history = await staffA.call('GET', `/api/messaging/conversations/${dmId}/messages`)
+    assert.equal(history.status, 200, JSON.stringify(history.data))
+    const secondMessage = history.data.messages.find(message => message.id === second.data.id)
+    assert.ok(secondMessage)
+    const sameSecondIds = history.data.messages
+      .filter(message => message.authorId === ownerAId && message.createdAt === secondMessage.createdAt)
+      .map(message => message.id)
+    if (sameSecondIds.length >= 2 && second.data.id !== [...sameSecondIds].sort().at(-1)) {
+      newest = { id: second.data.id, body: secondBody, at: secondMessage.createdAt }
+    }
+  }
+
+  assert.ok(newest, 'unable to construct a same-second UUID ordering inversion')
+  const recipientView = await staffA.call('GET', '/api/messaging/conversations')
+  assert.equal(recipientView.status, 200, JSON.stringify(recipientView.data))
+  const recipientDm = recipientView.data.conversations.find(item => item.id === dmId)
+  assert.equal(recipientDm.notification_body, newest.body)
+  assert.equal(recipientDm.notification_at, newest.at)
+
+  const senderView = await ownerA.call('GET', '/api/messaging/conversations')
+  assert.ok(!senderView.data.conversations.some(item => item.notification_body === newest.body))
+})
+
 test('attachments use authorized R2 proxy and remain tenant-private', async () => {
   const uploaded = await attachmentRequest(ownerA, 'PUT',
     `/api/messaging/conversations/${dmId}/attachments?name=preuve.png`, PNG, 'image/png')
@@ -166,6 +232,61 @@ test('support threads are explicit, isolated and support identity cannot be spoo
   const clubView = await ownerA.call('GET', '/api/messaging/support')
   assert.equal(clubView.data.messages.at(-1).authorKind, 'support')
   assert.equal(clubView.data.messages.at(-1).authorName, 'GymFlow Support')
+})
+
+test('support notifications exclude each sender and remain club-local', async () => {
+  const clubSentinel = `Notification support club ${uniq()}`
+  const supportSentinel = `Notification support plateforme ${uniq()}`
+
+  assert.equal((await ownerA.call('POST', '/api/messaging/support', { body: clubSentinel })).status, 201)
+  const ownerAfterSend = await ownerA.call('GET', '/api/messaging/support/threads')
+  assert.equal(ownerAfterSend.status, 200, JSON.stringify(ownerAfterSend.data))
+  const ownerThread = ownerAfterSend.data.threads.find(item => item.orgId === orgA)
+  assert.equal(ownerThread.lastBody, clubSentinel, 'the general support preview must retain the sender message')
+  assert.ok(!ownerAfterSend.data.threads.some(item => item.notificationBody === clubSentinel))
+
+  const operatorAfterClubSend = await operator.call('GET', '/api/messaging/support/threads')
+  assert.equal(operatorAfterClubSend.status, 200, JSON.stringify(operatorAfterClubSend.data))
+  const operatorThread = operatorAfterClubSend.data.threads.find(item => item.orgId === orgA)
+  assert.equal(operatorThread.notificationBody, clubSentinel)
+  assert.ok(operatorThread.notificationAt)
+
+  assert.equal((await operator.call('POST', '/api/messaging/support', {
+    orgId: orgA, body: supportSentinel,
+  })).status, 201)
+  const operatorAfterReply = await operator.call('GET', '/api/messaging/support/threads')
+  const operatorOwnThread = operatorAfterReply.data.threads.find(item => item.orgId === orgA)
+  assert.equal(operatorOwnThread.lastBody, supportSentinel)
+  assert.notEqual(operatorOwnThread.notificationBody, supportSentinel)
+
+  const ownerAfterReply = await ownerA.call('GET', '/api/messaging/support/threads')
+  const ownerReplyThread = ownerAfterReply.data.threads.find(item => item.orgId === orgA)
+  assert.equal(ownerReplyThread.notificationBody, supportSentinel)
+  assert.ok(ownerReplyThread.notificationAt)
+
+  const otherClubView = await ownerB.call('GET', '/api/messaging/support/threads')
+  assert.equal(otherClubView.status, 200, JSON.stringify(otherClubView.data))
+  assert.ok(!otherClubView.data.threads.some(item =>
+    item.orgId === orgA || item.notificationBody === clubSentinel || item.notificationBody === supportSentinel))
+})
+
+test('support mode rejects forged support orgId when posting support messages', async () => {
+  const injected = `Tentative cross-club ${uniq()}`
+  assert.equal((await operator.call('POST', `/api/admin/clubs/${orgA}/support`)).status, 200)
+  try {
+    const sent = await operator.call('POST', '/api/messaging/support', { orgId: orgB, body: injected })
+    assert.equal(sent.status, 403, JSON.stringify(sent.data))
+  } finally {
+    assert.equal((await operator.call('DELETE', '/api/admin/support')).status, 200)
+  }
+
+  const targetClub = await operator.call('GET', `/api/messaging/support?orgId=${orgB}`)
+  assert.equal(targetClub.status, 200, JSON.stringify(targetClub.data))
+  assert.ok(!targetClub.data.messages.some(message => message.body === injected))
+
+  const activeClub = await operator.call('GET', `/api/messaging/support?orgId=${orgA}`)
+  assert.equal(activeClub.status, 200, JSON.stringify(activeClub.data))
+  assert.ok(!activeClub.data.messages.some(message => message.body === injected))
 })
 
 test('only platform Superadmin can publish announcements', async () => {

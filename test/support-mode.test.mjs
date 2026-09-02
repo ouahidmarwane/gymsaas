@@ -78,7 +78,11 @@ test('le support ne peut ecrire qu apres reauthentification explicite', async ()
   assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 403)
   assert.equal((await operator.call('POST', '/api/admin/step-up', { password: 'incorrect' })).status, 401)
   assert.equal((await operator.call('POST', '/api/admin/step-up', { password: 'motdepasse-solide-s2' })).status, 200)
-  assert.equal((await operator.call('POST', '/api/admin/support/write')).status, 200)
+  const elevated = await operator.call('POST', '/api/admin/support/write')
+  assert.equal(elevated.status, 200)
+  const writeTtl = Date.parse(elevated.data.expiresAt) - Date.now()
+  assert.ok(writeTtl > 0 && writeTtl <= 5 * 60_000,
+    `support write elevation must retain its five-minute TTL, got ${writeTtl}ms`)
   const branch = await operator.call('POST', '/api/branches', { name: 'Salle Ajoutee Par Support' })
   assert.equal(branch.status, 201, JSON.stringify(branch.data))
 
